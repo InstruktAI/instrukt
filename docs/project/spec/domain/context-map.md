@@ -117,7 +117,17 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → runner | Customer / Supplier | Whether a pull request is a todo's, whether a commit carries a verdict and which review evidence is current for it; recording or withdrawing a derived approval and publishing outstanding verdicts through work's command contract |
 | runner → work | Customer / Supplier | A commit's review requests, each with its number, its standing (queued, selected, handed over to a named session, or ended with its disposition), the session it reached and its pinned base; which input opened the turn a named session has in progress when it offers a revision; and a named session's conversation. All three are consulted when a head verdict is admitted |
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
-| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer, the runner's red observation of the canonical head and the runner's answer on each uncovered commit's named session; for a held candidate, which uncovered commits wait on which session's decision, and whether the candidate owes its own review |
+| runner → workflow | Customer / Supplier | Whether the selected runtime holds a named session, consulted for each uncovered commit's authoring session when coverage is derived |
+| runner → workflow | Published language | `runner.candidate_held` tells the integrator which candidate is held and for whose decisions |
+
+The commit-time review-routing choice adds one crossing, whether or not the
+project opted in to automatic review
+(`project/instrukt/spec/feature/repository/attributed-commit`, Review routing).
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → repository | Customer / Supplier | Admission and recording of the exemption a commit's author chooses when committing, through a core-declared interface the CLI wires; consulted by `instrukt repo commit` once the commit exists |
 
 Fleet attention adds these crossings
 (`project/instrukt/spec/feature/runner/fleet-attention`):

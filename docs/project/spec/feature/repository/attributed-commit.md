@@ -68,6 +68,35 @@ configuration entry. The adapter's metadata carries the observation.
   commit leaves nothing committed.
 - Works in any git repository; the project layer is not required.
 
+### Review routing
+
+Every commit carries its author's review-routing choice, the either-or of
+`general/policy/commits`, which the command takes when committing.
+
+| Option | The choice | What it records |
+| --- | --- | --- |
+| `--review` | The commit goes to the independent review of a head that contains it: a requested review, or a todo's build review. | Nothing. |
+| `--exempt <basis>` | The commit owes no independent review, for the stated basis. | The commit's exemption with that basis, through work's admission (`project/instrukt/spec/feature/work/github-apps`, Admission of review evidence). |
+
+- **In an adopted project** exactly one of them is required. Without either,
+  nothing is committed and the refusal names both options and
+  `general/policy/commits`; both together, or an empty basis, are refused the
+  same way.
+- **Outside an adopted project** no review evidence is kept, so the choice is
+  not required: `--review` is taken and records nothing, and `--exempt` is
+  refused before anything is committed, naming that review evidence belongs to
+  an adopted project.
+- **The exemption follows the commit.** It is recorded once the commit exists,
+  declared by the caller, which is the session the commit's `Session:` trailer
+  names when one resolves. When work refuses it or cannot record it, the
+  commit stands: the command prints the commit's id, names
+  `instrukt review exempt --commit <id> --basis <basis>` as the door and ends
+  failed.
+- **A decision taken after committing** is recorded with
+  `instrukt review exempt`.
+- **The choice is no trailer.** The message carries only the trailers above;
+  the exemption is review evidence, and a review choice leaves no trace.
+
 ### Worktree commits and review
 
 Only the integrator writes main. `repo commit` refuses the canonical branch and directs authoring to a todo or short-lived ad hoc worktree. Review binds the committed worktree head before merge; the complete report and verdict accompany that candidate. The per-SHA direct-main `repo stamp` surface and review notes are removed.

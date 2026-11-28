@@ -10,7 +10,9 @@ Commands:
   commit   Commit as the acting agent: its configured git author, a `Session:` trailer when a
            runtime's session variable is set, `Human-Involved:` always, and `Todo:` or
            `Planned-Todo:` with --todo. Outside an agent session the commit is the git user's own.
-           Prints the commit's id
+           In an adopted project it takes the author's review-routing choice
+           (`general/policy/commits`): --review, or --exempt <BASIS>, which records the commit's
+           exemption once it exists. Prints the commit's id
   reclaim  Reclaim the declared regenerable output of the worktree this session's todo assignment
            records; it takes no location. Prints each path removed and each declared path left with
            why

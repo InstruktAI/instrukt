@@ -7,6 +7,7 @@ parameters:
 subscriptions:
   - workflow.finalized
   - runner.ci_completed
+  - runner.candidate_held
   - runner.main_failing
   - runner.dependency_failing
   - runner.proposal_approved
@@ -37,6 +38,8 @@ failure interpretation, promotion and recovery.
 - Main names the repository's canonical default branch; use its actual ref.
 - `workflow.finalized` identifies a todo and finalized commit, or
   `runner.ci_completed` identifies the submitted candidate and result, or
+  `runner.candidate_held` identifies a candidate held for its authors'
+  review decisions, with each undecided commit and its authoring sessions, or
   `runner.main_failing` identifies remote main's head commit whose CI completed red,
   or `runner.dependency_failing` identifies a dependency branch, commit and failed check run for assessment,
   or `runner.proposal_approved` identifies a company home's open pull request,
@@ -50,7 +53,8 @@ failure interpretation, promotion and recovery.
   under `general/policy/commits` — MUST carry an independent reviewer's `APPROVE`
   stamp (or digest-bound review report for ad hoc branches) bound to that
   **exact commit SHA** plus green CI before advancing `main`. An ad hoc candidate
-  exempt from review under `general/policy/commits` advances on green CI alone.
+  whose commits carry their authors' exemptions under `general/policy/commits`
+  advances on green CI alone.
   Only `integrate` writes `main`.
 - Project CI and required checks, or the documented project test command when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
@@ -87,6 +91,17 @@ Apply these configured action values to the identified assignment and session.
   dependency PR for remediation. This event is not evidence of red main and
   invokes no main revert. The project supplies its dependency-update branch
   selection to the runner's CI observation; this procedure owns the assessment.
+- **`runner.candidate_held`:** the candidate holds commits with no review
+  decision on record; each author the runner could reach has been asked to
+  decide. For each listed commit you authored, such as a conflict resolution or
+  a recovery commit, decide now under `general/policy/commits`: record why it
+  owes no review with `instrukt review exempt --commit <commit> --basis <basis>`,
+  or ask for its independent review. Other authors' commits stay theirs to
+  decide. When a held delivery should not keep the others waiting, compose the
+  next candidate without it. A commit no author can decide for waits for the
+  candidate's own independent review, which the runner asks for once no
+  decision is left to an author. The candidate proceeds once every listed
+  commit is covered, with nothing further asked of you for it.
 - **`runner.main_failing`:** take the recovery path under Step 5: revert the
   offending delivery first, then repair it in its own todo.
 - **`runner.proposal_approved`:** a company's knowledge proposal is ready to
@@ -114,12 +129,15 @@ or promote whatever commit now occupies the integration branch.
    Where `general/policy/commits` requires independent review, match independent
    approval to that exact branch head and complete report; a changed or
    unreviewed head waits for current review, and no per-commit git-note verdict
-   admits a candidate. Ad hoc branches exempt under `general/policy/commits`
-   require no review report.
+   admits a candidate. Ad hoc branches whose commits carry their authors'
+   exemptions (`instrukt review show <commit>`) require no review report.
    Uncommitted project-root files are outside the candidate and remain untouched.
 3. Read the delivery context, diff and branch history. Where integration needs
    a commit, compose it around the delivery intent and record it through
-   `instrukt repo commit` under `general/policy/commits`.
+   `instrukt repo commit` with its review-routing choice under
+   `general/policy/commits`; a merge of work already reviewed or exempted
+   where it was written owes no review and records its exemption on that
+   basis.
 4. Fold pending documentation at delivery: run `instrukt docs fold <slug>` to
    reconcile the todo's pending documentation (clearing `binding_reservations`
    once their attached tests are present) under the owning documentation
@@ -137,9 +155,10 @@ or promote whatever commit now occupies the integration branch.
    the repository's agent material, its `AGENTS.md` and the company's skill
    with its catalog entry, from the knowledge the candidate holds and under
    the company identity the repository declares. Commit any change it makes
-   through `instrukt repo commit` as the candidate's last commit before the
-   push. That rendering commit is mechanical and covered by reproduction, so
-   it owes no review of its own (`general/policy/commits`). A rendering that
+   through `instrukt repo commit` with its review-routing choice as the
+   candidate's last commit before the push. That rendering commit is mechanical
+   and covered by reproduction, so it owes no review of its own and records its
+   exemption on that basis (`general/policy/commits`). A rendering that
    refuses names its finding and admits no candidate. Where the finding lies in
    one member's content, take that member out and compose the rest again: a
    todo's delivery returns as findings under Step 3, and a knowledge proposal's
@@ -212,11 +231,9 @@ contributions — this is the leading cause of silent regression in multi-agent 
    - Does it preserve all behavioral features (not just code) from both sides?
    - Are tests from both sides still valid against the merged implementation?
 Stage the resolved files and record the resolution through `instrukt repo
-commit`. Submit the resulting candidate for fresh verification. On a project
-that opted in to automatic review, a resolution that git's own merge of the
-two parents does not reproduce is not covered by reproduction: the candidate
-owes an independent review of it, which the runner asks for, and its result
-waits on that verdict.
+commit` with its review-routing choice: a resolution is your own change, and
+whether it owes review is your decision as its author under
+`general/policy/commits`. Submit the resulting candidate for fresh verification.
 
 If main moved or its push is rejected, fetch and inspect the new ancestry.
 Reconcile against current main, preserving all accepted deliveries. A new merge,
@@ -235,7 +252,9 @@ owner; the runner retries after the obstruction is resolved.
 ### 5. Restore a red main first
 
 If main becomes red despite the gate, revert the offending delivery first.
-Compose and push the revert through `integrate` and obtain CI, or the local
+A revert that removes more than the red head's own promotion added is your
+own change like any other: record its review-routing choice when committing
+it. Compose and push the revert through `integrate` and obtain CI, or the local
 `test` result when CI is absent. Prioritize that verified restoration before
 subsequent deliveries build on the known-red baseline. Repair the cause in its
 own todo. Judge whether the red-main evidence warrants a bug under
@@ -271,9 +290,9 @@ remove.
 When all current work is settled — no open candidate in verification, no
 pending delivery or conflict, and no open human question — park as the standing
 integrator and finish this thread under `general/procedure/event-handling/overview`.
-The next `workflow.finalized`, `runner.ci_completed`, `runner.main_failing`,
-`runner.dependency_failing` or `runner.proposal_approved` resumes this session
-in place; its mandate continues
+The next `workflow.finalized`, `runner.ci_completed`, `runner.candidate_held`,
+`runner.main_failing`, `runner.dependency_failing` or `runner.proposal_approved`
+resumes this session in place; its mandate continues
 across idle turns under the recorded standing-session binding.
 
 ## Outputs

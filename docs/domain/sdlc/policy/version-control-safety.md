@@ -38,7 +38,7 @@ visibility: 'public'
 
 ## Enforcement
 
-`instrukt repo commit` is the canonical commit interface (`general/policy/commits`). It composes the commit message and stages nothing; staging and every other git operation stay with the agent, and nothing blocks raw git.
+`instrukt repo commit` is the canonical commit interface (`general/policy/commits`). It composes the commit message, takes the commit's review-routing choice, and stages nothing; staging and every other git operation stay with the agent, and nothing blocks raw git.
 
 ## Exceptions
 

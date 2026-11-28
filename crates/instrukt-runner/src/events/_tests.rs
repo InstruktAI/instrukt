@@ -552,6 +552,42 @@ fn main_failing_state_subjects_name_the_canonical_ref() {
 }
 
 #[test]
+fn a_held_candidate_names_the_integration_branch_and_is_one_occurrence_per_candidate() {
+    let project = ProjectSlug::parse("demo").unwrap();
+    let candidate = CommitSha::parse(&"c".repeat(40)).unwrap();
+    let held = |decision| Event::CandidateHeld {
+        project: project.clone(),
+        candidate: candidate.clone(),
+        commits: vec![super::HeldCommitFact {
+            commit: CommitSha::parse(&"d".repeat(40)).unwrap(),
+            sessions: vec![super::HeldSessionFact {
+                session: "t3:author".into(),
+                decision,
+            }],
+        }],
+    };
+    let event = held(super::HeldDecision::Asked);
+    assert_eq!(
+        event.envelope(&context()).unwrap().subject,
+        EventRef::new(
+            ReferenceKind::RepositoryRef,
+            &format!("{project}/origin/integrate")
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        event.occurrence_id(),
+        held(super::HeldDecision::NotHeld).occurrence_id()
+    );
+    let other = Event::CandidateHeld {
+        project: project.clone(),
+        candidate: CommitSha::parse(&"e".repeat(40)).unwrap(),
+        commits: Vec::new(),
+    };
+    assert_ne!(event.occurrence_id(), other.occurrence_id());
+}
+
+#[test]
 fn ci_results_are_distinct_source_occurrences() {
     let project = ProjectSlug::parse("demo").unwrap();
     let candidate = CommitSha::parse(&"c".repeat(40)).unwrap();

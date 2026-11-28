@@ -218,6 +218,89 @@ workflow's decision
 (`project/instrukt/spec/feature/workflow/integration-gate`); its requests take
 the standings and dispositions above and repeat as above.
 
+### Asking a held candidate's authors
+
+When a commit the active candidate adds is not covered, what follows — which
+authors are asked, that the integrator is told, and whether the candidate owes
+its own review — is workflow's decision
+(`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
+a candidate). The runner supplies one fact to that decision and carries out
+the acts it calls for.
+
+**The fact: whether the runtime holds a named session.** For each session an
+uncovered commit names, as work reads the commit's authoring sessions
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence), the runner answers from one bounded read of the selected runtime
+per distinct session and derivation
+(`project/instrukt/spec/feature/runner/session-continuity`, Adapter
+primitives).
+
+| Named session | The runner's answer |
+| --- | --- |
+| Held | The selected runtime reports the session present, busy or waiting on a person included, and it is a thread instrukt sends input to. |
+| Not held | The value is no session reference; or it names another runtime than the selected one; or the selected runtime reports it gone, unknown to it, archived or deleted; or it is an instrukt-owned thread, of any binding kind, whose native project is not its checkout's, which instrukt sends nothing (`project/instrukt/spec/feature/runner/session-continuity`, T3 realization of keyed dispatch). |
+| Cannot say | The runtime cannot be reached or its answer is an observation error; or delivery holds an instrukt-owned thread's input until its changed or unverified native project is restored. |
+
+Nothing is asked of a session the runtime cannot say about, and no review of
+the candidate is asked for while any uncovered commit's session is unanswered;
+the next tick derives again, and the sessions left unanswered are reported to
+the operator through `instrukt events status`
+(`project/instrukt/design/architecture/outside-gate`).
+
+**Asking an author.** Each session workflow names to be asked for an uncovered
+commit is sent one ask, a runner-authored `[Instrukt Notification]`
+(`general/policy/message-identity-headers`) delivered through
+the session's input delivery
+(`project/instrukt/spec/feature/runner/procedure-event-delivery`). The runner
+renders it in one fixed wording from the project, the candidate and the
+commit, and it names `general/policy/commits` and the two ways to decide:
+`instrukt review exempt --commit <commit> --basis <basis>`, or asking for the
+independent review of a head that contains the commit
+(`project/instrukt/spec/feature/runner/requested-review`). It carries no text
+any agent wrote.
+
+The runner keeps an ask record for each commit and session it asks, as
+approval attention keeps its own record beside the input it queues
+(`project/instrukt/spec/feature/runner/session-continuity`, Approval
+attention). The record and its input are written in one transaction, before
+anything reaches the runtime; the record's key, states and retirement are the
+state database's `review_asks`
+(`project/instrukt/spec/feature/work/state-database`).
+
+| Ask record state | Meaning for the gate |
+| --- | --- |
+| Queued | The ask waits in delivery. The session counts as asked; nothing more is sent. |
+| Asked | The runtime accepted the ask, whether or not delivery later saw it enter a turn. Nothing more is sent for that commit and session. |
+| Undelivered | Delivery ended the ask without the runtime accepting it, as when keyed succession fails a misplaced thread's inputs. The record keeps the cause; a later derivation that still names that session to be asked sends a new ask under the next attempt. |
+
+An ask whose session the runtime reports gone before it is delivered stays
+pending under delivery's rule: delivery retries it on each pass and logs every
+failed attempt, and the record stays queued. The gate meanwhile reads that
+session as not held. When the record is retired, its inputs that delivery has
+not selected or that ended failed are removed, so nothing stale is sent later
+(`project/instrukt/spec/feature/work/state-database`, `review_asks`).
+
+| Ask record | Value |
+| --- | --- |
+| Nature | External bookkeeping: whether a commit's author was asked, through which input, and with what outcome. |
+| Owner | The runner; written only by the tick's review pass, which queues it, takes its outcome from delivery and retires it. |
+| Loss cost | A repeated external effect: one more ask per lost record. |
+| Medium | A table of the state database, beside the input delivery it is queued with, so the record and its input commit together. |
+| Write isolation | The state database's writer lock, held by the tick for each short transaction that queues, updates or retires asks, never while it reads the runtime or GitHub. |
+| Scope | One computer: the sessions asked are its runtime's. A computer that takes over serving the project (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes) holds none of these records and asks afresh. |
+
+**Telling the integrator.** For a held candidate the runner emits
+`runner.candidate_held` (`project/instrukt/spec/domain/runner`) once every
+uncovered commit's sessions are answered: the project, the candidate, and each
+uncovered commit with the sessions it names and whether each was asked or no
+author of ours can decide for it. Its occurrence identity is the project and
+the candidate, so the event log appends it once, however often the candidate
+is found held.
+
+**Candidate requests.** While the gate calls for no review of the candidate,
+its queued requests end (One review per commit); when it calls for one, the
+request is emitted as under Candidate requests.
+
 ### Knowledge proposals in a company home
 
 In a company home admitted for automatic review, instrukt carries the

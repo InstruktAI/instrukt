@@ -1,7 +1,11 @@
 //! `instrukt repo commit`: an attributed commit — the acting agent as
 //! author, the session it ran in and the caller's declaration of human
 //! involvement as trailers, and the work item when given. What the
-//! environment does not resolve is left out, never guessed.
+//! environment does not resolve is left out, never guessed. In an adopted
+//! project it also takes the author's review-routing choice and, for a
+//! no-review choice, has work record the commit's exemption once the commit
+//! exists (`project/instrukt/spec/feature/repository/attributed-commit`,
+//! Review routing).
 
 use std::path::Path;
 use std::time::Instant;
@@ -10,7 +14,7 @@ use crate::config::{Configuration, Env};
 use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, TodoSlug};
-use crate::interfaces::CoreWiring;
+use crate::interfaces::{CommitExemption, CoreWiring};
 
 use super::_error::RepositoryError;
 use super::_git;
@@ -36,6 +40,68 @@ pub struct CommitRequest {
     pub human_involved: bool,
     /// The work item the commit belongs to.
     pub todo: Option<TodoSlug>,
+    /// The author's review-routing choice; required in an adopted project.
+    pub routing: Option<ReviewRouting>,
+}
+
+/// The either-or of `general/policy/commits`: the commit goes to the
+/// independent review of a head that contains it, or it owes none for the
+/// stated basis. It is never written as a trailer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewRouting {
+    Review,
+    Exempt(String),
+}
+
+impl ReviewRouting {
+    /// The choice the command's `--review` flag and `--exempt <basis>`
+    /// option state; none when neither is given, refused when both are.
+    pub fn from_options(
+        review: bool,
+        exempt: Option<String>,
+    ) -> Result<Option<Self>, RepositoryError> {
+        match (review, exempt) {
+            (true, Some(_)) => Err(RepositoryError::RoutingBoth),
+            (true, None) => Ok(Some(Self::Review)),
+            (false, Some(basis)) => Ok(Some(Self::Exempt(basis))),
+            (false, None) => Ok(None),
+        }
+    }
+}
+
+/// What an admitted routing choice asks of the commit once it exists.
+enum Admitted<'a> {
+    /// Nothing is recorded: a review choice, or no choice outside an
+    /// adopted project.
+    Nothing,
+    /// Work records the commit's exemption with this basis.
+    Exemption {
+        basis: &'a str,
+        port: &'a dyn CommitExemption,
+    },
+}
+
+/// Admits the routing choice before anything is committed: in an adopted
+/// project exactly one choice with a non-empty basis, and a no-review
+/// choice only while work's exemption admission is wired; outside one a
+/// no-review choice is refused, since no review evidence is kept there.
+fn admit_routing<'a>(
+    adopted: bool,
+    routing: Option<&'a ReviewRouting>,
+    port: Option<&'a dyn CommitExemption>,
+) -> Result<Admitted<'a>, RepositoryError> {
+    match (adopted, routing) {
+        (_, Some(ReviewRouting::Review)) | (false, None) => Ok(Admitted::Nothing),
+        (false, Some(ReviewRouting::Exempt(_))) => Err(RepositoryError::ExemptOutsideProject),
+        (true, None) => Err(RepositoryError::RoutingMissing),
+        (true, Some(ReviewRouting::Exempt(basis))) if basis.trim().is_empty() => {
+            Err(RepositoryError::RoutingBasisEmpty)
+        }
+        (true, Some(ReviewRouting::Exempt(basis))) => match port {
+            Some(port) => Ok(Admitted::Exemption { basis, port }),
+            None => Err(RepositoryError::ExemptionUnavailable),
+        },
+    }
 }
 
 /// The association a commit names with a work item.
@@ -47,7 +113,11 @@ enum TodoTrailer {
 
 /// Makes an attributed commit in the repository containing `cwd`, running
 /// the project's own hooks as any commit does; returns its id. A message
-/// carrying an owned trailer is refused before anything is committed.
+/// carrying an owned trailer, and a routing choice [`admit_routing`]
+/// refuses, are refused before anything is committed. A no-review choice is
+/// recorded as the commit's exemption once the commit exists; when that
+/// fails the commit stands and [`RepositoryError::ExemptionNotRecorded`]
+/// names it with the door.
 pub fn commit(
     home: &Home,
     cwd: &Path,
@@ -62,8 +132,14 @@ pub fn commit(
         return Err(RepositoryError::CanonicalAuthoring);
     }
     let configuration = Configuration::load(home, Some(&root))?;
+    let admitted = admit_routing(
+        configuration.project()?.is_some(),
+        request.routing.as_ref(),
+        wiring.commit_exemption.as_deref(),
+    )?;
     let author = author(&configuration, env, wiring)?;
-    let session = session(&configuration, env)?;
+    let caller = configuration.caller(env)?;
+    let session = caller.as_ref().map(ToString::to_string);
     let todo = match &request.todo {
         Some(slug) => Some(todo_trailer(&configuration, wiring, slug)?),
         None => None,
@@ -94,6 +170,17 @@ pub fn commit(
         human_involved = request.human_involved,
         duration_ms = started.elapsed().as_millis() as u64,
     );
+    if let Admitted::Exemption { basis, port } = admitted {
+        if let Err(cause) = port.exempt(&sha, basis, caller.as_ref()) {
+            tracing::warn!(event = "commit_exemption_not_recorded", sha = %sha, error = %cause);
+            return Err(RepositoryError::ExemptionNotRecorded {
+                commit: sha,
+                basis: basis.to_owned(),
+                cause,
+            });
+        }
+        tracing::debug!(event = "commit_exemption_recorded", sha = %sha);
+    }
     Ok(sha)
 }
 
@@ -328,5 +415,112 @@ mod tests {
         );
         let bare = compose("subject", None, false, None);
         assert_eq!(bare.lines().count(), 3);
+    }
+
+    struct Recording;
+
+    impl CommitExemption for Recording {
+        fn exempt(
+            &self,
+            _commit: &CommitSha,
+            _basis: &str,
+            _caller: Option<&crate::ids::SessionRef>,
+        ) -> Result<(), crate::interfaces::InterfaceError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn both_routing_options_together_are_refused() {
+        assert!(matches!(
+            ReviewRouting::from_options(true, Some("typo".into())),
+            Err(RepositoryError::RoutingBoth)
+        ));
+    }
+
+    #[test]
+    fn the_review_flag_alone_is_the_review_choice() {
+        assert_eq!(
+            ReviewRouting::from_options(true, None).unwrap(),
+            Some(ReviewRouting::Review)
+        );
+    }
+
+    #[test]
+    fn an_exempt_basis_alone_is_the_no_review_choice() {
+        assert!(matches!(
+            ReviewRouting::from_options(false, Some("typo".into())),
+            Ok(Some(ReviewRouting::Exempt(_)))
+        ));
+    }
+
+    #[test]
+    fn neither_option_is_no_choice() {
+        assert_eq!(ReviewRouting::from_options(false, None).unwrap(), None);
+    }
+
+    #[test]
+    fn an_adopted_project_refuses_a_commit_without_a_choice() {
+        assert!(matches!(
+            admit_routing(true, None, Some(&Recording)),
+            Err(RepositoryError::RoutingMissing)
+        ));
+    }
+
+    #[test]
+    fn an_adopted_project_refuses_an_exemption_with_a_blank_basis() {
+        let blank = ReviewRouting::Exempt(" \n".into());
+        assert!(matches!(
+            admit_routing(true, Some(&blank), Some(&Recording)),
+            Err(RepositoryError::RoutingBasisEmpty)
+        ));
+    }
+
+    #[test]
+    fn an_exemption_is_refused_while_works_admission_is_not_wired() {
+        let exempt = ReviewRouting::Exempt("fixes a typo".into());
+        assert!(matches!(
+            admit_routing(true, Some(&exempt), None),
+            Err(RepositoryError::ExemptionUnavailable)
+        ));
+    }
+
+    #[test]
+    fn an_adopted_projects_exemption_is_handed_to_works_admission() {
+        let exempt = ReviewRouting::Exempt("fixes a typo".into());
+        assert!(matches!(
+            admit_routing(true, Some(&exempt), Some(&Recording)),
+            Ok(Admitted::Exemption { .. })
+        ));
+    }
+
+    #[test]
+    fn outside_an_adopted_project_a_commit_needs_no_choice() {
+        assert!(matches!(
+            admit_routing(false, None, None),
+            Ok(Admitted::Nothing)
+        ));
+    }
+
+    #[test]
+    fn outside_an_adopted_project_an_exemption_is_refused() {
+        let exempt = ReviewRouting::Exempt("fixes a typo".into());
+        assert!(matches!(
+            admit_routing(false, Some(&exempt), Some(&Recording)),
+            Err(RepositoryError::ExemptOutsideProject)
+        ));
+    }
+
+    #[test]
+    fn every_routing_refusal_names_both_options_and_the_policy() {
+        let refusals = [
+            RepositoryError::RoutingMissing,
+            RepositoryError::RoutingBoth,
+            RepositoryError::RoutingBasisEmpty,
+            RepositoryError::ExemptOutsideProject,
+            RepositoryError::ExemptionUnavailable,
+        ]
+        .map(|refusal| refusal.to_string());
+        insta::assert_snapshot!("routing-refusals", refusals.join("\n\n"));
     }
 }

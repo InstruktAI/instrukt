@@ -91,14 +91,13 @@ as covering the canonical branch
 evidence, Range). Coverage applies the
 review-currency derivation of
 `project/instrukt/spec/feature/workflow/artifact-currency` to the candidate: it
-follows the candidate's first-parent commits back to the canonical branch, and
-each of them must be one of these.
+takes every commit the candidate contains and the canonical branch does not,
+whichever parent brought it in, and each of them must be one of these.
 
-| Commit on the candidate's first-parent line | Covered when | Evidence |
+| Commit the candidate adds | Covered when | Evidence |
 | --- | --- | --- |
-| An approved head | It is exactly a head that holds a current independent approval of everything it adds to the canonical branch. It covers every commit it contains. | An independent approval bound to that exact commit in a todo's record: a finalized commit's build-review approval (`project/instrukt/spec/feature/workflow/delivery-cycle`), or the approval of a reviewed preparation head with its report, which the record keeps readable (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). For any other head, work's current evidence for that commit is an approving head verdict that covers the canonical branch (`project/instrukt/spec/feature/work/github-apps`). |
-| A merge of an approved head | Its second parent is exactly such a head, and its tree is what git's own merge of its two parents produces. A commit that an approved head merely contains, and a head that contains an approved commit, are not approved heads. | The head's approval as above; the merge reproduced from its parents. |
-| A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
+| Part of an approved head | The candidate contains a head that holds a current independent approval of everything it adds to the canonical branch, and the commit is that head or one it contains. A head that merely contains an approved commit is not an approved head. | An independent approval bound to that exact commit in a todo's record: a finalized commit's build-review approval (`project/instrukt/spec/feature/workflow/delivery-cycle`), or the approval of a reviewed preparation head with its report, which the record keeps readable (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). For any other head, work's current evidence for that commit is an approving head verdict that covers the canonical branch (`project/instrukt/spec/feature/work/github-apps`). |
+| A merge git reproduces | Its tree is what git's own merge of its parents produces. | Reproduced from its parents. |
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
 | A rendering of the repository's agent material | In a company home, its tree is what rendering the repository's agent material from its parent's tree produces. | The rendering reproduced from its parent by publication's one rendering operation (`project/instrukt/spec/domain/publication`). |
@@ -129,7 +128,7 @@ this way.
 | Finding | What follows |
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
-| A commit is not covered | The candidate owes a review. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| A commit is not covered | The candidate is held. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. Each commit not covered whose authoring session can decide is asked of that session once: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told once that the candidate is held, for which commits and whose decisions. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/design/architecture/outside-gate`). A commit that names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, has no author of ours who can decide. Only when no commit left uncovered has an author of ours who can decide does the runner ask for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
 | The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
 
 A derived approval thus reaches GitHub only from a finding of the tick that
@@ -141,8 +140,10 @@ nothing.
 A candidate is never approved on its covered part alone, and a different
 candidate commit is derived afresh. Whether a commit owes review stays its
 author's decision under `general/policy/commits`: a reviewed head and an
-exemption are that decision on record. A commit that carries neither is asked
-for, so nothing reaches the canonical branch because its author forgot to ask.
+exemption are that decision on record. A commit that carries neither goes back
+to its author, so nothing reaches the canonical branch because its author
+forgot to decide, and while an author of ours can decide, no review of it
+starts that the author did not ask for.
 
 Reproduction compares trees and judges no content
 (`general/principle/intelligence-boundaries`): a commit either equals what
@@ -221,7 +222,9 @@ On a project that requires the review status, a candidate that reverts the
 failing delivery of a red canonical head is covered by reproduction and carries
 the status without waiting for a review (Review coverage of a candidate). Which
 delivery to revert remains the integrator's judgment; a recovery that removes
-more than the red head's own promotion added is reviewed as an exact candidate.
+more than the red head's own promotion added is not covered by reproduction,
+and the integrator, as its author, decides whether it owes review like the
+author of any other commit.
 
 When the integrator cannot restore the baseline, the condition is an anomaly
 that can require notification. Ordinary approval and new-intent requests
@@ -311,6 +314,19 @@ Given a developer has dependency-update failure evidence for their integrator to
 When their integrator assesses that evidence
 Then it judges whether the failure warrants a bug
 And when warranted it records the bug work once, reusing matching existing work
+```
+
+### UC-IG7: A developer's agent decides whether its commit owes review
+
+```gherkin
+Given a developer's project has opted in to automatic review
+And their agent committed a change it judged to owe no review and declared why when committing
+And every other commit integrated with it has an agent of theirs that can decide for it
+When the change reaches integration
+Then it is integrated without a review being started for it
+But when a commit reaches integration with neither a review nor a declared decision
+Then it is held back and the agent that authored it is asked to decide
+And no review of it starts unless that agent asks for one
 ```
 
 ## Known caveats

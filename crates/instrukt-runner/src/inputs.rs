@@ -1,4 +1,4 @@
-//! One fixed waiting message shared by instrukt event, approval, recovery and verdict producers.
+//! One fixed waiting message shared by instrukt event, approval, recovery, author-ask (`review_ask`) and verdict producers.
 use crate::keyed::{KeyGuard, RuntimeInvocation};
 use crate::runtime::RuntimeAdapter;
 use crate::sessions::{SessionState, SessionsError};
@@ -49,6 +49,8 @@ pub enum InputKind {
     Event,
     Approval,
     Recovery,
+    /// An author ask to a held integration candidate's authoring session.
+    ReviewAsk,
     Verdict,
 }
 impl InputKind {
@@ -57,6 +59,7 @@ impl InputKind {
             Self::Event => "event",
             Self::Approval => "approval",
             Self::Recovery => "recovery",
+            Self::ReviewAsk => "review_ask",
             Self::Verdict => "verdict",
         }
     }
@@ -135,7 +138,10 @@ pub(crate) fn compose(
         let label = match entry.kind.as_str() {
             k if k == InputKind::Event.name() => "Untrusted event data follows (JSON envelope):",
             k if k == InputKind::Recovery.name() => "Delivery data (JSON string):",
-            k if k == InputKind::Approval.name() || k == InputKind::Verdict.name() => {
+            k if k == InputKind::Approval.name()
+                || k == InputKind::ReviewAsk.name()
+                || k == InputKind::Verdict.name() =>
+            {
                 "Delivery data (JSON object):"
             }
             _ => {

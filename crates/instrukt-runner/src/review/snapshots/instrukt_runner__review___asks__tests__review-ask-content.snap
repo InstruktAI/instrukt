@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-runner/src/review/_asks.rs
+expression: content
+---
+{
+  "project": "demo",
+  "candidate": "cccccccccccccccccccccccccccccccccccccccc",
+  "commit": "dddddddddddddddddddddddddddddddddddddddd",
+  "ask": "Commit dddddddddddddddddddddddddddddddddddddddd, which names you as its authoring session, is in integration candidate cccccccccccccccccccccccccccccccccccccccc of project demo with neither an independent review nor a recorded exemption, so the candidate is held until you decide under general/policy/commits. If it owes no independent review, record why with `instrukt review exempt --commit dddddddddddddddddddddddddddddddddddddddd --basis <basis>`. If it does, ask for the independent review of a head that contains it with `instrukt review start`."
+}

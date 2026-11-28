@@ -93,9 +93,9 @@ or entry-only realization, as specified in
 `project/instrukt/spec/feature/runner/procedure-event-delivery`. T3 uses queued
 input rather than a required hook. Missing steering creates no finding.
 Runtime acceptance is transport evidence, not entry consumption or completion.
-All instrukt-owned delivery kinds — event, approval, requested-review verdict
-and runner-owned recovery — share the one session-wide waiting slot defined in
-`project/instrukt/spec/feature/runner/procedure-event-delivery`. Native agent
+All instrukt-owned delivery kinds — event, approval, requested-review verdict,
+author ask and runner-owned recovery — share the one session-wide waiting slot
+defined in `project/instrukt/spec/feature/runner/procedure-event-delivery`. Native agent
 messages and child reports belong to the runtime and do not occupy this
 instrukt-owned slot. Recovery here concerns only instrukt-started
 orchestrators/tasks, never their natively delegated workers.
@@ -103,8 +103,9 @@ orchestrators/tasks, never their natively delegated workers.
 ### The waiting message is a delivery log
 
 The delivery-log composer — its composition timestamp, arrival-ordered entries,
-source identity and kind vocabulary (`event`, `approval`, `verdict` or
-`recovery`), explicit unknown source times, untrusted-data framing and
+source identity and kind vocabulary (`event`, `approval`, `verdict`,
+`review_ask` or `recovery`), explicit unknown source times, untrusted-data
+framing and
 immutable retry batches — is owned by
 `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 
@@ -385,8 +386,8 @@ opening brief just because placement is preparing.
 
 Every placement runs in the checkout's own project. Whenever instrukt adopts,
 wakes or succeeds an instrukt-owned thread, and before every input it delivers
-to one — event, approval, recovery, verdict-notice and conversation input
-alike, for every
+to one — event, approval, recovery, verdict-notice, author-ask and
+conversation input alike, for every
 binding kind — it looks up the checkout's project in T3's project snapshot by
 exact root, read-only, and compares it with the thread's native project. The
 comparison never registers a project. The binding's recorded project is not

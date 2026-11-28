@@ -688,7 +688,13 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         .env
         .instrukt(&workspace)
         .env("T3CODE_THREAD_ID", "lead-1")
-        .args(["repo", "commit", "--message", "Track list depth"])
+        .args([
+            "repo",
+            "commit",
+            "--review",
+            "--message",
+            "Track list depth",
+        ])
         .assert()
         .success();
     insta::assert_snapshot!(

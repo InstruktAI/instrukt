@@ -282,6 +282,9 @@ are therefore preserved across upgrades, and read-only inspection of an older
 database keeps active worker rows visible without modifying the database on
 disk. Every work, runner and conversation row in the remaining tables is kept.
 
+Version 42 adds `review_asks` (Runner tables), the runner's record of each ask
+to a held integration candidate's authoring session. It starts empty.
+
 
 ### Work tables
 
@@ -702,6 +705,12 @@ version 41 once moved to `state/runner-workers/` and
 (`project/instrukt/spec/domain/runner`, Runner background state).
 
 
+A `review-presence:<project>` row names the sessions the runtime could not say
+about in that project's latest held-candidate derivation
+(`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
+candidate's authors). The tick's review pass writes it and removes it on the
+first derivation that leaves no session unanswered or finds no held candidate.
+
 Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
 records or database tables. Redis and SQLite have no shared transaction.
@@ -762,8 +771,8 @@ session or initiates a competing generation. These record-only reservations
 are distinct from instrukt-owned `runtime_starts`.
 
 **`runtime_inputs`** — durable inputs to a native target session, shared across
-procedure events, approvals, requested-review verdict notices and runner-owned
-recovery inputs. Key:
+procedure events, approvals, requested-review verdict notices, author asks and
+runner-owned recovery inputs. Key:
 `(runtime, session, input_id)`. Retains intent (`asap` or `entry`), entry kind, source and arrival timestamps, ordered item
 references and immutable selected content, pending/selected/accepted/entered/
 failed outcome, native message identity when available, acceptance and entry
@@ -811,6 +820,23 @@ absent claimant records `no-live-claim`; observation failure stays pending.
 Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
 
+**`review_asks`** — the runner's record of each ask to a held candidate's
+authoring session (`project/instrukt/spec/feature/runner/pull-request-review`,
+Asking a held candidate's authors). Key: `(project, commit, session)`. Retains
+the candidate that first held the commit, the attempt number, the input id of
+the current attempt, the state (`queued`, `asked` or `undelivered`), the cause
+of an undelivered attempt, and when it was queued and when its state last
+changed. The tick's review pass writes a record with its `runtime_inputs` row
+in one transaction, takes `asked` from that input's runtime acceptance and
+`undelivered` from its ending without acceptance, an `unconfirmed` input
+without acceptance included, and queues a further attempt under a new input id
+only from `undelivered`, removing the previous attempt's failed input in the
+same transaction once its cause is on the record. A record is retired on a
+runner wake-up once the canonical branch contains its commit or no branch of
+the project's repository reaches it; in the same transaction its inputs that
+delivery has not selected or that ended failed are removed. A record thus keeps
+at most one failed input, and none once retired. These rows are local runtime
+delivery bookkeeping, not review evidence.
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
 email address in lower case. These tables hold credentials; they are written

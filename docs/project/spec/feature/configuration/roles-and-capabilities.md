@@ -102,6 +102,13 @@ computer's review evidence for a project and are `installation-write`,
 addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`).
 
+`instrukt repo commit --exempt` is `code-commit`: the exemption it records
+is the commit's own, declared in the commit act by the session the commit
+names, and the evidence's admission invariants decide whether it is admitted,
+for every caller alike (`project/instrukt/spec/feature/work/github-apps`).
+Recording an exemption for a commit already made is `instrukt review exempt`,
+which is `stamp`.
+
 `instrukt repo reclaim` belongs to the Repository family: it is `code-commit`,
 so the roles that commit in a todo's worktree are the roles that reclaim it.
 Its object is the workspace the caller's assignment records, wherever the
