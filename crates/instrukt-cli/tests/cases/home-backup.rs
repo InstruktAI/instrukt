@@ -1,7 +1,7 @@
 //! Real-binary CLI integration scenarios for `project/instrukt/spec/feature/runner/home-backup`.
 
-use std::collections::BTreeSet;
-use std::io::Write as _;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read as _, Write as _};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
@@ -94,17 +94,21 @@ impl BackupFixture {
     }
 }
 
-fn decrypt_archive_entries(
+fn decrypt_archive_contents(
     ciphertext: &[u8],
     identity: &age::x25519::Identity,
-) -> anyhow::Result<BTreeSet<String>> {
+) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
     let decryptor = age::Decryptor::new(ciphertext)?;
     let age_reader = decryptor.decrypt(std::iter::once(identity as &dyn age::Identity))?;
     let zstd_reader = zstd::stream::read::Decoder::new(age_reader)?;
     let mut tar_archive = tar::Archive::new(zstd_reader);
-    let mut out = BTreeSet::new();
+    let mut out = BTreeMap::new();
     for entry in tar_archive.entries()? {
-        out.insert(entry?.path()?.display().to_string());
+        let mut entry = entry?;
+        let name = entry.path()?.display().to_string();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        out.insert(name, bytes);
     }
     Ok(out)
 }
@@ -116,14 +120,30 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     fx.env.set_env("INSTRUKT_NOW", "2030-01-06T03:00:00Z");
     let home = fx.env.instrukt_home();
 
+    // Keep an active WAL connection open with an uncheckpointed row residing
+    // solely in `instrukt.db-wal` throughout `instrukt backup run`, so a raw
+    // file copy of `instrukt.db` without SQLite's online backup API would miss it.
     let db_path = home.join("state/instrukt.db");
-    {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; CREATE TABLE notes(body TEXT); INSERT INTO notes VALUES ('live-wal-row');",
+    let live_wal_conn = Connection::open(&db_path).unwrap();
+    live_wal_conn
+        .execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA wal_autocheckpoint=0;
+             CREATE TABLE notes(body TEXT);
+             INSERT INTO notes VALUES ('base-row');
+             PRAGMA wal_checkpoint(TRUNCATE);
+             INSERT INTO notes VALUES ('live-wal-row');",
         )
         .unwrap();
-    }
+    let wal_meta = std::fs::metadata(home.join("state/instrukt.db-wal")).unwrap();
+    assert!(wal_meta.len() > 0, "expected uncheckpointed WAL frames");
+    let raw_main_db = std::fs::read(&db_path).unwrap();
+    assert!(
+        !raw_main_db
+            .windows(b"live-wal-row".len())
+            .any(|w| w == b"live-wal-row"),
+        "live-wal-row must live only in the WAL sidecar before online backup"
+    );
     let extra_db = home.join("state/custom.sqlite");
     {
         let conn = Connection::open(&extra_db).unwrap();
@@ -181,6 +201,7 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     }
 
     let out = fx.env.run(fx.env.home(), ["backup", "run"]).success();
+    drop(live_wal_conn);
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
     assert!(stdout.contains("published hosts/"), "{stdout}");
     assert!(
@@ -214,7 +235,8 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
             .is_err()
     );
 
-    let entries = decrypt_archive_entries(&ciphertext, &fx.identity).unwrap();
+    let contents = decrypt_archive_contents(&ciphertext, &fx.identity).unwrap();
+    let entries: BTreeSet<String> = contents.keys().cloned().collect();
     for included in [
         "instrukt.yaml",
         "agents.yaml",
@@ -236,6 +258,35 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
             entries.contains(included),
             "expected `{included}` in archive: {entries:?}"
         );
+    }
+
+    // Verify actual SQLite rows captured from the live uncheckpointed WAL database.
+    let decrypted_db = fx.env.path("decrypted-instrukt.db");
+    std::fs::write(&decrypted_db, &contents["state/instrukt.db"]).unwrap();
+    {
+        let conn = Connection::open(&decrypted_db).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT body FROM notes ORDER BY rowid")
+            .unwrap();
+        let rows: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows, vec!["base-row", "live-wal-row"]);
+    }
+    let decrypted_company_db = fx.env.path("decrypted-company.db");
+    std::fs::write(
+        &decrypted_company_db,
+        &contents["companies/acme/.instrukt/knowledge-proposals.db"],
+    )
+    .unwrap();
+    {
+        let conn = Connection::open(&decrypted_company_db).unwrap();
+        let id: i64 = conn
+            .query_row("SELECT id FROM p", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(id, 1);
     }
     for excluded in [
         "cache/git/repo.bin",
@@ -267,9 +318,51 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     assert_eq!(state_json["last_outcome"], "ok");
     assert_eq!(state_json["last_generation"], expected_key);
 
-    // Negative branch 1: corrupt SQLite DB aborts before publishing.
+    // Negative branch 1: page-corrupted SQLite DB that online_backup copies
+    // cleanly (page 1 header intact) but PRAGMA quick_check rejects aborts
+    // before publishing and preserves prior generations.
     fx.env.set_env("INSTRUKT_NOW", "2030-01-07T03:00:00Z");
-    std::fs::write(home.join("state/broken.db"), b"corrupt-sqlite-bytes").unwrap();
+    let broken_db = home.join("state/broken.db");
+    {
+        let conn = Connection::open(&broken_db).unwrap();
+        conn.execute_batch(
+            "PRAGMA page_size = 4096;
+             PRAGMA journal_mode = DELETE;
+             CREATE TABLE entries (id INTEGER PRIMARY KEY, body TEXT);
+             CREATE INDEX idx_body ON entries(body);",
+        )
+        .unwrap();
+        for i in 0..200_i64 {
+            conn.execute(
+                "INSERT INTO entries VALUES (?1, ?2)",
+                instrukt_core::state_db::rusqlite::params![
+                    i,
+                    format!("payload-{i:04}-xxxxxxxxxxxxxxxxxxxxxxxx")
+                ],
+            )
+            .unwrap();
+        }
+    }
+    let mut broken_bytes = std::fs::read(&broken_db).unwrap();
+    assert!(broken_bytes.len() > 8192);
+    broken_bytes[4096..8192].fill(0xFF);
+    std::fs::write(&broken_db, &broken_bytes).unwrap();
+    // Prove via SQLite directly that page 1 is intact and online backup copies
+    // the database cleanly, while PRAGMA quick_check detects the page-2 corruption.
+    let probe_snap = fx.env.path("probe-broken-snap.db");
+    {
+        let src = Connection::open(&broken_db).unwrap();
+        let mut dst = Connection::open(&probe_snap).unwrap();
+        instrukt_core::state_db::rusqlite::backup::Backup::new(&src, &mut dst)
+            .unwrap()
+            .step(-1)
+            .unwrap();
+        let check: String = dst
+            .query_row("PRAGMA quick_check", [], |r| r.get(0))
+            .unwrap();
+        assert_ne!(check, "ok", "fixture must fail PRAGMA quick_check");
+    }
+
     fx.env.run(fx.env.home(), ["backup", "run"]).failure();
     assert!(fx.s3.get_bytes(&expected_key).is_some());
     assert_eq!(fx.s3.keys().len(), 2);
@@ -281,7 +374,7 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
         state_after_db_fail["last_success_at"],
         "2030-01-06T03:00:00Z"
     );
-    std::fs::remove_file(home.join("state/broken.db")).unwrap();
+    std::fs::remove_file(&broken_db).unwrap();
 
     // Negative branch 2: remote HEAD size mismatch cleans _staging/ and refuses promotion.
     fx.env.set_env("INSTRUKT_NOW", "2030-01-08T03:00:00Z");
