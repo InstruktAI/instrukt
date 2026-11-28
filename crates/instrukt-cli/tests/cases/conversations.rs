@@ -3755,14 +3755,7 @@ fn an_operator_onboards_a_company_while_the_runner_runs() {
     c.start_runner();
     wait("the runner starts with no company", || {
         assert!(c.runner_running(), "runner exited before admission");
-        let db = home.state_db_file();
-        db.exists()
-            && instrukt_core::state_db::rusqlite::Connection::open(db).is_ok_and(|db| {
-                db.query_row("SELECT at FROM runner_admission WHERE id=1", [], |row| {
-                    row.get::<_, String>(0)
-                })
-                .is_ok()
-            })
+        c.status()["admission"]["runner"]["at"].is_string()
     });
     assert_eq!(c.slack.connections(), 0);
     company_home(

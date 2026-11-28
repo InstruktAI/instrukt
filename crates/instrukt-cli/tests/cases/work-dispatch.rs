@@ -1048,3 +1048,189 @@ fn a_reused_snapshot_never_renews_a_lapsed_quota_restriction() {
     );
     assert_eq!(fake.provider("s2"), claude);
 }
+
+// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD4
+#[test]
+fn runner_wake_loop_updates_proceed_while_writer_lock_is_held() {
+    let mut p = Tracked::with_global_modules(false, "history: false, todos: true");
+    let home = instrukt_core::home::Home::at_user_home(p.env.home().into());
+    let clock = p.env.path("wake-loop-clock");
+    let mut now: jiff::Timestamp = "2030-02-01T00:00:00Z".parse().unwrap();
+    let set_clock = |at: jiff::Timestamp| {
+        let next = clock.with_extension("next");
+        std::fs::write(&next, at.to_string()).unwrap();
+        std::fs::rename(&next, &clock).unwrap();
+    };
+    set_clock(now);
+    p.env
+        .set_env("INSTRUKT_NOW", &format!("@{}", clock.display()));
+
+    let events_status = |env: &TestEnv| -> serde_json::Value {
+        let out = env
+            .run(env.home(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice(&out.get_output().stdout).unwrap()
+    };
+    let ticks_status = |env: &TestEnv| -> serde_json::Value {
+        let out = env.run(env.home(), ["ticks", "status", "--json"]).success();
+        serde_json::from_slice(&out.get_output().stdout).unwrap()
+    };
+
+    // Deterministically block RuntimeInvocation::acquire before starting the
+    // runner by placing a directory at state/runtime-dispatch.lock so the
+    // startup wake takes the skipped-wake path without entering wake() or
+    // waiting 120s, giving a race-free barrier before holding writer.lock.
+    let dispatch_lock = home.state_dir().join("runtime-dispatch.lock");
+    std::fs::create_dir_all(&dispatch_lock).unwrap();
+
+    let runner = crate::fixtures::conversing::Running::spawn(
+        p.env
+            .instrukt_process(p.env.home())
+            .arg("run")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    );
+
+    // Wait for the startup wake to finish its skipped-wake transition and
+    // enter the sleep loop (no wake() body ran, so no background writer.lock
+    // work is in flight).
+    crate::common::wait_until(
+        "initial admission and startup skipped wake",
+        std::time::Duration::from_secs(20),
+        || {
+            let status = events_status(&p.env);
+            status["admission"]["runner"]["outcome"] == "replaced"
+                && status["admission"]["runner"]["at"] == now.to_string()
+                && status["skipped_wake"]["at"] == now.to_string()
+        },
+    );
+
+    // Hold state/writer.lock across admission kept, skipped wake, admission
+    // replaced, and skipped-wake clear transitions.
+    let writer_lock = instrukt_core::fsx::LockGuard::acquire(
+        &home.writer_lock_file(),
+        std::time::Duration::from_secs(5),
+    )
+    .unwrap();
+
+    let project_layer = p.repo.path().join("instrukt.yaml");
+    let valid_layer = std::fs::read_to_string(&project_layer).unwrap();
+
+    // 1. Invalid published project layer -> admission outcome "kept" + skipped_wake updated.
+    std::fs::write(&project_layer, "schema_version: [\n").unwrap();
+    now += jiff::SignedDuration::from_mins(5);
+    let kept_at = now;
+    set_clock(kept_at);
+    let mut kept_status = serde_json::Value::Null;
+    crate::common::wait_until(
+        "kept admission and skipped wake while writer.lock is held",
+        std::time::Duration::from_secs(20),
+        || {
+            let status = events_status(&p.env);
+            let matched = status["admission"]["runner"]["outcome"] == "kept"
+                && status["admission"]["runner"]["at"] == kept_at.to_string()
+                && status["skipped_wake"]["at"] == kept_at.to_string()
+                && status["skipped_wake"]["cause"]
+                    .as_str()
+                    .is_some_and(|cause| !cause.is_empty());
+            if matched {
+                kept_status = status;
+            }
+            matched
+        },
+    );
+
+    // 2. Restore valid published project layer -> admission outcome "replaced" while still locked.
+    std::fs::write(&project_layer, &valid_layer).unwrap();
+    now += jiff::SignedDuration::from_mins(5);
+    let replaced_at = now;
+    set_clock(replaced_at);
+    let mut replaced_status = serde_json::Value::Null;
+    crate::common::wait_until(
+        "replaced admission while writer.lock is held",
+        std::time::Duration::from_secs(20),
+        || {
+            let status = events_status(&p.env);
+            let matched = status["admission"]["runner"]["outcome"] == "replaced"
+                && status["admission"]["runner"]["at"] == replaced_at.to_string()
+                && status["skipped_wake"]["at"] == replaced_at.to_string();
+            if matched {
+                replaced_status = status;
+            }
+            matched
+        },
+    );
+
+    // 3. Unblock dispatch lock -> skipped_wake clears to null while writer.lock is still held.
+    std::fs::remove_dir(&dispatch_lock).unwrap();
+    now += jiff::SignedDuration::from_mins(5);
+    let cleared_at = now;
+    set_clock(cleared_at);
+    let mut cleared_status = serde_json::Value::Null;
+    crate::common::wait_until(
+        "skipped_wake cleared while writer.lock is held",
+        std::time::Duration::from_secs(20),
+        || {
+            let status = events_status(&p.env);
+            let matched = status["admission"]["runner"]["outcome"] == "replaced"
+                && status["admission"]["runner"]["at"] == cleared_at.to_string()
+                && status["skipped_wake"].is_null();
+            if matched {
+                cleared_status = status;
+            }
+            matched
+        },
+    );
+
+    // Release writer.lock so the unblocked wake finishes, stop the runner, and
+    // verify read-only inspection creates no files or locks in state/.
+    drop(writer_lock);
+    crate::common::wait_until(
+        "unblocked wake finishes recording wakeup after writer.lock release",
+        std::time::Duration::from_secs(20),
+        || ticks_status(&p.env)["last_wakeup"] == cleared_at.to_string(),
+    );
+    drop(runner);
+
+    let list_state_entries = || -> Vec<String> {
+        let mut entries: Vec<String> = std::fs::read_dir(home.state_dir())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
+        entries
+    };
+    let before_entries = list_state_entries();
+    let inspected_status = events_status(&p.env);
+    let after_entries = list_state_entries();
+    assert_eq!(
+        after_entries, before_entries,
+        "read-only events status inspection must create no files or locks"
+    );
+    assert_eq!(
+        inspected_status["admission"]["runner"],
+        cleared_status["admission"]["runner"]
+    );
+    assert_eq!(inspected_status["skipped_wake"], serde_json::Value::Null);
+
+    let redact_state = |mut value: serde_json::Value| -> serde_json::Value {
+        if let Some(cause) = value["skipped_wake"]["cause"].as_str() {
+            let redacted = cause
+                .replace(&home.state_dir().display().to_string(), "[STATE]")
+                .replace(&home.root().display().to_string(), "[HOME]");
+            value["skipped_wake"]["cause"] = serde_json::Value::String(redacted);
+        }
+        serde_json::json!({
+            "admission_runner": value["admission"]["runner"],
+            "skipped_wake": value["skipped_wake"],
+        })
+    };
+    insta::assert_json_snapshot!(
+        "wake-loop-transitions-while-writer-lock-held",
+        serde_json::json!({
+            "kept_and_skipped": redact_state(kept_status),
+            "replaced_while_skipped": redact_state(replaced_status),
+            "cleared_on_unblocked_wake": redact_state(cleared_status),
+        })
+    );
+}
