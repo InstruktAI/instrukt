@@ -51,12 +51,26 @@ meaning and the writes of the conversation tables.
   records).
 
 
+<!-- planned-change:runner-wake-loop-state-isolated -->
+
 - **Runner background worker failures and Redis reachability stay outside it:**
   per-worker failure files live under `state/runner-workers/` (beside
   `state/computer-fleet.json`) and per-Redis reachability lives in
   `state/redis-reachability.db` under `state/redis-reachability.lock`, each
   isolated from `state/writer.lock` (`project/instrukt/spec/domain/runner`,
   Runner background state).
+
+<!-- change:runner-wake-loop-state-isolated -->
+
+- **Runner background worker failures, wake-loop state, and Redis reachability stay outside it:**
+  per-worker failure files live under `state/runner-workers/` (beside
+  `state/computer-fleet.json`), wake-loop state files live in
+  `state/runner-skipped-wake.json` and `state/runner-admission.json`, and
+  per-Redis reachability lives in `state/redis-reachability.db` under
+  `state/redis-reachability.lock`, each isolated from `state/writer.lock`
+  (`project/instrukt/spec/domain/runner`, Runner background state).
+
+<!-- /planned-change:runner-wake-loop-state-isolated -->
 
 
 
@@ -284,6 +298,20 @@ disk. Every work, runner and conversation row in the remaining tables is kept.
 
 Version 42 adds `review_asks` (Runner tables), the runner's record of each ask
 to a held integration candidate's authoring session. It starts empty.
+
+<!-- planned:runner-wake-loop-state-isolated -->
+
+Version 43 retires `runner_skipped_wake` and `runner_admission` once their rows
+have left the state database (`project/instrukt/spec/domain/runner`, Runner
+background state). Each table is dropped immediately when it holds no row; while
+either holds a row, it stays in place until the runner moves its row into
+`state/runner-skipped-wake.json` or `state/runner-admission.json` and drops both
+tables. Recorded skipped-wake and admission state are therefore preserved across
+upgrades, and read-only inspection of an older database keeps them visible
+without modifying the database on disk. Every work, runner, and conversation row
+in the remaining tables is kept.
+
+<!-- /planned:runner-wake-loop-state-isolated -->
 
 
 ### Work tables
@@ -703,6 +731,15 @@ Old open announcements get no final replay. The former recovery cursor is inert.
 version 41 once moved to `state/runner-workers/` and
 `state/redis-reachability.db` outside `state/writer.lock`
 (`project/instrukt/spec/domain/runner`, Runner background state).
+
+<!-- planned:runner-wake-loop-state-isolated -->
+
+**Wake-loop skipped wake and admission** — retired from this database in version
+43 once moved to `state/runner-skipped-wake.json` and
+`state/runner-admission.json` outside `state/writer.lock`
+(`project/instrukt/spec/domain/runner`, Runner background state).
+
+<!-- /planned:runner-wake-loop-state-isolated -->
 
 
 A `review-presence:<project>` row names the sessions the runtime could not say

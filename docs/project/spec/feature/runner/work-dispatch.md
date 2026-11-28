@@ -55,6 +55,8 @@ as it changes. Adding a connector starts it, changing its settings or tokens
 renews its connection, and withdrawing it ends that connection. The
 connector checks its provider permissions before taking member questions.
 
+<!-- planned-change:runner-wake-loop-state-isolated -->
+
 **Parts that depend on a service outside instrukt.** The conversation relay (on
 T3's conversation source), the connectors (on the provider), the event readers (on
 Redis) and history's extraction (on T3's database) and query responder (on cluster
@@ -69,6 +71,28 @@ runner ends only when it cannot start: no home, the runner lock held by another
 runner, a state database it cannot open or one newer than it knows
 (`project/instrukt/design/architecture/outside-gate`: transient outside outages
 are retried while code defects are fixed in code).
+
+<!-- change:runner-wake-loop-state-isolated -->
+
+**Parts that depend on a service outside instrukt.** The conversation relay (on
+T3's conversation source), the connectors (on the provider), the event readers (on
+Redis) and history's extraction (on T3's database) and query responder (on cluster
+Redis) each retry inside themselves until their service returns, and report their
+state in `instrukt events status`; a part never ends the runner because its
+service is away. A wake that cannot take the runtime-dispatch lock within its wait
+is skipped and the next wake tries again; `instrukt events status` shows the last
+skipped wake with its time and cause until a wake that is not skipped. The run
+loop records its last configuration admission outcome and last skipped wake
+outside the state database (`project/instrukt/spec/domain/runner`, Runner
+background state), so wake-loop updates never wait on `state/writer.lock`. Lock
+waits are measured on the clock that measures the limits of started programs
+(`project/instrukt/spec/feature/configuration/layered-configuration`). The
+runner ends only when it cannot start: no home, the runner lock held by another
+runner, a state database it cannot open or one newer than it knows
+(`project/instrukt/design/architecture/outside-gate`: transient outside outages
+are retried while code defects are fixed in code).
+
+<!-- /planned-change:runner-wake-loop-state-isolated -->
 
 | Capability | Runner responsibility |
 | --- | --- |
@@ -277,6 +301,20 @@ When their project has a todo ready for pickup
 Then the todo is picked up
 And the developer sees in status that the project's event responses are not admitted, with the setting they need
 ```
+
+<!-- planned:runner-wake-loop-state-isolated -->
+
+### UC-RD4: Runner wake-loop admission and skipped-wake updates proceed while the state-database writer lock is held
+
+```gherkin
+Given a computer with a running runner whose state database is at the current schema
+And another command holds the state database's writer lock
+When the runner admits configuration on a wake, skips a wake while the runtime-dispatch lock is held, and clears the skipped wake on the next unblocked wake
+Then each admission outcome and skipped-wake transition succeeds without waiting on the writer lock
+And `instrukt events status` reports the updated admission outcome and skipped wake (and clears `skipped_wake` after the unblocked wake) without creating files or taking locks
+```
+
+<!-- /planned:runner-wake-loop-state-isolated -->
 
 ## Known caveats
 
