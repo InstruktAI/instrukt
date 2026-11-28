@@ -690,6 +690,13 @@ The concrete rule belongs in the applicable language policy and the generic
 surface references that owner. Judge the meaning; do not build or rely on a
 keyword scanner.
 
+**Snippet command check.** For every changed snippet region (`docs/**`), verify
+that CLI commands sit inside backticks or fenced code blocks
+(`general/spec/snippet-authoring-schema`). For changed regions in shared
+doctrine (`docs/general/`, `docs/domain/**`), additionally verify compliance
+with the shared-doctrine command rules in
+`general/policy/snippet-value-contract`.
+
 For each changed snippet body, flag the Narration anti-pattern in its four forms
 (`general/policy/snippet-value-contract` owns the full definition; do not re-derive it here):
 
@@ -804,6 +811,10 @@ Severity guidance:
 - A language-specific directive introduced in a generic snippet → **Important**;
   **Critical** when it conflicts with the applicable language owner or directs
   implementation through the wrong language mechanism.
+- A CLI command written outside backticks or fenced code blocks in any changed
+  snippet (`docs/**`) → **Important**.
+- A shared-doctrine command rule violation (`general/policy/snippet-value-contract`)
+  introduced in `docs/general/` or `docs/domain/**` → **Important**.
 - Pre-existing narration in a region this change did not touch → **drop the
   observation; it is not a finding** (the sweep owns it, not this review).
 
