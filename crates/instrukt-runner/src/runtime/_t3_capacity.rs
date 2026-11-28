@@ -18,6 +18,33 @@ struct Identity {
     id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RunStatus {
+    Queued,
+    Cancelled,
+    Completed,
+    Failed,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ItemKind {
+    Error,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FailureClass {
+    UsageLimit,
+    #[serde(other)]
+    Other,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Run {
@@ -25,7 +52,7 @@ struct Run {
     ordinal: u64,
     provider_instance_id: ProviderInstanceId,
     model_selection: Selection,
-    status: String,
+    status: RunStatus,
     started_at: Option<Timestamp>,
     completed_at: Option<Timestamp>,
 }
@@ -41,7 +68,7 @@ struct Selection {
 #[serde(rename_all = "camelCase")]
 struct Item {
     #[serde(rename = "type")]
-    kind: String,
+    kind: ItemKind,
     run_id: Option<String>,
     updated_at: Timestamp,
     failure: Option<Failure>,
@@ -50,7 +77,7 @@ struct Item {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Failure {
-    class: String,
+    class: FailureClass,
     reset_at: Option<Timestamp>,
 }
 
@@ -70,7 +97,8 @@ pub(super) fn outcome(
         .runs
         .into_iter()
         .filter(|run| {
-            run.status != "queued" && !(run.status == "cancelled" && run.started_at.is_none())
+            run.status != RunStatus::Queued
+                && !(run.status == RunStatus::Cancelled && run.started_at.is_none())
         })
         .max_by(|left, right| {
             match (left.completed_at, right.completed_at) {
@@ -90,25 +118,27 @@ pub(super) fn outcome(
     {
         return Err(invalid());
     }
-    let (at, result) = match run.status.as_str() {
-        "completed" if run.completed_at.is_some() => {
+    let (at, result) = match run.status {
+        RunStatus::Completed if run.completed_at.is_some() => {
             let Some(started) = run.started_at else {
                 return Ok(None);
             };
             (started, CapacityResult::Succeeded)
         }
-        "failed" => {
+        RunStatus::Failed => {
             let Some(error) = projection
                 .turn_items
                 .into_iter()
-                .filter(|item| item.kind == "error" && item.run_id.as_deref() == Some(&run.id))
+                .filter(|item| {
+                    item.kind == ItemKind::Error && item.run_id.as_deref() == Some(&run.id)
+                })
                 .max_by_key(|item| item.updated_at)
             else {
                 return Ok(None);
             };
             let Some(failure) = error
                 .failure
-                .filter(|failure| failure.class == "usage_limit")
+                .filter(|failure| failure.class == FailureClass::UsageLimit)
             else {
                 return Ok(None);
             };
