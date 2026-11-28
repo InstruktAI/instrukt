@@ -112,6 +112,8 @@ mod release_installer;
 mod requested_review;
 #[path = "cases/roles-and-capabilities.rs"]
 mod roles_and_capabilities;
+#[path = "cases/screening.rs"]
+mod screening;
 #[path = "cases/session-continuity.rs"]
 mod session_continuity;
 #[path = "cases/single-ingress-webhook-termination.rs"]
