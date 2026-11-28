@@ -93,8 +93,10 @@ declaring computer.
 ## Configure GitHub identities
 
 For projects enabling todos, configure the machine's public `github.apps`
-inventory and `github.project_app`, and the shared `agents.yaml` role entries'
-`github_app` references under the GitHub Apps contract. Reuse the project,
+inventory and `github.project_app`, and record per-role `github_app` references
+in the agents file with `instrukt config get --agents --revision` and
+`instrukt config patch --agents --revision <rev>` under the GitHub Apps and
+configuration-editing contracts. Reuse the project,
 author and reviewer Apps already present on the installation; record their
 observed App ids, slugs and stable bot account ids/node ids/logins.
 For a new installation, guide the developer through creating and installing
@@ -131,14 +133,20 @@ report arrives. Core configuration can be completed without choosing a runtime.
 
 ## Configure agent profiles and readiness
 
-Include this phase in every computer's local assignment. Read its user-owned
-`~/.instrukt/agents.yaml` and `instrukt config show agents`; show the current
-role mappings and profile order before changing selection. Through the configured
+Include this phase in every computer's local assignment. Read the effective
+selection with `instrukt config get --agents [--json]` (and
+`instrukt config show agents` for expanded grants) together with its revision
+via `instrukt config get --agents --revision`, and show the current role
+mappings and profile order before changing selection. Through the configured
 runtime's available operations, discover ACP instances already configured in T3,
-ask where the developer wants them in that order, and write the corresponding
-profiles and order changes under the agent-selection contract. Preserve unrelated
-role capabilities, App references and model choices, then validate and read back
-the effective mapping.
+ask where the developer wants them in that order, and record profile, order,
+and role changes with `instrukt config patch --agents --revision <rev>` under
+the agent-selection and configuration-editing contracts. Each patch validates
+the full effective selection and keeps only overrides of the shipped defaults;
+on a stale revision, reread and recompute the intended difference so concurrent
+choices survive. Preserve unrelated role capabilities, App references and model
+choices, then read back the effective mapping with
+`instrukt config get --agents --json`.
 
 For a supported harness that is not ready, guide the developer through its login
 or key setup in T3 and wait for observed readiness. T3 owns provider instances

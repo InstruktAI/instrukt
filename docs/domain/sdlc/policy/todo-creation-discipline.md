@@ -75,10 +75,15 @@ Apply these configured action values to the identified assignment and session.
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
   evidence to reconcile, never a reason to preserve the state.
+- **A hold's reason is a record; it is never restated.** It records why the
+  hold was placed, and stays as written, like any record of a past decision.
+  A hold is released only when its condition is met or the work is meant to
+  move, never to place another: releasing makes the todo dispatchable at once,
+  and the runner claims it before a new hold lands.
 
 ### Ad hoc work and workspace placement
 
-- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A repository todo uses a single `<slug>/work` worktree and branch for both pending documentation and implementation; pending markers are folded by the integrator at delivery and the worktree and branch are cleaned up after promotion. No agent other than the integrator commits on main.
+- **Where repository work is authored is `general/policy/commits`.** A todo's orchestrator and the workers it dispatches work in the todo's worktree, created when the orchestrator starts; ad hoc work, pending documentation written ahead for a todo included, uses a short-lived one-off worktree whose exact head is reviewed before the integrator merges it through the normal gate, and is removed after. No agent other than the integrator commits on main.
 
 ### Unexpected bugs
 
@@ -92,32 +97,34 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 ### Decide before creating
 
-- **Documentation evidence precedes lifecycle entry.** Pending contracts
-  that preparation consumes are authored, committed under their intended todo
-  slug, and independently reviewed with required changes resolved before
-  entry. Associate the commits with `instrukt repo commit --todo <slug>` under
-  `general/policy/commits`. Review evidence binds the committed revision;
-  the author's declaration is not an independent review.
+- **Pending contracts are written before the plan.** Who writes them is
+  `general/policy/documentation-discipline` (Functionality is doc-driven): the
+  creating session when it holds context a handoff would lose, otherwise the
+  claimant at preparation entry, through the workers it dispatches in the
+  todo's worktree. A creating session
+  writes them as pending carriers naming the todo, in a one-off worktree under
+  `general/policy/commits`, commits with `instrukt repo commit --todo <slug>
+  --review` (they owe that independent review),
+  has the head independently reviewed and merged by the integrator, and
+  removes the worktree; it files the todo held, its reason naming that
+  branch's merge onto main. The todo's worktree exists only once its
+  orchestrator starts work. Review evidence binds the committed revision; the
+  author's declaration is not an independent review.
 - **Documentation impact remains agent judgment.** The agent identifies the
   required pending contracts or records an explicit `doc_impact_none` basis.
   Neither workflow derivation nor a creation command grades prose or infers
-  semantic documentation impact. Iceboxed forming work acquires its required
-  evidence before entering the lifecycle.
+  semantic documentation impact.
 
-- **A todo enters the lifecycle valid; the icebox parks ideas at any stage.** A
-  todo is valid when its intended outcome and every known contract that Prepare
-  will consume have converged, and no pending authoring, review, or commit is
-  still expected to change them. Creating a todo without `--icebox` enters it
-  into the lifecycle, so it is valid at creation. An idea still forming is
-  created with `--icebox` and made valid before it is unfrozen; unfreezing
-  enters it into the lifecycle.
-- **Place a filing by what it waits on.** Valid work waiting on another todo
-  is created with `--after <slugs>`, and leaves the wait on its own when they
-  deliver. Valid work waiting on a concrete condition outside the project's
-  todos is created with `--hold --reason <text>`, the reason naming that
-  condition under the hold rule above, so it is held from its first revision.
-  `--icebox` is for work that has not converged, never for a dependency or for
-  converged work waiting on a merge or release, and never combined with a hold.
+- **A todo enters the lifecycle once its outcome has converged.** Contracts
+  still to be written or reviewed are preparation work (above) and never delay
+  filing. An outcome still forming does not enter the lifecycle.
+- **Place a filing by what it waits on.** Converged work waiting on another
+  todo is created with `--after <slugs>`, and leaves the wait on its own when
+  they deliver. Converged work waiting on a concrete condition outside the
+  project's todos — the merge of a branch carrying its written-ahead
+  contracts included — is created with `--hold --reason <text>`, the reason
+  naming that condition under the hold rule above, so it is held from its
+  first revision.
 - **Run the bounded creation check before every `instrukt todo create` and
   before starting ad-hoc work.** Read `instrukt todo list`, which lists the
   live work — the todos a new one could overlap with. For each plausible
@@ -171,16 +178,16 @@ once, deduplicated, while preserving the existing restoration obligation.
   gate.
 
 
-- **Execute settled code work in context.** When the approach is known,
-  the edit is bounded, and the work needs neither a plan, a builder, nor a
-  handoff, make the change in a short-lived one-off worktree only when an explicit execution request, a
-  bounded brief, or a completed human conversation in which every active
-  participant agreed the outcome and the human released the edit supplies
-  authority. Human presence alone supplies none. Importance does not decide
-  this boundary; remaining judgment does. A small change whose correctness is
-  genuinely contested still belongs in the lifecycle. A `change` todo created
-  despite meeting these criteria may still take the in-context path at prepare
-  entry (`sdlc/procedure/lifecycle/overview`).
+- **Fix bounded findings in context.** An agent that finds a
+  documentation-only change, or a bounded code change of about five minutes
+  (approach known, edit bounded, needing neither a plan, a builder nor a
+  handoff), makes it itself at once in a short-lived one-off worktree and files
+  nothing; finding it supplies the authority. Importance does not decide this
+  boundary; remaining judgment does. A change whose correctness is genuinely
+  contested still belongs in the lifecycle. A company's agent never holds repair
+  authority and reports instead. A `change` todo created despite meeting these
+  criteria may still take the in-context path at prepare entry
+  (`sdlc/procedure/lifecycle/overview`).
 
 - **Use the todo's `log` artifact for a breadcrumb.** A minimal FYI that
   changes neither scope nor a decision does not justify a new todo or a rewrite
@@ -192,6 +199,14 @@ once, deduplicated, while preserving the existing restoration obligation.
   preparation and independently reviewed. Escalate only an underlying
   consequence that `general/policy/human-contract` assigns to the human; never
   send the process mechanism itself for human approval.
+- **File human-attended work from an eligible originating conversation.** When
+  a human is directing the filing in conversation, run `instrukt todo create`
+  directly from an eligible session holding that conversation — confirming it
+  can both create the todo and amend its own filing in the owning project —
+  rather than launching a separate cold thread to file on its behalf; if the
+  current session fails that check, follow the filing-ineligibility response in
+  `general/policy/human-contract`. Agent-originated work with no human lineage
+  is filed directly by its owning agent session as usual.
 - **Declare genuine human involvement only on the filing act.** An agent filing
   while a human is present in the conversation uses the creation surface's
   involvement declaration. The recorded value is resolved from the human's
@@ -203,8 +218,7 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 - **The creation check belongs to the filing agent.** Face the decisions
   above before `instrukt todo create <slug> <content> --kind <kind> --approved`.
-  Without `--approved`, the command prints the admission questions and creates
-  nothing. Pass it only after facing those questions.
+  The command writes the record only with `--approved`.
   Creation writes the item and its first `input` version together in the
   local record. The runner dispatches eligible work under module enablement,
   pickup policy and the workflow's current obligation; creation supplies no
@@ -287,30 +301,105 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   stamped creation record and the current `input`, establish the owning
   project, repeat the bounded creation check, apply the governing creation and
   process-authority contracts, and confirm that functionality work carries its
-  required pending documentation, written by whoever holds the awareness
+  required pending documentation, written by whoever holds the awareness —
+  the claimant has it written now when the creating session did not
   (`general/policy/documentation-discipline`). The record establishes the
   filing actor, originating session, observed human involvement and input
   version; it does not prove which sources or queries the creator consulted.
 
-- **Check intent by position.** `input` is the intent record for every kind,
-  including work with a supplied plan. The first recipient other than its
-  author reads the originating conversation through
-  the configured runtime conversation read instruction and compares outcome-level
-  substance. Confirm the record, clarify expression without changing meaning,
-  or return a mistaken interpretation to the human in the responsible thread.
-  Record `instrukt todo stamp <slug> --intent-checked` bound to that input
-  version, checker and conversation. A current check travels unchanged to
-  later recipients; role names and author membership are not substitutes for
-  the version-bound stamp. The check runs where the conversation is readable,
-  without copying it to GitHub. Unreadable evidence supplies no check, and an
-  author never independently checks their own compression. If the originating
-  conversation is permanently unavailable, return the intent to the human in the
-  responsible thread; a new `input` version from that conversation becomes the checkable
-  basis.
+- **Compare human-lineage `input` once at preparation entry.** `input` is the
+  intent record for every kind, including work with a supplied plan. For work
+  with human lineage, the first non-author claimant compares the filed outcome,
+  material constraints, and final direction once through `runtime.read_thread`
+  against its authorizing human conversation:
+  - normally, the relevant turns of the human's actual originating conversation
+    — tracing past any splitting or relaying session, and for a grouped child
+    following its recorded origin pointer back to the root human conversation
+    (`general/policy/human-contract`); or
+  - when `log` records that the current `input` version carries a
+    platform-operator settlement via the project's standing coordinator —
+    whether a material revision or a confirmation that the existing `input`
+    stands unchanged — while that originating conversation remains unreachable,
+    the project's standing coordinator thread for the operator-settled scope
+    (preserving the original originating-conversation pointer on the todo,
+    resuming only the settled and clearly authorized scope, and holding any
+    scope still left unresolved).
+  Do this read-only as part of entry audit: dispatch no separate outsider
+  checker, record no `--intent-checked` stamp, and do not rewrite human-lineage
+  `input` on your own authority. Leave conversation content in the runtime:
+  write only a concise, publishable summary and release condition into
+  work-record fields that external issue tracking or record reflection
+  publishes (such as hold reasons, review findings, or `log`), never verbatim
+  conversation excerpts or private runtime paths. When the comparison finds a
+  concrete discrepancy — a dropped restriction, a revived rejected direction, a
+  contradiction with what was agreed, or an unresolved human-owned choice —
+  place a hold on only the affected work (`instrukt todo update <slug> --hold
+  --reason <text>`) naming the publishable discrepancy and its release
+  condition (a revised `input` from the authorizing settlement when material
+  intent changes, or a confirmation in `log` when the existing `input` stands
+  unchanged), release any execution claim you hold (`instrukt todo update
+  <slug> --unclaim`) once the hold is recorded so settlement restores normal
+  pickup, and return the conversation-grounded evidence and a recommended
+  resolution to the actual originating conversation through
+  `runtime.message_peer`. The actual originating conversation corrects a
+  misrecording or resolves any new choice with the human:
+  - When that originating session can mutate the todo directly, it writes the
+    corrected `input` if material intent changed — or records confirmation in
+    `log` if the existing `input` stands unchanged — and releases the hold with
+    `instrukt todo update <slug> --release` (or withdraws the todo if the human
+    abandoned the outcome). Because the claimant released its claim before
+    pausing, the unheld todo is immediately eligible for normal pickup, or the
+    origin may wake the retained claimant directly.
+  - When that originating session cannot mutate the todo directly — for
+    example, on a split child filed by another session or from a session whose
+    role grants do not reach that todo — it settles the resolution with the
+    human in that originating conversation and notifies the claimant through
+    `runtime.message_peer`. The claimant wakes, verifies the human-confirmed
+    resolution directly in that originating conversation through
+    `runtime.read_thread` (never acting on a peer message alone), records only
+    that verified human-confirmed outcome in clean, publishable form into
+    `input` if material intent changed — without pasting raw conversation
+    excerpts or private runtime paths — or records a publishable confirmation
+    in `log` if the existing `input` stands unchanged, or withdraws the todo if
+    the human abandoned the outcome, while the hold remains active, never
+    altering or inventing intent of its own, then releases the hold
+    (`instrukt todo update <slug> --release`) and either resumes with
+    `instrukt todo work <slug>` or leaves the unclaimed todo for normal pickup.
+  - When the originating conversation is unavailable or unreachable, continue
+    what is clearly authorized. For any remaining unresolved human-owned scope,
+    place a hold naming the publishable unresolved scope and that release waits
+    on platform-operator settlement in the standing coordinator's thread,
+    release any execution claim you hold (`instrukt todo update <slug>
+    --unclaim`), and route only that unresolved scope with a recommended
+    resolution to the project's standing coordinator
+    (`sdlc/procedure/lifecycle/coordinate`, `general/principle/origin-routing`).
+    Once the operator settles it in the coordinator's thread, any material
+    intent change lands in `input` first in clean, publishable form —
+    preserving the original originating-conversation pointer on the todo and
+    without pasting raw conversation excerpts or private runtime paths, written
+    directly by the operator or recorded by the retained claimant after
+    verifying the operator's answer in the coordinator's thread through
+    `runtime.read_thread` — while the existing `input` stays untouched when
+    confirmed unchanged (or the todo is withdrawn when the operator abandons
+    the outcome). For either a revised `input` or a confirmed unchanged
+    `input`, record a concise, publishable `log` note stating that the current
+    `input` version carries the platform operator's settlement via the
+    project's standing coordinator; only then is the hold released (by the
+    coordinator or by the claimant once it records the update), leaving the
+    unclaimed todo eligible for normal pickup or ready for the claimant to
+    resume with `instrukt todo work <slug>`. On re-entry, that `log` note tells
+    the claimant to verify the operator-settled scope against the project's
+    standing coordinator thread (resuming only the covered and clearly
+    authorized scope and holding any scope still left unresolved) rather than
+    blocking again on the unreachable originating conversation.
+  Agent-originated work with no human lineage skips the human-origin comparison.
 
-- **Repair before retiring.** Correct the project, input, missing
-  documentation, dependencies, or other repairable omission in place. Retire
-  only a confirmed duplicate, an owner that cannot be corrected in place,
+- **Repair before retiring.** Correct the project, missing documentation,
+  dependencies, or other repairable operational omission in place — and for
+  agent-originated work without human lineage, its input; a discrepancy in
+  human-lineage input returns to the originating conversation rather than being
+  rewritten on a downstream agent's own authority. Retire only a confirmed duplicate, an owner that cannot
+  be corrected in place,
   process intent defensible from neither authorized intent nor applicable
   principles, a defect claim carrying neither the evidence nor the human
   request that grounds it, an input for which no defensible intent remains, or
@@ -318,9 +407,12 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   human-owned consequence is repaired by returning only that consequence to
   its owner; technical process intent remains agent-owned. Scheduling and
   `hold` state do not decide validity.
-- **A new `input` version needs its own check.** The earlier intent check
-  is stale and the next non-author checks the new version. Changes to derived
-  requirements or plans leave a current input check intact.
+- **Re-compare only on a material new `input` version.** Once a human-lineage
+  `input` version has cleared preparation entry against its authorizing human
+  conversation above, only a material revision to `input` receives a fresh
+  read-only comparison on the changed direction under the same
+  authorizing-conversation rule; revising a derived requirement, architecture,
+  or plan leaves the earlier comparison intact.
 
 - **Perform the kind's deeper landscape judgment at its actual phase.** These
   checks are not equivalent and do not all occur at creation:
@@ -369,10 +461,15 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     address and the reason the premise may become valid later to the todo's
     `log` artifact. The log retains the reason for parking and the reconciliation breadcrumb.
   - **Stand down.** Settle the claimant's preparation children through their
-    recorded sessions. Before releasing
-    the claim, make the todo tell the truth by either holding it with the log
-    entry above or amending `input` to carry the reconciliation. Only then run `instrukt todo update <slug> --unclaim` and confirm
-    its outcome, then record the settled assignments and handoff. Apart from
+    recorded sessions. Before releasing the claim, make the todo tell the truth
+    by holding it with the log entry above, or — for agent-originated work
+    without human lineage — amending `input` to carry the reconciliation; a
+    discrepancy in human-lineage `input` returns to the originating
+    conversation under **Compare human-lineage `input` once at preparation
+    entry** above rather than being amended on a downstream agent's own
+    authority. Only then run
+    `instrukt todo update <slug> --unclaim` and confirm its outcome, then record
+    the settled assignments and handoff. Apart from
     finishing completed todo orchestrator threads, the runtime owns session
     ending and cleanup. A bare release is forbidden: it
     returns the suspect premise to the runner with less context and recreates
@@ -471,14 +568,19 @@ acts on todos it does not hold, within these bounds alone.
   coordinator writes into the surviving todo's `log` what the redundant filing
   carried that the survivor lacks, with its source, and then withdraws it on
   the path below.
-- **A settlement is the origin's record.** A settlement counts when an
-  origin of any todo the return concerns — the session that todo's creation
-  record names — writes the agreed outcome into that todo's `log`. The
-  coordinator reads the version's recorded writer and compares it with the
-  creation record; a message tells it only where to look. Where the platform
-  operator is the origin, because no creating session was reachable, the
-  operator's answer in the coordinator's own thread is the settlement. An
-  outcome from any other session is no settlement.
+- **A settlement is the origin's record.** A settlement counts when the actual
+  originating session of any todo the return concerns — tracing past any
+  splitting or relaying session via the origin pointer carried in `input`
+  (`general/policy/human-contract`), or the session the todo's creation record
+  names when no distinct origin pointer exists — writes the agreed outcome into
+  that todo's `log`, or, when that originating session cannot mutate the todo
+  directly, confirms it in that originating conversation as verified through
+  `runtime.read_thread`. The coordinator checks the version's recorded writer
+  or reads that originating conversation directly; a peer message tells it only
+  where to look. Where the platform operator is the origin because no
+  originating human conversation was reachable, the operator's answer in the
+  coordinator's own thread is the settlement. An outcome from any other session
+  is no settlement.
 - **A settlement is applied as recorded.** The coordinator resumes, changes or
   withdraws each todo the settlement names, one todo or several, including one
   that carries a person's request: the origin is where the people concerned
@@ -518,11 +620,14 @@ work or speculative infrastructure.
 Creation stays intentionally cheap. Its bounded check prevents obvious waste
 without forcing every creator to perform the preparation worker's deeper
 landscape analysis. The entry audit then reads the actual todo and current landscape before
-derivation. The position-based intent check compares the recorded input with
-its originating conversation once per version, so a lossy summary does not
-become the authority for every later receiver. Parked intent re-grounds
-against current code and docs when picked up, without invalidating a current
-intent check merely because a derived plan changed.
+derivation. Comparing a human-lineage input against its originating
+conversation once at entry catches dropped restrictions or contradictions
+before execution derives from them, without adding a separate checker role, a
+verification stamp, or downstream intent rewrites; keeping human-attended
+filing in the originating session preserves creator-session ownership and
+escalation routing. Parked intent re-grounds against current code and docs when
+picked up, without repeating the source comparison merely because a derived
+plan changed.
 
 Documentation-only work stays in its live authoring context because a todo
 would dispatch a fresh worker that never saw the conversation which made the
@@ -591,9 +696,11 @@ settles running work before release and removal, so a claim never outlives
 the work it covers. A person's filing is withdrawn on a settlement because the
 people concerned decided it through an origin; the closure notice and the
 work record's recovery window keep that decision correctable by every other
-person it affected. Only the origin's own record can show it decided:
-messages between agent threads carry no authenticated sender, while the work
-record names the session that wrote each version. A duplicate that agents
+person it affected. Only the origin's own record or its conversation read directly through the
+runtime can show it decided: messages between agent threads carry no
+authenticated sender, while the work record names the session that wrote each
+version and reading the originating or coordinator thread directly establishes
+what the person decided. A duplicate that agents
 filed is the coordinator's to retire because no claimant sees the other
 filing and no person's intent rests on it; folding its evidence into the
 survivor keeps what it found.
@@ -602,10 +709,12 @@ Each placement answers a different question about why work is not moving. A
 prerequisite clears itself when the todo it names delivers, so a hold standing
 for one waits on someone to remember it. A hold is the only record that keeps
 converged work in the lifecycle, paused, with the condition it waits on visible
-to everyone reading the work. The icebox takes work out of the lifecycle and
-records no condition, so converged work parked there drops out of the fleet's
-attention and is found again only by chance. Holding the work as it is created
-leaves no moment in which the runner can pick it up unheld. A hold whose
+to everyone reading the work. Contracts still to be written are work, not a
+forming outcome: held on the merge of the branch that carries them, the todo
+waits visibly on a named condition; unheld, its claimant has them written. Pending carriers on main need no
+open worktree: the todo's worktree is created when its orchestrator starts, so
+written-ahead work leaves no checkout waiting for a worker. Holding the work as
+it is created leaves no moment in which the runner can pick it up unheld. A hold whose
 evidence has arrived pauses work that is free to move; the coordinator is the
 one standing reader of every todo's hold, and releasing on the evidence the
 hold itself names applies the condition as recorded rather than judging it, so

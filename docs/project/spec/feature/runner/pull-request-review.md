@@ -182,37 +182,17 @@ pull request that has it as its head at that moment. Each further request for
 one commit waits longer than the one before, up to a bound, so a reviewer that
 cannot finish is not started in a loop and the commit is never given up.
 
-Work reads two answers from the runner when it admits a verdict: the first
-always, the second only where the first shows that a request of the commit
-reached the session that offers a revision
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence).
+Work reads one answer from the runner when it admits a verdict: the commit's
+requests from delivery's own records (`project/instrukt/spec/feature/work/github-apps`,
+Admission of review evidence).
 
 | Asked | Answered from |
 | --- | --- |
 | A commit's requests: each one's number, its standing, the session it was handed over to, an ended request's disposition, whether an ended request that delivery selected is still to be handed over, and its pinned base | Delivery's own records. |
-| Which input opened the turn a named session has in progress, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session has in progress and the input that opened it, compared with the frozen content of those handovers. |
-
-The second answer is one of four: a request of that commit opened the turn,
-something else opened it, the session has no turn in progress, or the runtime
-cannot say. It costs one bounded read of the runtime and one keyed read of
-delivery's records, however long the session's history is. It is asked while
-the command that offers the revision runs and is about the turn in progress
-then. A runtime that is unavailable, or that keeps no record of the session's
-turn, cannot say.
-
-The answer is exact where a handover opens the turn it enters: a session
-started with the request,
-only-at-entry delivery, and as-soon-as-possible delivery on a runtime that
-queues a handover for the next turn
-(`project/instrukt/spec/feature/runner/procedure-event-delivery`, Intent,
-capability and bounded batches). A handover that a runtime steers into a
-running turn is not that turn's opening input and is not seen by this answer.
 
 A request's records are kept while it is live, while its commit is still owed,
-while a session it was selected for can still take it up, and while a turn it
-opened is in progress. A session of which no kept record says a request of the
-commit reached it is therefore in no turn that such a request opened.
+and while a session it was selected for can still take it up. Request standing
+and live runtime activity do not control verdict admission.
 
 ### Placement and consumer
 
@@ -237,6 +217,142 @@ the candidate commit and the request number. When a candidate owes a review is
 workflow's decision
 (`project/instrukt/spec/feature/workflow/integration-gate`); its requests take
 the standings and dispositions above and repeat as above.
+
+### Asking a held candidate's authors
+
+When a commit the active candidate adds is not covered, what follows — which
+authors are asked, that the integrator is told, and whether the candidate owes
+its own review — is workflow's decision
+(`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
+a candidate). The runner supplies one fact to that decision and carries out
+the acts it calls for.
+
+**The fact: whether the runtime holds a named session.** For each session an
+uncovered commit names, as work reads the commit's authoring sessions
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence), the runner answers from one bounded read of the selected runtime
+per distinct session and derivation
+(`project/instrukt/spec/feature/runner/session-continuity`, Adapter
+primitives).
+
+| Named session | The runner's answer |
+| --- | --- |
+| Held | The selected runtime reports the session present, busy or waiting on a person included, and it is a thread instrukt sends input to. |
+| Not held | The value is no session reference; or it names another runtime than the selected one; or the selected runtime reports it gone, unknown to it, archived or deleted; or it is an instrukt-owned thread, of any binding kind, whose native project is not its checkout's, which instrukt sends nothing (`project/instrukt/spec/feature/runner/session-continuity`, T3 realization of keyed dispatch). |
+| Cannot say | The runtime cannot be reached or its answer is an observation error; or delivery holds an instrukt-owned thread's input until its changed or unverified native project is restored. |
+
+Nothing is asked of a session the runtime cannot say about, and no review of
+the candidate is asked for while any uncovered commit's session is unanswered;
+the next tick derives again, and the sessions left unanswered are reported to
+the operator through `instrukt events status`
+(`project/instrukt/design/architecture/outside-gate`).
+
+**Asking an author.** Each session workflow names to be asked for an uncovered
+commit is sent one ask, a runner-authored `[Instrukt Notification]`
+(`general/policy/message-identity-headers`) delivered through
+the session's input delivery
+(`project/instrukt/spec/feature/runner/procedure-event-delivery`). The runner
+renders it in one fixed wording from the project, the candidate and the
+commit, and it names `general/policy/commits` and the two ways to decide:
+`instrukt review exempt --commit <commit> --basis <basis>`, or asking for the
+independent review of a head that contains the commit
+(`project/instrukt/spec/feature/runner/requested-review`). It carries no text
+any agent wrote.
+
+The runner keeps an ask record for each commit and session it asks, as
+approval attention keeps its own record beside the input it queues
+(`project/instrukt/spec/feature/runner/session-continuity`, Approval
+attention). The record and its input are written in one transaction, before
+anything reaches the runtime; the record's key, states and retirement are the
+state database's `review_asks`
+(`project/instrukt/spec/feature/work/state-database`).
+
+| Ask record state | Meaning for the gate |
+| --- | --- |
+| Queued | The ask waits in delivery. The session counts as asked; nothing more is sent. |
+| Asked | The runtime accepted the ask, whether or not delivery later saw it enter a turn. Nothing more is sent for that commit and session. |
+| Undelivered | Delivery ended the ask without the runtime accepting it, as when keyed succession fails a misplaced thread's inputs. The record keeps the cause; a later derivation that still names that session to be asked sends a new ask under the next attempt. |
+
+An ask whose session the runtime reports gone before it is delivered stays
+pending under delivery's rule: delivery retries it on each pass and logs every
+failed attempt, and the record stays queued. The gate meanwhile reads that
+session as not held. When the record is retired, its inputs that delivery has
+not selected or that ended failed are removed, so nothing stale is sent later
+(`project/instrukt/spec/feature/work/state-database`, `review_asks`).
+
+| Ask record | Value |
+| --- | --- |
+| Nature | External bookkeeping: whether a commit's author was asked, through which input, and with what outcome. |
+| Owner | The runner; written only by the tick's review pass, which queues it, takes its outcome from delivery and retires it. |
+| Loss cost | A repeated external effect: one more ask per lost record. |
+| Medium | A table of the state database, beside the input delivery it is queued with, so the record and its input commit together. |
+| Write isolation | The state database's writer lock, held by the tick for each short transaction that queues, updates or retires asks, never while it reads the runtime or GitHub. |
+| Scope | One computer: the sessions asked are its runtime's. A computer that takes over serving the project (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes) holds none of these records and asks afresh. |
+
+**Telling the integrator.** For a held candidate the runner emits
+`runner.candidate_held` (`project/instrukt/spec/domain/runner`) once every
+uncovered commit's sessions are answered: the project, the candidate, and each
+uncovered commit with the sessions it names and whether each was asked or no
+author of ours can decide for it. Its occurrence identity is the project and
+the candidate, so the event log appends it once, however often the candidate
+is found held.
+
+**Candidate requests.** While the gate calls for no review of the candidate,
+its queued requests end (One review per commit); when it calls for one, the
+request is emitted as under Candidate requests.
+
+### Knowledge proposals in a company home
+
+In a company home admitted for automatic review, instrukt carries the
+company's knowledge proposals to review and integration. The observation's
+fetch of the home prunes remote-tracking branches the remote no longer holds,
+and instrukt considers only the heads of the home's remote-tracking branches,
+never a branch that exists only on the computer. Whether a head is an
+admitted proposal is the company context's answer
+(`project/instrukt/spec/domain/company`, Knowledge proposal).
+
+- **Opening.** For each such head that is an admitted proposal, is not
+  contained in the remote-tracking canonical branch, and that no pull
+  request, open or closed, has as its head, instrukt opens a pull request for
+  its branch as the identity the `company-agent` role selects
+  (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+  The pull request is then reviewed as every eligible pull request is.
+- **Handoff.** When an open pull request's current head is an admitted
+  proposal, holds an approving verdict work answers is current and covers the
+  canonical branch, and is not contained in the remote-tracking canonical
+  branch, instrukt emits `runner.proposal_approved`, which wakes the
+  company's standing integrator to integrate that exact head. No person
+  merges it: the integrator is the one writer of the company's default branch
+  (`general/policy/commits`).
+- **Reports.** `instrukt events status` lists, with their doors, the
+  unestablished entries the company context names and a proposal store whose
+  condition is not usable, derived through the company context's lookups each
+  time it runs, and raises each as an anomaly
+  (`project/instrukt/spec/feature/runner/anomaly-notification`).
+
+Opening proposal pull requests, and nothing else, needs the proposal
+pull-request credential, whose readiness work answers: met, unmet with a
+finding, or GitHub cannot be asked
+(`project/instrukt/spec/feature/work/github-apps`, Company repositories). It is
+checked where it enters (`sdlc/principle/design-fundamentals`, Fail Fast):
+
+- **At entry.** `instrukt install` and `instrukt install --check` ask it for
+  each company home admitted for automatic review, beside automatic review's
+  readiness, and report an unmet answer or one GitHub cannot give as a
+  finding with its repair door.
+- **On each pass.** The review observation of a company home asks it once.
+  Met opens pull requests as above. Unmet withholds only the opening of
+  proposal pull requests, with a warning naming the finding and its door.
+  GitHub cannot be asked withholds only the opening for that pass; the
+  source's cause is recorded and a warning is logged, as for automatic
+  review's readiness, and the next tick asks again.
+
+Automatic review of the home's other pull requests, the handoff of heads
+already approved and CI observation never wait on this credential. An opening
+GitHub or the runtime cannot answer is warned and tried again on the next tick
+(Availability). An opening GitHub refuses while the credential is met is a
+defect of the part: a warning
+carries GitHub's answer. Neither writes any state.
 
 ### Enablement
 
@@ -263,7 +379,7 @@ publishes the status and does not change branch protection.
 
 When GitHub or the runtime is unavailable, observation, activation and
 publication retry until the service returns, and the unavailable service is
-reported to the operator (`project/instrukt/policy/checks-and-guards`).
+reported to the operator (`project/instrukt/design/architecture/outside-gate`).
 
 ## Use cases
 
@@ -350,4 +466,3 @@ Then no review is started for it
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/work/github-apps](../work/github-apps.md)
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)
-- [project/instrukt/policy/checks-and-guards](../../../policy/checks-and-guards.md)

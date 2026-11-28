@@ -23,7 +23,7 @@ checks and escalates human-owned decisions under
 - **Allowed** — instrukt CLI operations, external API/service calls, messaging
   and notification, research and data-gathering, and filesystem writes
   confined to the task's own workspace directory
-  (`{project_root}/workspace/{slug}/`).
+  (`{project_root}/.instrukt/workspace/{slug}/`).
 - **Disallowed** — any edit to a file tracked in the repository, and any
   commit. Work that requires either is `change`, `feature`, or `bug` — never
   `task`.

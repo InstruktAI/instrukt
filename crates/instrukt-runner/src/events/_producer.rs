@@ -92,6 +92,10 @@ impl Event {
             Self::MainFailing { project, .. } => {
                 EventRef::new(ReferenceKind::RepositoryRef, &format!("{project}/main"))?
             }
+            Self::CandidateHeld { project, .. } => EventRef::new(
+                ReferenceKind::RepositoryRef,
+                &format!("{project}/origin/integrate"),
+            )?,
             Self::WorkflowFinalized { todo, .. }
             | Self::AttentionExecutionStalled { todo, .. }
             | Self::AttentionInputWaiting { todo, .. }
@@ -107,6 +111,11 @@ impl Event {
                 pull_request,
                 ..
             } => review_subject(project, *pull_request)?,
+            Self::ProposalApproved {
+                project,
+                pull_request,
+                ..
+            } => review_subject(project, Some(*pull_request))?,
         };
         let Value::Object(mut data) = serde_json::to_value(self)? else {
             return Err(EnvelopeError::Declaration(

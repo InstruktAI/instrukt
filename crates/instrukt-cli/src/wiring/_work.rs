@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use instrukt_core::config::{self, Module};
 use instrukt_core::git;
-use instrukt_core::interfaces::TodoExistence;
+use instrukt_core::interfaces::{CommitExemption, InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::WorkPorts;
 use instrukt_todos::evidence::WorkEvidence;
 use instrukt_todos::work::{Work, WorkError, WorkExistence};
@@ -41,6 +41,55 @@ pub(super) fn available_todo_existence(
         Err(err) => return Err(err.into()),
     };
     Ok(Some(Arc::new(WorkExistence::new(work, project))))
+}
+
+/// Work's admission of a commit's exemption, for the repository's commit
+/// command: wired whenever the caller stands in an adopted project, whatever
+/// its todos switch, as `instrukt review exempt` is.
+pub(super) fn commit_exemption(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn CommitExemption>>> {
+    let Some(root) = git::worktree_root(&ctx.cwd)? else {
+        return Ok(None);
+    };
+    let Some(slug) = config::Configuration::load(&ctx.home, Some(&root))?.project()? else {
+        return Ok(None);
+    };
+    Ok(Some(Arc::new(ReviewExemption {
+        home: ctx.home.clone(),
+        project: instrukt_todos::work::review::project(slug, &root),
+        clock: ctx.clock.clone(),
+    })))
+}
+
+/// The commit command's exemption, admitted and recorded by
+/// `instrukt_todos::work::review::exempt` exactly as `instrukt review
+/// exempt` records it.
+struct ReviewExemption {
+    home: instrukt_core::home::Home,
+    project: instrukt_todos::work::review::ReviewProject,
+    clock: crate::clock::Clock,
+}
+
+impl CommitExemption for ReviewExemption {
+    fn exempt(
+        &self,
+        commit: &instrukt_core::ids::CommitSha,
+        basis: &str,
+        caller: Option<&instrukt_core::ids::SessionRef>,
+    ) -> Result<(), InterfaceError> {
+        let request = instrukt_todos::work::review::ExemptRequest {
+            commit: commit.as_str().to_owned(),
+            basis: basis.to_owned(),
+            caller: caller.cloned(),
+        };
+        instrukt_todos::work::review::exempt(&self.home, &self.project, &request, &|| {
+            self.clock.now()
+        })
+        .map(|_| ())
+        .map_err(|error| InterfaceError {
+            module: "todos",
+            message: error.to_string(),
+        })
+    }
 }
 
 /// The runner-declared work interfaces. Wired whatever the caller's own
@@ -81,6 +130,18 @@ pub(super) fn head_verdicts(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::H
     Arc::new(instrukt_todos::work::review::HeadVerdictWork::new(
         ctx.home.clone(),
     ))
+}
+
+/// Work's answers to other computers' evaluation requests, read from this
+/// home with the process environment and this invocation's clock.
+pub(super) fn evaluation(
+    ctx: &Ctx,
+) -> anyhow::Result<Arc<dyn instrukt_runner::interfaces::EvaluationAnswers>> {
+    Ok(Arc::new(instrukt_todos::eval::EvaluationAnswering::new(
+        ctx.home.clone(),
+        super::environment(ctx)?,
+        ctx.clock.shared(),
+    )))
 }
 
 /// Work's evidence read contract for workflow, wired as the ports are: the

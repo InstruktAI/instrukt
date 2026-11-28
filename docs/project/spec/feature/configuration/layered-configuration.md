@@ -80,8 +80,7 @@ under its revision check and whole-document validation
 `config validate` and `install --check` report it without changing anything
 (`project/instrukt/spec/feature/runner/module-installation`). A project layer
 that arrives with it through a commit is not admitted for automatic review on
-that computer; its other capabilities are unaffected
-(`project/instrukt/policy/checks-and-guards`). The readiness findings need
+that computer; its other capabilities are unaffected. The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
 
@@ -106,13 +105,112 @@ revision check and whole-document validation
 (`project/instrukt/spec/feature/configuration/configuration-editing`).
 `config validate` reports it without changing anything. A project layer that
 arrives with it through a commit is not admitted for reclaiming declared
-output on that computer; the project's other capabilities are unaffected
-(`project/instrukt/policy/checks-and-guards`). Installation inspection reports
+output on that computer; the project's other capabilities are unaffected. Installation inspection reports
 the withheld reclamation
 (`project/instrukt/spec/feature/runner/module-installation`), and no declared
 output is removed without an admitted declaration; the release of a delivered
 todo's worktree does not depend on it
 (`project/instrukt/spec/feature/runner/worktree-reclamation`).
+
+### Home backup configuration
+
+`backup` is allowed in the global layer only; a project layer or company home
+never configures machine backup (`project/instrukt/spec/feature/runner/home-backup`).
+When absent, home backup is unconfigured and creates no scheduling or alerting
+demand.
+
+When present, `backup` declares:
+
+- **Required:**
+  - `endpoint` — S3-compatible endpoint URL: an `https` URL (or loopback
+    `http` for local verification, as in
+    `project/instrukt/spec/feature/runner/mcp-access`) with no embedded
+    credentials or userinfo (`sdlc/policy/security-awareness`);
+  - `region` — non-empty S3 region name;
+  - `bucket` — non-empty target bucket name;
+  - `access_key_id` and `secret_access_key` — exact `${NAME}` secret references
+    resolved exclusively from the selected home's protected `secrets.env`
+    (`project/instrukt/spec/feature/configuration/owned-files`); literal
+    credentials are findings and expanded values are never disclosed in reads
+    or diagnostics;
+  - `age_recipient` — valid public `age` recipient string for client-side
+    encryption.
+- **Optional:**
+  - `prefix` — optional key prefix (no path-traversal segments) under which
+    each computer stores its machine-ID namespace; omitted stores
+    `<machine-id>/...` at the bucket root;
+  - `keep` — positive integer generation retention count (default `14`);
+  - `time` — daily local schedule time in `HH:MM` 24-hour form (default
+    declared by the global schema).
+
+A `backup` declaration in a project layer or company home, a missing required
+field, an invalid `endpoint`, `region`, `bucket`, or `prefix`, a literal
+credential instead of a `${NAME}` reference, a missing, blank, unreadable, or
+insufficiently protected secret value for `access_key_id` or
+`secret_access_key` in `~/.instrukt/secrets.env` (naming the key, reference,
+and `instrukt secrets set` door without disclosing values), an invalid `age`
+recipient, an invalid schedule time, a non-positive retention count, or an
+unknown subkey is a validation finding at `backup` naming the offending key
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where configuration enters). `config patch` refuses a write that introduces such a
+finding; `config validate --global`, `config validate`, and
+`config validate --company <name>` report it in their respective documents
+without changing anything.
+
+An invalid `backup` declaration in a loaded global layer withholds only home
+backup admission on that computer: backup commands refuse with the finding and
+its configuration door, installation inspection reports the withheld backup
+timer without withdrawing an existing owned unit
+(`project/instrukt/spec/feature/runner/module-installation`), and every other
+capability the global layer admits runs unchanged.
+
+<!-- planned:capability-free-model-call -->
+### LLM endpoint configuration
+
+`llm` is a global-only mapping keyed by internal purpose, starting with
+`llm.screening` (`project/instrukt/spec/domain/screening`), so future internal
+LLM callers can add their own `llm.<purpose>` entries beside it while sharing
+provider secrets in `~/.instrukt/secrets.env`. A project layer or company home
+never configures `llm`. When absent, `llm.screening` is unconfigured.
+
+When present, `llm.screening` declares:
+
+- **Required:**
+  - `url` — base address of an OpenAI-compatible chat-completions service: an
+    `https` URL, or a loopback `http` URL (`localhost`, `127.0.0.0/8`, `::1`),
+    with no embedded credentials, query or fragment — rejecting malformed
+    addresses, embedded credentials and non-loopback plaintext `http` endpoints
+    whether or not `api_key` is set (`sdlc/policy/security-awareness`, reusing
+    `admitted_address` as in `project/instrukt/spec/feature/runner/mcp-access`);
+  - `model` — non-empty model identifier served by the endpoint. Bring a plain
+    model with no built-in search or browsing; instrukt performs no runtime
+    check on which model is configured, and a model that searches on its own is
+    outside the capability-free guarantee.
+- **Optional:**
+  - `api_key` — exact `${NAME}` secret reference resolved exclusively from
+    `~/.instrukt/secrets.env`
+    (`project/instrukt/spec/feature/configuration/owned-files`), shareable
+    across `llm.*` entries; omitted for local endpoints needing no key; literal
+    credentials are findings and expanded values are never disclosed in reads
+    or diagnostics;
+  - `timeout` — positive whole seconds (`1` to `600`, default `45`) bounding
+    one HTTP request try against the endpoint.
+
+An `llm` declaration in a project layer or company home, an unknown purpose key
+under `llm`, an unknown subkey under `llm.screening`, a missing `url` or
+`model`, an invalid `url`, a literal `api_key` instead of a `${NAME}`
+reference, or an out-of-range `timeout` is a validation finding at `llm` naming
+the offending key (never disclosing embedded credentials or secret values).
+`config patch` refuses a write introducing such a finding; `config validate
+--global`, `config validate` and `config validate --company <name>` report it
+without changing anything.
+
+An invalid `llm.screening` declaration in a loaded global layer withholds only
+screening admission on that computer: capability-free calls and
+`instrukt is-safe` refuse at entry naming the cause and configuration/secrets
+door without disclosing secret or embedded credential material, while every
+other capability the global layer admits runs unchanged.
+<!-- /planned:capability-free-model-call -->
 
 ### Layer rules
 
@@ -121,6 +219,7 @@ todo's worktree does not depend on it
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
 | `agents.<name>.git_author` | global only | commit composition |
+| `backup` (required `endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`, `age_recipient`; optional `prefix`, `keep`, `time`) | global only | runner home backup |
 | `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
 | `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
 | `events.watch: [{remote, ref}]` | project only | runner |
@@ -155,6 +254,7 @@ todo's worktree does not depend on it
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
 | `agents.<name>.git_author` | global only | commit composition |
+| `backup` (required `endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`, `age_recipient`; optional `prefix`, `keep`, `time`) | global only | runner home backup |
 | `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
 | `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
 | `events.watch: [{remote, ref}]` | project only | runner |
@@ -168,7 +268,7 @@ todo's worktree does not depend on it
 | `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
 | `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
-| `screening` (`url`, the base address of an OpenAI-compatible chat-completions service: an `https` address, or an `http` address that carries no `api_key` or is on this computer's loopback, never with credentials in it; `model`; optional `api_key`, an exact `${NAME}` reference into the machine's `secrets.env`; optional `timeout`, the whole seconds one request may take, 1 to 600, default 45; optional `max_text_chars`, default 12000). Bring a plain model, one with no built-in search or browsing; a model that searches on its own is outside the capability-free guarantee | global only | screening (`project/instrukt/spec/domain/screening`) |
+| `llm.screening` (under top-level `llm` map; required `url` — `https` or loopback `http`, never with embedded credentials, query or fragment — and `model`; optional `${NAME}` `api_key` into `~/.instrukt/secrets.env`; optional `timeout`, 1 to 600 s, default 45; bring a plain model with no built-in search or browsing) | global only | screening (`project/instrukt/spec/domain/screening`) |
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
@@ -199,6 +299,20 @@ and rendered as a company's
 `project/instrukt/spec/feature/publication/agent-entrypoints`, What makes a
 repository a company home).
 
+`company_name` (one line of text that is not blank) is project only and
+valid only beside `company_repository: true`. With a `project` of the form
+`company-<key>`, it declares the repository's company identity: the company's
+key and the name people write the company by
+(`project/instrukt/spec/domain/configuration`, The company identity). A
+company repository without a company identity has a finding naming the key,
+repaired by an `instrukt config patch` of the project layer. It is a finding
+against the project's `modules.events`: `instrukt config validate` reports
+it, a patch that would leave it is refused, and a layer that arrives with it
+withholds the home's event responses, as a module finding withholds its
+module's work (`project/instrukt/spec/feature/runner/work-dispatch`, Admitted
+configuration), since prerequisites are checked where they enter
+(`sdlc/principle/design-fundamentals`, Fail Fast).
+
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;
 there is no project-layer `actions` key. CI required checks remain the merge gate.
@@ -217,8 +331,8 @@ has no `redis.cluster.url`, that is a finding at `modules.events`: `config patch
 refuses it, `config validate` and `install --check` report it, and a project layer
 that arrives with it through a commit is not admitted for event responses on that
 computer; its todos and history are unaffected
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters, never discovered by the running runner).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter, never discovered by the running runner).
 
 `ingress.computer` is the existing stable instrukt machine ID. `ingress.reactions`
 names, by the same kind of ID, the one computer that activates procedures for
@@ -310,7 +424,6 @@ No command/agent verb kind or agent-action exit-status router exists.
 | `schedule_check` | Set, update or clear this agent's one scheduled reply check (`general/procedure/ai-to-ai-operations`) through the runtime's scheduler, at the interval the agent supplies, carrying its own identity so a later run can clear it. |
 | `look_around` | Discover current conversations in the supplied project/scope, including native current-thread metadata search and settled threads where supported. It releases no archive/history search service. |
 | `steer` | Deliver current direction at the target's supported safe input boundary while its turn and children continue; state queued/entry degradation when native interjection is absent. |
-| `discuss` | Open, participate in and close a runner-owned conversation link between two peer threads; the person participates in either thread and the runner relays finished turns with attribution. |
 | `start_thread` | Start a separately addressed conversation with its supplied project, semantic key, display title, initialized brief and placement. Repository todos use a single `<slug>/work` worktree; tasks create no git worktree. A worker uses `dispatch`. |
 | `cancel_child` | Stop this parent's identified child under its existing mandate, retaining its work/evidence and distinguishing accepted cancellation from completion. |
 | `finish_thread` | Dormantly settle an addressed conversation, or this agent's own conversation where the runtime supports it, so it stays wakeable in place with full context: a resting conversation, or the orchestrator thread of a todo that was delivered or withdrawn. Retain open obligations, forbid external agents and runner automation from settling a standing agent (a standing procedure may self-settle when parked dormant), and apply self-settling at its supported turn boundary. |
@@ -346,7 +459,6 @@ agent-facing consumers retrieve the value through its alias.
 | `schedule_check` | Set, update or clear the check with native scheduled tasks bound to this thread and running in its own session, as the `schedule_check` contract above requires. The native wording is owned by the shipped entry, `crates/instrukt-core/src/config/shipped/t3.yaml`. |
 | `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
 | `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
-| `discuss` | When asked to open a discussion, use `instrukt discuss open <thread> [--message <text>]`; the native caller is the other member. Use `instrukt discuss close [--message <text>]` to deliver an optional final contribution and close for both members. The running instrukt runner shares finished turns automatically under project/instrukt/spec/feature/runner/conversation-links. |
 | `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a repository todo, start `t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>` (on another computer use `--worktree origin/<slug>/work --branch <slug>/work`; legacy un-integrated `<slug>/prepare` branches are carried forward automatically). instrukt derives these names; creation refuses an existing local branch. Native shared children inherit `<slug>/work`. After deliberate native startup, enter `instrukt todo work <slug> --placement-evidence <file\|->` containing native session, key, title, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
 | `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
 | `finish_thread` | Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message. |
@@ -458,7 +570,8 @@ file, the reason and `instrukt config validate --global`; that command fails
 with the file's own problem and where it is. A layer that loads is never
 judged again by the commands that read it: its validation findings, an
 unknown key among them, are `instrukt config validate`'s, and stop no other
-command.
+command, except where a feature's own admission-withholding rule applies (such
+as an invalid `backup` declaration withholding only home backup).
 
 ### Schema versions and migration
 
@@ -567,6 +680,7 @@ And the configuration is unchanged
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
+| `backup` | global-only mapping with required `endpoint` (`https` URL, or loopback `http`, without credentials), `region`, `bucket`, `access_key_id` and `secret_access_key` (`${NAME}` references resolving to non-blank values in `~/.instrukt/secrets.env`), `age_recipient` (public `age` recipient); optional `prefix`, `keep` (positive integer), `time` (`HH:MM` 24-hour local time) | absent (unconfigured); when present, `keep` defaults to `14`, `prefix` defaults to empty, and `time` follows the published global schema default (`instrukt config schema --global`). |
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
@@ -617,6 +731,16 @@ Then the declaration is accepted
 But when the declaration names a location outside the project's checkout
 Then validation reports that entry
 And the project is not admitted for reclaiming that output on the computer
+```
+
+### UC-CL10: Configure machine home backup globally with protected credentials
+
+```gherkin
+Given an operator configures encrypted offsite home backup in the machine's global configuration with a secure credential-free endpoint, secret references whose non-blank values exist in the machine's protected secrets file, and a valid public encryption recipient
+When the operator validates or writes the global configuration
+Then the backup declaration is accepted and secret values remain undisclosed
+But when a project configuration or company home declares home backup, or the global declaration uses an insecure or credential-bearing endpoint, embeds literal credentials, references missing or blank secrets, or supplies an invalid recipient, schedule time, bucket, region, prefix or retention count
+Then validation reports the offending setting and configuration writes refuse it
 ```
 
 ## Known caveats

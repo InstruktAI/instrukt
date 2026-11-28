@@ -63,7 +63,6 @@ bundles:
     - {action: assignment-write, scope: own}
     - {action: session-observe, scope: own}
     - {action: standing-bind, scope: own}
-    - {action: conversation-link, scope: own}
     - {action: attention-raise, scope: own}
   integrate:
     - {action: integration, scope: own}
@@ -93,7 +92,6 @@ bundles:
     - {action: session-observe, scope: any}
     - {action: history-read, scope: any}
     - {action: standing-bind, scope: any}
-    - {action: conversation-link, scope: any}
     - {action: agents-read, scope: any}
     - {action: agents-write, scope: any}
     - {action: config-read, scope: any}

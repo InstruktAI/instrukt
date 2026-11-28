@@ -51,6 +51,8 @@ pub struct Admitted {
     published: bool,
     /// The retention window admitted: `None` while it is off or withheld.
     thread_retention: Option<jiff::SignedDuration>,
+    /// Whether global `backup` findings withheld home backup admission.
+    backup_withheld: bool,
 }
 
 /// A company home admitted with its generation.
@@ -136,11 +138,12 @@ pub struct Candidate {
 impl Admitted {
     /// Builds a generation from the files, reading each once. An invalid
     /// machine layer or `agents.yaml` refuses it: nothing can run on them;
-    /// a machine layer whose only findings withhold thread retention is
-    /// admitted with the window off and its findings reported. A
-    /// company home that does not validate, or a project whose layer cannot
-    /// be read, is left out with its findings and makes the candidate
-    /// incomplete; a finding against a project's module withholds that module.
+    /// a machine layer whose only findings withhold thread retention or home
+    /// backup is admitted with those capabilities withheld and its findings
+    /// reported. A company home that does not validate, or a project whose
+    /// layer cannot be read, is left out with its findings and makes the
+    /// candidate incomplete; a finding against a project's module withholds
+    /// that module.
     pub fn load(home: &Home) -> Result<Candidate, AdmissionError> {
         // Admission reads and never writes: older documents are converted in
         // memory, and the profiles are the shipped ones when there is no file.
@@ -148,7 +151,7 @@ impl Admitted {
         let raw_global = read(&global_path)?.map(|doc| doc.value);
         let global_layer = raw_global
             .clone()
-            .map(|raw| inspected(home, &Layer::Global, &global_path, raw))
+            .map(|raw| inspected(&Layer::Global, &global_path, raw))
             .transpose()?;
         let agents_path = home.agents_file();
         let agents_bytes = match std::fs::read(&agents_path) {
@@ -162,11 +165,7 @@ impl Admitted {
                 .into());
             }
         };
-        let agents = Arc::new(Agents::from_documents(
-            home,
-            agents_bytes,
-            raw_global.as_ref(),
-        )?);
+        let agents = Arc::new(Agents::from_documents(agents_bytes, raw_global.as_ref())?);
         let records: Vec<PublishedRecord> = PublishedRecord::load_all(home)?;
         let published = !records.is_empty();
         let mut layers = Vec::new();
@@ -179,7 +178,7 @@ impl Admitted {
             let document = record.checkout.join(super::CONFIG_FILE_NAME);
             let value = read(&document)
                 .and_then(|doc| {
-                    doc.map(|doc| inspected(home, &layer, &document, doc.value))
+                    doc.map(|doc| inspected(&layer, &document, doc.value))
                         .transpose()
                 })
                 .map_err(|error| unreadable(document.clone(), &error));
@@ -202,12 +201,20 @@ impl Admitted {
         };
         let mut findings = Vec::new();
         let mut thread_retention = super::_thread_retention::admitted(global_layer.as_ref());
+        let mut backup_withheld = false;
         if let Some(value) = &global_layer {
             let found = findings_given(home, &Layer::Global, &global_path, value, given)?;
             match admit_machine_layer(found) {
                 MachineLayer::Admitted => {}
-                MachineLayer::RetentionWithheld(found) => {
-                    thread_retention = None;
+                MachineLayer::Withheld {
+                    findings: found,
+                    thread_retention: withhold_retention,
+                    backup: withhold_backup,
+                } => {
+                    if withhold_retention {
+                        thread_retention = None;
+                    }
+                    backup_withheld = withhold_backup;
                     findings.extend(found);
                 }
                 MachineLayer::Refused(found) => {
@@ -271,10 +278,17 @@ impl Admitted {
                 projects,
                 published,
                 thread_retention,
+                backup_withheld,
             },
             findings,
             complete,
         })
+    }
+
+    /// Whether global `backup` findings withheld home backup admission in this
+    /// generation while leaving the rest of the global layer admitted.
+    pub fn backup_withheld(&self) -> bool {
+        self.backup_withheld
     }
 
     /// The computer's retention window as admitted: `None` while it is off,
@@ -373,9 +387,13 @@ impl Admitted {
 enum MachineLayer {
     /// No finding: the layer is admitted whole.
     Admitted,
-    /// Only findings that withhold thread retention: the layer is admitted
-    /// with the window off, and these are reported.
-    RetentionWithheld(Vec<Finding>),
+    /// Only findings that withhold thread retention and/or home backup: the
+    /// layer is admitted with those capabilities withheld, and these are reported.
+    Withheld {
+        findings: Vec<Finding>,
+        thread_retention: bool,
+        backup: bool,
+    },
     /// Any other finding: nothing can run on the layer.
     Refused(Vec<Finding>),
 }
@@ -385,8 +403,17 @@ enum MachineLayer {
 fn admit_machine_layer(found: Vec<Finding>) -> MachineLayer {
     if found.is_empty() {
         MachineLayer::Admitted
-    } else if found.iter().all(super::withholds_thread_retention) {
-        MachineLayer::RetentionWithheld(found)
+    } else if found
+        .iter()
+        .all(|f| super::withholds_thread_retention(f) || super::withholds_backup(f))
+    {
+        let thread_retention = found.iter().any(super::withholds_thread_retention);
+        let backup = found.iter().any(super::withholds_backup);
+        MachineLayer::Withheld {
+            findings: found,
+            thread_retention,
+            backup,
+        }
     } else {
         MachineLayer::Refused(found)
     }
@@ -410,7 +437,7 @@ fn admit_company(
     let value = read_layer(home, &layer)
         .and_then(|found| {
             found
-                .map(|(path, doc)| inspected(home, &layer, &path, doc.value))
+                .map(|(path, doc)| inspected(&layer, &path, doc.value))
                 .transpose()
         })
         .map_err(|error| vec![unreadable(document.clone(), &error)])?;
@@ -437,7 +464,7 @@ fn admit_company(
     let project = read_layer(home, &project_layer)
         .and_then(|found| {
             found
-                .map(|(path, doc)| inspected(home, &project_layer, &path, doc.value))
+                .map(|(path, doc)| inspected(&project_layer, &path, doc.value))
                 .transpose()
         })
         .map_err(|error| vec![unreadable(project_layer.path(home), &error)])?;
@@ -733,6 +760,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_old_shape_company_layer_loads_with_its_event_responses_withheld() {
+        // A company layer of the shape written before the company identity:
+        // schema 6, a company repository, no `company_name`.
+        let old: Value = serde_yaml_ng::from_str(&format!(
+            "schema_version: {}\nproject: company-acme\ncompany_repository: true\nmodules: {{todos: false, events: true}}\nreview: {{automatic: true}}\n",
+            super::super::PROJECT_SCHEMA_VERSION
+        ))
+        .unwrap();
+        let findings: Vec<Finding> =
+            super::super::_validate::judge(&old, super::super::LayerKind::Project, None, None)
+                .into_iter()
+                .filter(|f| f.kind != FindingKind::EventsNeedTransport)
+                .map(|f| Finding {
+                    document: PathBuf::from("instrukt.yaml"),
+                    key: f.key,
+                    kind: f.kind,
+                    message: f.message,
+                })
+                .collect();
+        assert_eq!(
+            findings
+                .iter()
+                .map(|f| (f.key.as_str(), f.kind))
+                .collect::<Vec<_>>(),
+            vec![("modules.events", FindingKind::NoCompanyIdentity)]
+        );
+        let switched = Modules {
+            todos: false,
+            events: true,
+            history: true,
+        };
+        assert_eq!(
+            switched.admitted(&findings),
+            Modules {
+                todos: false,
+                events: false,
+                history: true,
+            }
+        );
+    }
+
     /// A finding that the selected runtime cannot carry the retention window.
     fn retention_capability() -> Finding {
         Finding {
@@ -750,7 +819,32 @@ mod tests {
     fn a_machine_layer_whose_only_finding_withholds_retention_is_admitted_with_it_withheld() {
         assert_eq!(
             admit_machine_layer(vec![retention_capability()]),
-            MachineLayer::RetentionWithheld(vec![retention_capability()])
+            MachineLayer::Withheld {
+                findings: vec![retention_capability()],
+                thread_retention: true,
+                backup: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_machine_layer_with_backup_findings_only_withholds_backup_alone() {
+        let backup_finding = finding("backup.endpoint");
+        assert_eq!(
+            admit_machine_layer(vec![backup_finding.clone()]),
+            MachineLayer::Withheld {
+                findings: vec![backup_finding.clone()],
+                thread_retention: false,
+                backup: true,
+            }
+        );
+        assert_eq!(
+            admit_machine_layer(vec![retention_capability(), backup_finding.clone()]),
+            MachineLayer::Withheld {
+                findings: vec![retention_capability(), backup_finding],
+                thread_retention: true,
+                backup: true,
+            }
         );
     }
 
@@ -779,7 +873,7 @@ mod tests {
     /// A generation with nothing in it but whether a project is published.
     fn generation(published: bool) -> Admitted {
         let home = Home::at_user_home(PathBuf::from("/nonexistent"));
-        let agents = Arc::new(Agents::from_documents(&home, None, None).unwrap());
+        let agents = Arc::new(Agents::from_documents(None, None).unwrap());
         Admitted {
             global: Configuration::from_layers(&home, None, None).unwrap(),
             global_layer: None,
@@ -788,6 +882,7 @@ mod tests {
             projects: Vec::new(),
             published,
             thread_retention: None,
+            backup_withheld: false,
         }
     }
 

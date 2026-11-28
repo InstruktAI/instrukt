@@ -54,7 +54,7 @@ conversions. The file
 overrides everything it names
 (`project/instrukt/spec/feature/configuration/agent-selection`), and a
 person's stated choices and restrictions are migrated, never discarded
-(`project/instrukt/policy/checks-and-guards`); the conversion takes no value
+(`project/instrukt/spec/feature/configuration/owned-files`); the conversion takes no value
 from the shipped defaults. A file that holds both entries is refused with its
 source intact, naming both, until one is removed. A file that names neither
 entry takes the new version and no other change.
@@ -80,7 +80,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
-| Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
+| Session observation and binding | `session-observe`, `history-read`, `standing-bind` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. These do not add a general session messaging API. |
 | Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
 | Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
 | Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |
@@ -102,6 +102,13 @@ computer's review evidence for a project and are `installation-write`,
 addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`).
 
+`instrukt repo commit --exempt` is `code-commit`: the exemption it records
+is the commit's own, declared in the commit act by the session the commit
+names, and the evidence's admission invariants decide whether it is admitted,
+for every caller alike (`project/instrukt/spec/feature/work/github-apps`).
+Recording an exemption for a commit already made is `instrukt review exempt`,
+which is `stamp`.
+
 `instrukt repo reclaim` belongs to the Repository family: it is `code-commit`,
 so the roles that commit in a todo's worktree are the roles that reclaim it.
 Its object is the workspace the caller's assignment records, wherever the
@@ -113,13 +120,13 @@ caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 `instrukt review start` asks for a requested review
 (`project/instrukt/spec/feature/runner/requested-review`) and is
 `assignment-write`, addressing the project the caller stands in: it records an
-assignment and starts the session that works it, as `todo attempt` reserves
-one, and records no review evidence. The shipped `orchestrate` bundle carries
-it; focused roles without that bundle, the reviewers and builders among them,
-are refused it. The requested reviewer it starts resolves to the
-`commit-reviewer` role, the project and its placement from the runner's
-requested-review record, and its `stamp` grant at `own` reaches that project's
-review evidence.
+assignment and starts or wakes the session that works it, as `todo attempt`
+reserves one, and records no review evidence. The shipped `orchestrate` bundle
+carries it; focused roles without that bundle, the reviewers and builders among
+them, are refused it. The requested reviewer it starts or wakes resolves to the
+`commit-reviewer` role, the project and its placement from the latest open or
+accepted ask recorded under its start key in the runner's requested-review
+record, and its `stamp` grant at `own` reaches that project's review evidence.
 
 `instrukt init --company <key>` belongs to the Repository family: it is
 `repository-write`, and its object is the company's home, a machine-wide
@@ -131,11 +138,13 @@ and nothing is created
 
 `instrukt docs units` belongs to the Documentation family: it is `docs-read`,
 as the read forms of the renderings are — `docs render --check`,
-`docs plugin --check` and `docs plugin --validate`. Its object is the
-checkout the caller stands in, which it reads and never writes; like those
-read forms, it needs no home, publication, configuration layer, database or
-network, so a fresh clone with the binary is enough
+`docs render --plugin --check`, `docs plugin --check` and
+`docs plugin --validate`. Its object is the checkout the caller stands in,
+which it reads and never writes; like those read forms, it needs no home,
+publication, configuration layer, database or network, so a fresh clone with
+the binary is enough
 (`project/instrukt/spec/feature/publication/compressed-units`).
+`docs render --plugin`, like `docs render` and `docs plugin`, is `docs-write`.
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
@@ -150,6 +159,16 @@ Repository family: it is `code-commit`, addressing the working tree the hook
 runs in, so `own` reaches it in the workspace the caller's assignment records.
 The detached `hooks worker` a post-hook starts remains `runner-execute`, and
 the sync it runs remains `publication`.
+
+`instrukt backup` belongs to the Installation and runner family, addressing
+this computer's installation (a machine-wide object reached only by `any`):
+`instrukt backup list` is `installation-read`, and `instrukt backup run` and
+`instrukt backup restore` are `installation-write`, matching
+`instrukt review export` and `instrukt review import`. A session whose recorded
+assignment names a company (a company conversation's among them) is refused
+every `instrukt backup` command whatever its class, naming the operator's door,
+and nothing runs (`project/instrukt/spec/feature/runner/home-backup`,
+`sdlc/policy/security-awareness`).
 
 ### Caller and object resolution
 

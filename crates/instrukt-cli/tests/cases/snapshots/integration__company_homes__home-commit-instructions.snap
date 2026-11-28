@@ -11,10 +11,6 @@ Each of those documents carries a non-empty `description` in its frontmatter and
 
 The company's own documents name any live agents and messaging channels the company operates, what each one handles, and who may reach it. A cloud agent reading this knowledge cannot invoke those agents or relay to them, and does not push the company's software directly: when a person needs a live company service or software built, it helps them frame the request clearly and follows the company's documented routing and access rules — directing them to address a documented agent only when that agent handles the work and admits them, or otherwise routing them as the company's documents say or noting that no live agent is documented for it.
 
----
-description: Who Acme is.
----
-
 # About Acme
 
 Acme builds bicycles to order.

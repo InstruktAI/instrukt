@@ -150,6 +150,31 @@ The default is **skip unless justified**, not "produce when applicable."
     → present-tense description of the intended shape. Forward design is
     written as contract, not as forecast.
 
+### Commands and placeholders in shared doctrine
+
+- **No redundant retrieval commands.** How to retrieve snippets is stated once
+  per target (`general/policy/context-retrieval` locally; `SKILL.md` in
+  published skills). Outside the baseline and schema snippets that define local
+  retrieval (`general/policy/context-retrieval`,
+  `general/policy/agent-artifact-governance`,
+  `general/spec/snippet-authoring-schema`,
+  `general/policy/referencing-doc-snippets`,
+  `general/concept/documentation-snippets`), every other snippet body simply
+  names the snippet ID ("read `<id>`") rather than repeating `instrukt docs get`.
+- **No copied `--flag` recipes.** Local-only shared doctrine keeps naming
+  `instrukt <subcommand>` as an exact tool anchor and leaves flag syntax to
+  `<command> -h` (`general/policy/command-contract-read`), applying the ban on
+  restatement above.
+- **Placeholders for multi-target steps.** Where a snippet serves multiple
+  targets (local runtimes alongside published skills or remote targets),
+  target-specific steps sit behind `<!-- @config: ... -->` placeholders filled
+  per target rather than replacing local commands with vague prose operation
+  names.
+- **Code-container convention and project exemption.** CLI commands written in
+  snippets sit inside inline code spans (backticks) or fenced code blocks
+  (`general/spec/snippet-authoring-schema`). Project snippets are exempt from
+  the shared-doctrine retrieval and `--flag` restrictions.
+
 ### A statement's owner decides its home
 
 Every statement an author wants to add is owned by one party, and the owner
@@ -261,6 +286,14 @@ own actor, so neither author nor reviewer sees a copy; only the `Then` clauses,
 read without surface words, show that the deciding party is elsewhere. Every
 such copy is a fence a test could bind to the owner's current wording, and a
 change at the owner leaves every copy stale.
+
+Repeating `instrukt docs get` beside every reference duplicates retrieval
+mechanics already taught once per target, and copying `--flag` recipes drifts
+whenever command flags move. Keeping `instrukt <subcommand>` in local-only
+shared doctrine preserves exact tool anchors so agents do not drift back to raw
+defaults, `<!-- @config: ... -->` placeholders adapt multi-target snippets
+without turning local commands into vague prose, and project specs stay exempt
+because describing a project's own commands is their job.
 
 ## Scope
 

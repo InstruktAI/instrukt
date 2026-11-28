@@ -18,7 +18,7 @@ computer, and sets the one settings key each needs to load project
 instruction files. A repository carries one rendered instruction file, its root
 `AGENTS.md`, which is committed: it is rendered from the repository's committed content alone at each commit, by
 the `pre-commit` hook section and by `instrukt docs render`, never by a sync. A company's repository also carries the company's plugin,
-which `instrukt docs plugin` renders on request from the same company index, with the plugin's one entry in the repository's plugin catalog.
+which `instrukt docs plugin` renders on request from the same company index, under the company identity the repository's project layer declares, with the plugin's one entry in the repository's plugin catalog; `instrukt docs render --plugin` renders the repository's whole agent material, its entrypoints and its plugin, as one operation.
 Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
@@ -318,9 +318,11 @@ text, calls a model or judges whether a unit means what its source means.
   of a repository and `instrukt docs render [--check]`; a company's skill
   under `skills/<key>/` with its plugin's entry in
   `.claude-plugin/marketplace.json`,
-  and `instrukt docs plugin --key <key> --name <name>`, which asks for a
-  rendering, with `--check` for a check and with `--validate` for a
-  validation, the two flags excluding each other
+  and `instrukt docs plugin`, which asks for a rendering under the company
+  identity the repository's project layer declares, with `--check` for a
+  check and with `--validate` for a validation, the two flags excluding each
+  other; `instrukt docs render --plugin [--check]`, which renders or checks the
+  repository's agent material as one operation
   (`project/instrukt/spec/feature/publication/company-plugin`); whether a
   repository is a company's, which docs validation asks before reading
   anything under its `docs/`; the global
@@ -333,11 +335,33 @@ text, calls a model or judges whether a unit means what its source means.
   runtime choice, its migration operation, and the configuration schema type
   the editor schema of `instrukt.yaml` is generated from, as customer);
   for `instrukt status` only, repository (hook-section state, as customer);
-  runner (the configured agent runtimes and their homes, read through the
-  selected runtime's adapter behind an interface core declares and the CLI
-  wires, as customer).
+  runner (the configured agent runtimes and their homes read through the
+  selected runtime's adapter, and runner's local-only, lock-free home backup
+  standing query, each behind an interface core declares and the CLI wires, as
+  customer).
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
+
+Rendering a company's knowledge at integration extends this boundary:
+
+- **Owns** — the one operation that renders a tree's agent material: a
+  function of the tree and the rendering instrukt release that writes into
+  the tree it is given and reads nothing else. It enumerates that material,
+  and only it does: in a company repository, the root `AGENTS.md` and the
+  company's plugin with its catalog entry; elsewhere, the entrypoints alone.
+  The integrator reaches it through `instrukt docs render --plugin`, and
+  workflow's coverage calls it on a copy of a parent commit's tree.
+- **Does not own** — the company identity, its keys and its finding, which a
+  plugin rendering takes from configuration and refuses with
+  (`project/instrukt/spec/domain/configuration`, The company identity); when
+  a candidate is rendered and committed
+  (`project/instrukt/spec/feature/workflow/integration-gate`); whether a
+  rendering commit is covered (workflow).
+- **Published contracts** — the rendering operation, taken by workflow;
+  `instrukt docs render --plugin [--check]`; `instrukt docs plugin` without
+  identity flags.
+- **Allowed dependencies** — configuration (the company identity read from a
+  tree's project-layer document, as customer).
 
 Compressed units extend each part of that boundary:
 
@@ -484,18 +508,20 @@ Compressed units extend each part of that boundary:
   which is the plugin's manifest and carries its version.
 - **Invariants:**
   - A function of the repository's company index, documents and units, the
-    key and the name its caller gives, the version the catalog entry holds and the
-    rendering instrukt release: nothing published on the computer, no
-    configuration layer and no environment enters it.
+    company identity its committed project layer declares, the version the
+    catalog entry holds and the rendering instrukt release: nothing published
+    on the computer, no configuration layer of the computer, no caller's
+    argument and no environment enters it.
   - It holds the selection the company index makes, as the repository's
     committed `AGENTS.md` does, and carries every document it names.
   - The version is the one thing a rendering takes from the plugin the
     repository holds. Its last number is raised by one exactly when the
     rendering differs from what `skills/<key>/` holds; instrukt never changes
     the first two.
-  - Changes only in the working tree, through `instrukt docs plugin` or the
-    company skeleton's rendering; no commit, sync, checkout, start or tick
-    writes it, and rendering a repository's `AGENTS.md` writes none.
+  - Changes only in the working tree, through `instrukt docs plugin`,
+    `instrukt docs render --plugin` or the company skeleton's rendering; no
+    commit, sync, checkout, start or tick writes it, and rendering a
+    repository's `AGENTS.md` without `--plugin` writes none.
   - The folder is written whole, whatever it held, and never removed.
     Nothing is read, written or removed through a symbolic link, and nothing
     outside the folder and the catalog is read, written or removed, a
@@ -510,7 +536,8 @@ Compressed units extend each part of that boundary:
     no project's published part.
 - **Identifier:** the company's key, in its repository.
 - **Lifecycle:** rendered with the company skeleton and whenever a caller
-  asks for it; committed by that caller; left as it is where the repository
+  asks for it, through `instrukt docs plugin` or `instrukt docs render
+  --plugin`; committed by that caller; left as it is where the repository
   holds no company index
   (`project/instrukt/spec/feature/publication/company-plugin`).
 
@@ -591,7 +618,7 @@ This context emits no events.
 - **editor-schemas** — `project/instrukt/spec/feature/publication/editor-schemas` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
 - **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
-- **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version changes exactly when the knowledge does.
+- **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version is raised exactly when its rendering changes.
 
 - **compressed-units** — `project/instrukt/spec/feature/publication/compressed-units` — every agent starts with the whole selection its entrypoint makes, compressed, while a prose change reaches agents at once and a repository's automation learns offline exactly which units to renew.
 
@@ -613,6 +640,12 @@ This context emits no events.
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.
+- **configuration** (company identity) — Customer / Supplier. Configuration
+  supplies the company identity a company repository's committed project layer
+  declares, read from a tree's project-layer document, with its finding.
+- **workflow** (review coverage) — Customer / Supplier. Publication supplies
+  its one operation rendering a tree's agent material, from which workflow
+  reproduces a candidate's rendering commit.
 - **repository** — Customer / Supplier. Repository's hook sections run
   `instrukt sync`; publication decides what a run does. Publication supplies
   `instrukt init` the ownership record its claims report reads, the published
@@ -620,12 +653,17 @@ This context emits no events.
 - **work** — Customer / Supplier. Publication supplies the current fingerprint
   and its per-published-commit association; stamp behavior belongs to
   `project/instrukt/spec/domain/work`.
+- **work (evaluation report)** — Customer / Supplier. Publication supplies the
+  projects a home publishes and their checkout paths from its existing state,
+  read by the evaluation report (`project/instrukt/spec/feature/work/eval-report`).
 - **runner** — Customer / Supplier, both ways. Publication supplies project
   checkout paths beside published commits in its existing state
   (`project/instrukt/spec/domain/runner`); the selected runtime's adapter
   supplies the configured agent runtimes and their homes the global agent
-  files are written for, through an interface core declares and the CLI
-  wires.
+  files are written for, and runner supplies the local-only, lock-free home
+  backup standing query rendered verbatim by `instrukt status`, each through
+  an interface core declares and the CLI wires
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
 - **Workflow** — Customer / Supplier. Publication supplies definitions, roles,
   actions and templates from `docs/domain/<x>/workflow/` to
   `~/.instrukt/docs/<x>/workflow/`. The engine selects the domain with

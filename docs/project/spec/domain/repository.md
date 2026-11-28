@@ -118,7 +118,9 @@ there and has publication sync the home.
   last run outcome and refused syncs; which hooks instrukt uses
   and what each hook run starts; composition of attributed commits: author,
   trailers, refusal of caller-written trailers, canonical-branch commit refusal
-  and the paths committed.
+  (staging stays with git), and the review-routing choice the commit command
+  takes from the author and hands, when it is a no-review choice, to work as
+  the commit's exemption.
 - **Does not own** — what a sync publishes and the ownership it records
   (publication, `project/instrukt/spec/domain/publication`); the
   editor schemas and modelines init asks publication to write (publication,
@@ -127,7 +129,11 @@ there and has publication sync the home.
   remote-main revision (blueprint, `project/instrukt/spec/domain/blueprint`);
   the project layer's schema, the runtime choice and the agents' git authors
   (configuration, `project/instrukt/spec/domain/configuration`); a work
-  item's existence (work, `project/instrukt/spec/domain/work`); the
+  item's existence (work, `project/instrukt/spec/domain/work`); the admission
+  and keeping of the exemption a no-review choice records, and what the
+  integration gate makes of it (work,
+  `project/instrukt/spec/feature/work/github-apps`; workflow,
+  `project/instrukt/spec/feature/workflow/integration-gate`); the
   project's lint, test and other hooks and actions (the project). Recorded
   assignment scope and grants are supplied by the shared admission interface;
   verified App/bot author facts come through the GitHub boundary's interface
@@ -142,7 +148,9 @@ there and has publication sync the home.
   published `sdlc` `schema.yaml` init copies, and the editor-schema
   operation init invokes, as customer); publication and
   blueprint (started by hook runs, as customer); work (todo existence through
-  the core-declared interface wired by the CLI only when todos is enabled).
+  the core-declared interface wired by the CLI only when todos is enabled, and
+  recording a commit's exemption through a core-declared interface the CLI
+  wires in an adopted project).
 - **Implementation roots** — `crates/instrukt-core/` (repository);
   `crates/instrukt-cli/` (command surface).
 
@@ -169,6 +177,12 @@ Company home adoption extends this boundary:
   (creating the repository, its administrator and its default branch, through
   an interface core declares and the CLI wires, as for the verified bot
   author).
+
+The `post-commit` hook run also invokes the company context's proposal
+recording, through an interface core declares and the CLI wires, in the
+session and the repository the commit was made in, and waits for it. The run
+decides nothing about it and never fails the commit; what the commit waits
+for is the recording's (`project/instrukt/spec/domain/company`).
 
 `instrukt repo reclaim` shares the `repo` namespace and is not this context's:
 it reclaims the regenerable output of a todo's worktree and belongs to runner
@@ -297,12 +311,16 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
 #### Attributed commit (aggregate)
 
 - **Root:** the commit.
-- **Contains:** the caller's message, the author, the trailers, the paths.
+- **Contains:** the caller's message, the author, the trailers.
 - **Invariants:**
   - The caller's message holds no line with a trailer key instrukt owns.
   - A `Session:` trailer and an agent author appear only when the
     environment resolves them; never a guess.
   - `Human-Involved:` is always present and records the caller's declaration.
+  - In an adopted project every commit is made with its author's review-routing
+    choice, review or no review with a basis; without one nothing is committed.
+    A no-review choice is recorded as the commit's exemption, through work, once
+    the commit exists; the routing choice is never a trailer.
 - **Identifier:** the commit SHA.
 - **Lifecycle:** created once; git owns it from then on.
 
@@ -350,6 +368,10 @@ This context emits no events.
   (`project/instrukt/spec/feature/blueprint/graph-generation`).
 - **work** — Customer / Supplier. Recorded and planned associations are named
   in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
+  A no-review routing choice is handed to work's exemption admission once the
+  commit exists, through a core-declared interface the CLI wires.
+- **company** — Customer / Supplier. The `post-commit` hook run invokes the
+  company context's proposal recording, declared by core and wired by the CLI.
 
 - **workflow** — Customer / Supplier. Repository supplies candidate integration
   branches and exact-commit main advancement.

@@ -21,13 +21,13 @@ parameters:
 ## Goal
 
 Deliver the approved intent for a todo (executing `implementation-plan` tasks when
-planning was run, or implementing directly from checked `input` and `diagnosis` on
+planning was run, or implementing directly from `input` and `diagnosis` on
 the fast track) and produce review-ready changes. Candidate verification belongs
 to the integration gate.
 
 ## Preconditions
 
-- The checked `input` artifact is readable for every kind. For feature work,
+- The `input` artifact is readable for every kind. For feature work,
   the approved `prd` derives its requirements; for bug work, `diagnosis`
   (when settled) sharpens the reported symptom without replacing `input` as intent.
 - When the orchestrator dispatched planning, `instrukt todo artifacts read {slug} implementation-plan`
@@ -61,7 +61,7 @@ kickback returned), this round adjudicates and remediates those findings under
 and releases with `instrukt todo stamp {slug} --build-complete`, an
 evidence-only rejection pass included.
 
-1. Read `input` to confirm the checked intent and scope constraints. For a
+1. Read `input` to confirm the recorded intent and scope constraints. For a
    feature, also read `prd`; for a bug, read `diagnosis` when present. Derived artifacts
    carry no authority to widen the recorded intent.
 2. Read `architecture` when present and not skipped — it carries delivery
@@ -170,7 +170,7 @@ execution evidence, not this self-review.
 
 ### Pre-completion checklist
 
-1. When `implementation-plan` is present, every planned task is delivered by a commit or explicitly recorded in `deferrals`; otherwise, the checked `input` intent is completely delivered.
+1. When `implementation-plan` is present, every planned task is delivered by a commit or explicitly recorded in `deferrals`; otherwise, the recorded `input` intent is completely delivered.
 2. Confirm each added or changed bound test failed before implementation and
    passes afterward under the project's testing contract (`sdlc/policy/testing`).
    Record that evidence for integration; do not add a full-suite gate here.

@@ -123,6 +123,9 @@ The `runner.attention.*` types of
 names the todo it concerns as subject; a condition between todos names the
 others as related references.
 
+`runner.candidate_held` is occurrence. Its subject names the integration
+branch, and the candidate commit stays in data.
+
 ### Platform lifecycle states
 
 For `instrukt` types that report lifecycle state, the last segment is one of

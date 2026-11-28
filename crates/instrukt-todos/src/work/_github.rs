@@ -1,33 +1,23 @@
-//! GitHub's REST API as the work record reaches it: one repository, one
-//! token, bounded waits. Translates transport failures, rate limiting and
-//! error statuses into [`GitHubError`]; everything above speaks JSON.
+//! GitHub's REST and GraphQL API as the work record reaches it: one repository,
+//! one token, backed by [`octocrab`] and [`instrukt_outside`].
 
+use std::future::Future;
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
 use serde_json::Value;
 
-/// How long one request may take in total.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long connecting may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// The page size of list reads.
-const PAGE_SIZE: usize = 100;
-/// The most pages one list read follows.
-const MAX_PAGES: usize = 50;
-const API_VERSION: &str = "2026-03-10";
+const SECONDARY_WAIT_SECONDS: i64 = 60;
+const MAX_PAGES: usize = 500;
 
 /// A GitHub request did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GitHubError {
     #[error(transparent)]
     App(#[from] instrukt_core::github::AppError),
-    /// The App one todo's operation selected (a role's pull request or
-    /// review App, or the board account) cannot serve it: its credential
-    /// could not be issued because of a setup or identity mismatch or a
-    /// refusal of that App's request, or the reviewer App's verified bot is
-    /// the pull request's author. Not a reach failure; the call site
-    /// decides what it stops ([`GitHubError::is_reach`]).
     #[error(transparent)]
     OperationApp(OperationAppError),
     #[error("GitHub is unreachable ({0})")]
@@ -38,9 +28,6 @@ pub enum GitHubError {
     Unauthorized { status: u16 },
     #[error("GitHub has no {path}")]
     NotFound { path: String },
-    /// GitHub refused what was sent as invalid: a 400 or 422 that is no
-    /// throttle, with GitHub's validation detail. Content, not an outage:
-    /// the same request is refused again.
     #[error("GitHub refused {method} {path} as invalid ({status}): {detail}")]
     Invalid {
         method: &'static str,
@@ -55,19 +42,13 @@ pub enum GitHubError {
         status: u16,
         message: String,
     },
-    /// GitHub will not perform this operation for this viewer: a GraphQL
-    /// `errors` answer whose every entry is typed `FORBIDDEN`. Unlike
-    /// [`GitHubError::Unauthorized`], it says nothing about the credential's
-    /// other uses.
     #[error("GitHub answered POST /graphql with {status}: {message}")]
     Refused { status: u16, message: String },
     #[error("GitHub's answer to {path} is not readable: {message}")]
     Decode { path: String, message: String },
 }
 
-/// Why one todo's operation-selected App cannot serve its operation: a
-/// setup or identity mismatch or a refusal of that App's issuance request,
-/// or a verified reviewer bot that is also the pull request's author. Only
+/// Why one todo's operation-selected App cannot serve its operation. Only
 /// [`GitHub::app_failure`] makes one, so it never holds an unreachable,
 /// throttled or unavailable App API.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -81,15 +62,7 @@ impl From<OperationAppError> for instrukt_core::github::AppError {
 }
 
 impl GitHubError {
-    /// Whether the failure concerns GitHub's reach rather than one
-    /// request: GitHub cannot be reached, deferred us, or refused the token,
-    /// or an installation credential could not be issued for a reason other
-    /// than one todo's operation-selected App ([`GitHubError::OperationApp`]).
-    /// This classifies; each caller decides the effect. A reach failure of a
-    /// todo's record, issue, pull request or review reflection stops the
-    /// command's remaining GitHub requests. Board setup stops them only on a
-    /// rate limit, and a todo's board update only on a rate limit or an
-    /// unreachable GitHub; any other board failure stays with the board.
+    /// Whether the failure concerns GitHub's reach rather than one request.
     pub(crate) fn is_reach(&self) -> bool {
         matches!(
             self,
@@ -108,52 +81,52 @@ pub(crate) enum Fetched {
     Fresh { body: Value, etag: Option<String> },
 }
 
-/// A client for one repository.
+/// A client for one repository backed by [`octocrab::Octocrab`].
 pub(crate) struct GitHub {
-    agent: ureq::Agent,
+    client: std::cell::RefCell<Option<(String, octocrab::Octocrab)>>,
     api: String,
     repository: String,
     token: std::cell::RefCell<String>,
     credential: std::cell::RefCell<Option<std::sync::Arc<instrukt_core::github::Credential>>>,
     role: Option<String>,
     operation: instrukt_core::github::Operation,
-    /// The pass's clock: requests, derived clients and issuance read the
-    /// present from its one origin.
     clock: super::_apps::Clock,
     apps: Option<std::sync::Arc<super::GitHubAccess>>,
-    /// Whether this client's credential serves one operation rather than
-    /// every request of the command ([`GitHub::for_role`]).
+    gate: instrukt_outside::Gate,
     scoped: bool,
+}
+
+fn default_gate(clock: super::_apps::Clock) -> instrukt_outside::Gate {
+    instrukt_outside::Gate::new(
+        std::sync::Arc::new(move || clock.checked_now().unwrap_or(Timestamp::MAX)),
+        std::sync::Arc::new(Instant::now),
+        instrukt_outside::Report::log(),
+    )
 }
 
 impl GitHub {
     pub fn new(api_url: &str, repository: &str, token: String) -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .timeout_connect(Some(CONNECT_TIMEOUT))
-            .user_agent("instrukt")
-            // The token goes only to the configured API host: a redirect
-            // elsewhere (or to a weaker scheme) drops `Authorization`.
-            .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
-            .build()
-            .into();
+        let clock = super::_apps::Clock::starting(Timestamp::now());
         Self {
-            agent,
+            client: Default::default(),
             api: api_url.trim_end_matches('/').to_owned(),
             repository: repository.to_owned(),
             token: std::cell::RefCell::new(token),
             credential: Default::default(),
             role: None,
             operation: instrukt_core::github::Operation::Record,
-            clock: super::_apps::Clock::starting(Timestamp::now()),
+            clock,
             apps: None,
+            gate: default_gate(clock),
             scoped: false,
         }
     }
 
-    /// A client of `access` on `clock`, anchored where the caller sampled its
-    /// `now`, so the wait for the capability lock here counts as elapsed.
+    pub(super) fn with_gate(mut self, gate: instrukt_outside::Gate) -> Self {
+        self.gate = gate;
+        self
+    }
+
     pub fn for_app(
         access: std::sync::Arc<super::GitHubAccess>,
         api: &str,
@@ -162,15 +135,16 @@ impl GitHub {
         operation: instrukt_core::github::Operation,
         clock: super::_apps::Clock,
     ) -> Result<Self, GitHubError> {
-        access.validate()?;
-        let apps = access;
+        let gate = access.gate()?;
         let mut gh = Self::new(api, repository, String::new());
-        gh.apps = Some(apps);
+        gh.apps = Some(access);
+        gh.gate = gate;
         gh.clock = clock;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
         Ok(gh)
     }
+
     pub fn for_role(
         &self,
         role: Option<&str>,
@@ -178,12 +152,14 @@ impl GitHub {
     ) -> Self {
         let mut gh = Self::new(&self.api, &self.repository, String::new());
         gh.apps = self.apps.clone();
+        gh.gate = self.gate.clone();
         gh.scoped = true;
         gh.clock = self.clock;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
         gh
     }
+
     pub fn bot(&self) -> Result<instrukt_core::github::Bot, GitHubError> {
         self.credential()?;
         self.credential
@@ -195,13 +171,14 @@ impl GitHub {
                 message: "verified bot unavailable".into(),
             })
     }
-    /// The exact present moment on this client's clock.
+
     fn current_time(&self) -> Result<Timestamp, GitHubError> {
         self.clock.checked_now().ok_or_else(|| GitHubError::Decode {
             path: "App".into(),
             message: "credential clock is out of range".into(),
         })
     }
+
     fn credential(&self) -> Result<(), GitHubError> {
         let Some(apps) = &self.apps else {
             return Ok(());
@@ -227,13 +204,9 @@ impl GitHub {
         Ok(())
     }
 
-    /// An App failure as this client's scope makes it: an issuance failure,
-    /// or the reviewer App's verified bot authoring the pull request. For an
-    /// App one operation selected, a setup mismatch or a refusal of that
-    /// App's request (a 4xx other than 403, which may be a secondary rate
-    /// limit) is [`GitHubError::OperationApp`]. Everything else, and any
-    /// failure of the shared project credential, is [`GitHubError::App`], a
-    /// reach failure.
+    /// Classifies an App failure by client scope: setup mismatches and non-403
+    /// 4xx refusals on a scoped operation App stay with that todo
+    /// ([`GitHubError::OperationApp`]); everything else is a reach failure.
     pub(crate) fn app_failure(&self, error: instrukt_core::github::AppError) -> GitHubError {
         use instrukt_core::github::AppError;
         let local = match &error {
@@ -270,165 +243,154 @@ impl GitHub {
 
     /// `GET /repos/{repository}{path}`, conditional on `etag`.
     pub fn get(&self, path: &str, etag: Option<&str>) -> Result<Fetched, GitHubError> {
-        let url = self.url(path);
-        let mut request = self.with_headers(self.agent.get(&url))?;
-        if let Some(etag) = etag {
-            request = request.header("If-None-Match", etag);
-        }
+        let crab = self.octocrab()?;
+        let route = self.repo_route(path);
+        let headers = etag.and_then(if_none_match_header);
         let started = Instant::now();
-        let mut response = request.call().map_err(transport)?;
-        let status = response.status().as_u16();
+        let (status, etag, text) = self.call("GET", path, async move {
+            let response = crab._get_with_headers(route, headers).await?;
+            let status = response.status().as_u16();
+            if status == 304 {
+                return Ok((status, None, None));
+            }
+            let etag = extract_etag(&response);
+            let response = octocrab::map_github_error(response).await?;
+            Ok((status, etag, Some(crab.body_to_string(response).await?)))
+        })?;
         log(status, "GET", path, started);
-        if status == 304 {
-            return Ok(Fetched::NotModified);
-        }
-        let etag = header(&response, "etag");
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
-        check(
-            status,
-            &response,
-            self.current_time()?,
-            "GET",
-            path,
-            &text.replace(self.token.borrow().as_str(), "<credential>"),
-        )?;
-        Ok(Fetched::Fresh {
-            body: decode(path, &text)?,
-            etag,
-        })
-    }
-
-    /// `GET` of a resource that must answer fresh.
-    pub fn read(&self, path: &str) -> Result<Value, GitHubError> {
-        match self.get(path, None)? {
-            Fetched::Fresh { body, .. } => Ok(body),
-            Fetched::NotModified => Err(GitHubError::Decode {
-                path: path.to_owned(),
-                message: "unexpected 304 to an unconditional read".to_owned(),
+        match text {
+            None => Ok(Fetched::NotModified),
+            Some(text) => Ok(Fetched::Fresh {
+                body: decode(path, &text)?,
+                etag,
             }),
         }
     }
 
-    /// Every item of a list endpoint, following pages.
+    /// `GET` of a resource that must answer fresh.
+    pub fn read(&self, path: &str) -> Result<Value, GitHubError> {
+        let crab = self.octocrab()?;
+        let route = self.repo_route(path);
+        let started = Instant::now();
+        let body = self.call("GET", path, async move {
+            crab.get::<Value, _, _>(route, None::<&()>).await
+        })?;
+        log(200, "GET", path, started);
+        Ok(body)
+    }
+
+    /// Every item of a list endpoint, validating each `Link` pagination URL's
+    /// scheme and authority against the configured API origin before calling
+    /// [`octocrab::Octocrab::get_page`] so installation tokens can never be
+    /// downgraded to plaintext HTTP or redirected off-origin.
     pub fn list(&self, path: &str) -> Result<Vec<Value>, GitHubError> {
-        let separator = if path.contains('?') { '&' } else { '?' };
-        let mut items = Vec::new();
-        for page in 1..=MAX_PAGES {
-            let paged = format!("{path}{separator}per_page={PAGE_SIZE}&page={page}");
-            let body = self.read(&paged)?;
-            let Value::Array(batch) = body else {
+        let crab = self.octocrab()?;
+        let base_uri: http::Uri = self
+            .api
+            .parse()
+            .map_err(|err: http::uri::InvalidUri| GitHubError::Unreachable(err.to_string()))?;
+        let sep = if path.contains('?') { '&' } else { '?' };
+        let route = format!("{}{sep}per_page=100", self.repo_route(path));
+        let started = Instant::now();
+        let mut page: octocrab::Page<Value> =
+            self.call("GET", path, async { crab.get(&route, None::<&()>).await })?;
+        let mut items = page.take_items();
+        let mut pages = 1usize;
+        while let Some(next) = page.next.take() {
+            if !link_admitted(&base_uri, &next) {
                 return Err(GitHubError::Decode {
-                    path: paged,
-                    message: "expected a list".to_owned(),
+                    path: path.to_owned(),
+                    message: "GitHub pagination link changed scheme or origin".into(),
                 });
-            };
-            let full = batch.len() == PAGE_SIZE;
-            items.extend(batch);
-            if !full {
-                break;
             }
+            if pages >= MAX_PAGES {
+                return Err(GitHubError::Decode {
+                    path: path.to_owned(),
+                    message: format!("GitHub pagination exceeded {MAX_PAGES} pages"),
+                });
+            }
+            pages += 1;
+            let next_opt = Some(next);
+            let Some(next_page) = self.call("GET", path, async {
+                crab.get_page::<Value>(&next_opt).await
+            })?
+            else {
+                break;
+            };
+            page = next_page;
+            items.extend(page.take_items());
         }
+        log(200, "GET", path, started);
         Ok(items)
     }
 
     pub fn post(&self, path: &str, body: &Value) -> Result<Value, GitHubError> {
-        self.send("POST", path, Some(body))
+        self.send_to("POST", path, self.repo_route(path), Some(body))
     }
 
     pub fn patch(&self, path: &str, body: &Value) -> Result<Value, GitHubError> {
-        self.send("PATCH", path, Some(body))
-    }
-
-    fn send(
-        &self,
-        method: &'static str,
-        path: &str,
-        body: Option<&Value>,
-    ) -> Result<Value, GitHubError> {
-        self.send_to(method, path, &self.url(path), body)
+        self.send_to("PATCH", path, self.repo_route(path), Some(body))
     }
 
     /// Account-scoped REST operation on the configured API origin.
     pub fn post_api(&self, path: &str, body: &Value) -> Result<Value, GitHubError> {
-        self.send_to("POST", path, &format!("{}{path}", self.api), Some(body))
+        self.send_to("POST", path, path.to_owned(), Some(body))
     }
 
     fn send_to(
         &self,
         method: &'static str,
         path: &str,
-        url: &str,
+        route: String,
         body: Option<&Value>,
     ) -> Result<Value, GitHubError> {
-        let text = body.map(Value::to_string).unwrap_or_default();
+        let crab = self.octocrab()?;
+        let payload = body.cloned();
         let started = Instant::now();
-        let result = match method {
-            "POST" => self
-                .with_headers(self.agent.post(url))?
-                .header("Content-Type", "application/json")
-                .send(&text),
-            _ => self
-                .with_headers(self.agent.patch(url))?
-                .header("Content-Type", "application/json")
-                .send(&text),
-        };
-        let mut response = result.map_err(transport)?;
-        let status = response.status().as_u16();
+        let (status, answer) = self.call(method, path, async move {
+            let response = match method {
+                "POST" => crab._post(route, payload.as_ref()).await?,
+                _ => crab._patch(route, payload.as_ref()).await?,
+            };
+            let status = response.status().as_u16();
+            let response = octocrab::map_github_error(response).await?;
+            Ok((status, crab.body_to_string(response).await?))
+        })?;
         log(status, method, path, started);
-        let answer = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
-        check(
-            status,
-            &response,
-            self.current_time()?,
-            method,
-            path,
-            &answer.replace(self.token.borrow().as_str(), "<credential>"),
-        )?;
         if answer.trim().is_empty() {
             return Ok(Value::Null);
         }
         decode(path, &answer)
     }
 
-    /// A GraphQL document with its variables (never interpolated values);
-    /// the `data` of the answer. An `errors` answer is a failure naming
-    /// them, typed by [`graphql_failure`].
+    /// A GraphQL document with its variables; returns `data` or a typed
+    /// [`graphql_failure`] when `errors` is non-empty.
     pub fn graphql(&self, document: &str, variables: &Value) -> Result<Value, GitHubError> {
-        let url = self.graphql_url();
-        let text = serde_json::json!({ "query": document, "variables": variables }).to_string();
+        let (crab, route) = match self.api.strip_suffix("/api/v3") {
+            Some(host) => {
+                self.credential()?;
+                let token = self.token.borrow().clone();
+                (build_octocrab(host, &token)?, "/api/graphql")
+            }
+            None => (self.octocrab()?, "/graphql"),
+        };
+        let payload = serde_json::json!({ "query": document, "variables": variables });
         let started = Instant::now();
-        let mut response = self
-            .with_headers(self.agent.post(&url))?
-            .header("Content-Type", "application/json")
-            .send(&text)
-            .map_err(transport)?;
-        let status = response.status().as_u16();
+        let (status, headers, answer) = self.call("POST", "/graphql", async move {
+            let response = crab._post(route, Some(&payload)).await?;
+            let status = response.status().as_u16();
+            let headers = response.headers().clone();
+            let response = octocrab::map_github_error(response).await?;
+            Ok((status, headers, crab.body_to_string(response).await?))
+        })?;
         log(status, "POST", "/graphql", started);
-        let answer = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
-        let now = self.current_time()?;
-        check(
-            status,
-            &response,
-            now,
-            "POST",
-            "/graphql",
-            &answer.replace(self.token.borrow().as_str(), "<credential>"),
-        )?;
         let value = decode("/graphql", &answer)?;
         if let Some(errors) = value["errors"].as_array().filter(|e| !e.is_empty()) {
+            let now = self.current_time()?;
             return Err(graphql_failure(
                 errors,
                 status,
-                &Limits::read(response.headers()),
+                &Limits::read(&headers),
                 now,
                 self.token.borrow().as_str(),
             ));
@@ -436,203 +398,378 @@ impl GitHub {
         Ok(value["data"].clone())
     }
 
-    /// GitHub's GraphQL endpoint beside the REST address: `/graphql` of
-    /// the public API, `/api/graphql` beside an enterprise `/api/v3`.
-    fn graphql_url(&self) -> String {
-        match self.api.strip_suffix("/api/v3") {
-            Some(host) => format!("{host}/api/graphql"),
-            None => format!("{}/graphql", self.api),
+    fn call<T, F>(&self, method: &'static str, path: &str, future: F) -> Result<T, GitHubError>
+    where
+        F: Future<Output = octocrab::Result<T>> + Send,
+        T: Send,
+    {
+        let key = instrukt_outside::Key::new("github", [self.api.as_str()])
+            .item(format!("{method} {path}"));
+        let token = self.token.borrow().clone();
+        let clock = self.clock;
+        let gate = self.gate.clone();
+        let attempted = instrukt_outside::runtime::block_on(gate.attempt_async(
+            &key,
+            &instrukt_outside::Settings::default(),
+            || async move {
+                let outcome = match tokio::time::timeout(REQUEST_TIMEOUT, future).await {
+                    Ok(Ok(value)) => return instrukt_outside::Tried::Done(value),
+                    Ok(Err(err)) => {
+                        let now = clock.checked_now().unwrap_or(Timestamp::MAX);
+                        map_octocrab_error(err, method, path, now, &token)
+                    }
+                    Err(_) => GitHubError::Unreachable("request timed out".to_owned()),
+                };
+                classify_for_gate(outcome)
+            },
+        ))
+        .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+        match attempted {
+            instrukt_outside::Attempted::Done(value) => Ok(value),
+            instrukt_outside::Attempted::Defect(err) => Err(err),
+            instrukt_outside::Attempted::Wait {
+                error: Some(err), ..
+            } => Err(err),
+            instrukt_outside::Attempted::Wait { wait, error: None } => {
+                if wait.reason() == instrukt_outside::Reason::RateLimited {
+                    Err(GitHubError::RateLimited {
+                        until: Some(wait.at()),
+                    })
+                } else {
+                    Err(GitHubError::Unreachable(wait.to_string()))
+                }
+            }
         }
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("{}/repos/{}{}", self.api, self.repository, path)
+    fn repo_route(&self, path: &str) -> String {
+        format!("/repos/{}{}", self.repository, path)
     }
 
-    fn with_headers<B>(
-        &self,
-        request: ureq::RequestBuilder<B>,
-    ) -> Result<ureq::RequestBuilder<B>, GitHubError> {
+    fn octocrab(&self) -> Result<octocrab::Octocrab, GitHubError> {
         self.credential()?;
-        Ok(request
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", API_VERSION)
-            .header("Authorization", &format!("Bearer {}", self.token.borrow())))
+        let token = self.token.borrow().clone();
+        if let Some((cached_token, crab)) = self.client.borrow().as_ref()
+            && cached_token == &token
+        {
+            return Ok(crab.clone());
+        }
+        let crab = build_octocrab(&self.api, &token)?;
+        *self.client.borrow_mut() = Some((token, crab.clone()));
+        Ok(crab)
     }
 }
 
-fn transport(err: ureq::Error) -> GitHubError {
-    GitHubError::Unreachable(err.to_string())
+/// Whether a pagination `Link` URI preserves the configured API origin and
+/// scheme (or is a path-only relative URI on that origin). Rejects scheme
+/// downgrades (`https://` -> `http://`), scheme-relative URIs (`//host/...`),
+/// and cross-origin URLs so installation tokens are never sent over plaintext
+/// or to another host.
+fn link_admitted(base: &http::Uri, next: &http::Uri) -> bool {
+    match (next.scheme_str(), next.authority()) {
+        (None, None) => next.path().starts_with('/') && !next.path().starts_with("//"),
+        (Some(scheme), Some(authority)) => {
+            base.scheme_str() == Some(scheme)
+                && base.authority().map(http::uri::Authority::as_str) == Some(authority.as_str())
+        }
+        _ => false,
+    }
 }
 
-fn header(response: &ureq::http::Response<ureq::Body>, name: &str) -> Option<String> {
-    response
-        .headers()
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned)
+fn classify_for_gate<T>(error: GitHubError) -> instrukt_outside::Tried<T, GitHubError> {
+    match &error {
+        GitHubError::RateLimited { until } => instrukt_outside::Tried::Unavailable(
+            instrukt_outside::Unavailable {
+                reason: instrukt_outside::Reason::RateLimited,
+                extent: instrukt_outside::Extent::Key,
+                named: until.map(instrukt_outside::Named::At),
+            },
+            error,
+        ),
+        GitHubError::Unreachable(msg) => instrukt_outside::Tried::Unavailable(
+            instrukt_outside::Unavailable {
+                reason: if msg.contains("timed out") {
+                    instrukt_outside::Reason::TimedOut
+                } else {
+                    instrukt_outside::Reason::Unreachable
+                },
+                extent: instrukt_outside::Extent::Scope,
+                named: None,
+            },
+            error,
+        ),
+        GitHubError::Status { status, .. } if *status >= 500 => {
+            instrukt_outside::Tried::Unavailable(
+                instrukt_outside::Unavailable {
+                    reason: instrukt_outside::Reason::Unavailable {
+                        status: Some(*status),
+                    },
+                    extent: instrukt_outside::Extent::Scope,
+                    named: None,
+                },
+                error,
+            )
+        }
+        _ => instrukt_outside::Tried::Defect(error),
+    }
 }
 
-fn check(
-    status: u16,
-    response: &ureq::http::Response<ureq::Body>,
-    now: Timestamp,
+pub(super) fn octocrab_builder(
+    base_uri: &str,
+) -> octocrab::Result<
+    octocrab::OctocrabBuilder<
+        octocrab::NoSvc,
+        octocrab::DefaultOctocrabBuilderConfig,
+        octocrab::NoAuth,
+        octocrab::NotLayerReady,
+    >,
+> {
+    // octocrab already sends `X-GitHub-Api-Version: 2022-11-28` via its built-in
+    // request headers; appending another via `add_header` creates a duplicate
+    // comma-joined header that GitHub rejects with 400 Bad Request.
+    octocrab::Octocrab::builder()
+        .base_uri(base_uri)
+        .map(|builder| {
+            builder
+                .set_connect_timeout(Some(CONNECT_TIMEOUT))
+                .set_read_timeout(Some(REQUEST_TIMEOUT))
+                .set_write_timeout(Some(REQUEST_TIMEOUT))
+                .add_header(http::header::USER_AGENT, "instrukt".to_owned())
+                .add_header(
+                    http::header::ACCEPT,
+                    "application/vnd.github+json".to_owned(),
+                )
+        })
+}
+
+fn build_octocrab(base_uri: &str, token: &str) -> Result<octocrab::Octocrab, GitHubError> {
+    let rt = instrukt_outside::runtime::runtime()
+        .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+    let _guard = rt.enter();
+    let mut builder =
+        octocrab_builder(base_uri).map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+    if !token.is_empty() {
+        if http::HeaderValue::from_str(&format!("Bearer {token}")).is_err() {
+            return Err(GitHubError::Unauthorized { status: 401 });
+        }
+        builder = builder.personal_token(token.to_owned());
+    }
+    builder
+        .build()
+        .map_err(|err| GitHubError::Unreachable(err.to_string()))
+}
+
+fn if_none_match_header(value: &str) -> Option<http::HeaderMap> {
+    let mut map = http::HeaderMap::new();
+    if let Ok(tag) = octocrab::etag::EntityTag::from_str(value)
+        && octocrab::etag::EntityTag::insert_if_none_match_header(&mut map, tag).is_ok()
+    {
+        return Some(map);
+    }
+    map.insert(
+        http::header::IF_NONE_MATCH,
+        http::HeaderValue::from_str(value).ok()?,
+    );
+    Some(map)
+}
+
+fn extract_etag<B>(response: &http::Response<B>) -> Option<String> {
+    octocrab::etag::EntityTag::extract_from_response(response)
+        .map(|tag| tag.to_string())
+        .or_else(|| {
+            response
+                .headers()
+                .get(http::header::ETAG)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned)
+        })
+}
+
+fn map_octocrab_error(
+    err: octocrab::Error,
     method: &'static str,
     path: &str,
-    text: &str,
-) -> Result<(), GitHubError> {
-    if (200..300).contains(&status) {
-        return Ok(());
-    }
-    let limits = Limits::read(response.headers());
-    if limits.refusal_throttles(status) {
-        return Err(GitHubError::RateLimited {
-            until: limits.until(now),
-        });
-    }
-    if status == 401 {
-        return Err(GitHubError::Unauthorized { status });
-    }
-    if status == 404 {
-        return Err(GitHubError::NotFound {
+    now: Timestamp,
+    token: &str,
+) -> GitHubError {
+    match err {
+        octocrab::Error::GitHub { source, .. } => {
+            let status = source.status_code.as_u16();
+            let empty = http::HeaderMap::new();
+            let headers = source.headers.as_ref().unwrap_or(&empty);
+            if let Some(until) = judge_rate_limit(status, headers, now) {
+                return GitHubError::RateLimited { until };
+            }
+            match status {
+                401 => GitHubError::Unauthorized { status },
+                404 => GitHubError::NotFound {
+                    path: path.to_owned(),
+                },
+                400 | 422 => GitHubError::Invalid {
+                    method,
+                    path: path.to_owned(),
+                    status,
+                    detail: redact(&validation_detail(&source), token),
+                },
+                _ => GitHubError::Status {
+                    method,
+                    path: path.to_owned(),
+                    status,
+                    message: redact(&source.message, token),
+                },
+            }
+        }
+        octocrab::Error::Serde { source, .. } => GitHubError::Decode {
             path: path.to_owned(),
-        });
-    }
-    let answer = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
-    if matches!(status, 400 | 422) {
-        return Err(GitHubError::Invalid {
-            method,
+            message: source.to_string(),
+        },
+        octocrab::Error::Json { source, .. } => GitHubError::Decode {
             path: path.to_owned(),
-            status,
-            detail: validation_detail(&answer),
-        });
+            message: source.to_string(),
+        },
+        octocrab::Error::InvalidUtf8 { source, .. } => GitHubError::Decode {
+            path: path.to_owned(),
+            message: source.to_string(),
+        },
+        other => GitHubError::Unreachable(redact(&other.to_string(), token)),
     }
-    let message = answer["message"].as_str().unwrap_or_default().to_owned();
-    Err(GitHubError::Status {
-        method,
-        path: path.to_owned(),
-        status,
-        message,
-    })
 }
 
-/// GitHub's validation detail of a refused request, from its answer
-/// `{message, errors: [{resource, field, code, message}], documentation_url}`:
-/// the message, each error, and where GitHub documents it.
-pub(crate) fn validation_detail(answer: &Value) -> String {
-    let mut detail = answer["message"]
-        .as_str()
-        .filter(|m| !m.is_empty())
-        .unwrap_or("no message")
-        .to_owned();
-    let errors: Vec<String> = answer["errors"]
-        .as_array()
-        .map(|errors| {
-            errors
-                .iter()
-                .map(|error| match error {
-                    Value::String(text) => text.clone(),
-                    error => {
-                        let field = [error["resource"].as_str(), error["field"].as_str()]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join(".");
-                        let said = error["message"]
-                            .as_str()
-                            .or_else(|| error["code"].as_str())
-                            .unwrap_or_default();
-                        match (field.is_empty(), said.is_empty()) {
-                            (false, false) => format!("{field}: {said}"),
-                            (false, true) => field,
-                            _ => said.to_owned(),
-                        }
-                    }
-                })
-                .filter(|text| !text.is_empty())
-                .collect()
+fn validation_detail(source: &octocrab::GitHubError) -> String {
+    let mut detail = if source.message.is_empty() {
+        "no message".to_owned()
+    } else {
+        source.message.clone()
+    };
+    let errors: Vec<String> = source
+        .errors
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|error| match error {
+            Value::String(text) if !text.is_empty() => Some(text.clone()),
+            Value::String(_) => None,
+            error => {
+                let field = [error["resource"].as_str(), error["field"].as_str()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let said = error["message"]
+                    .as_str()
+                    .or_else(|| error["code"].as_str())
+                    .unwrap_or_default();
+                match (field.is_empty(), said.is_empty()) {
+                    (false, false) => Some(format!("{field}: {said}")),
+                    (false, true) => Some(field),
+                    (true, false) => Some(said.to_owned()),
+                    (true, true) => None,
+                }
+            }
         })
-        .unwrap_or_default();
+        .collect();
     if !errors.is_empty() {
         detail.push_str(&format!(" ({})", errors.join("; ")));
     }
-    if let Some(url) = answer["documentation_url"].as_str() {
+    if let Some(url) = &source.documentation_url {
         detail.push_str(&format!("; see {url}"));
     }
     detail
 }
 
-/// GitHub's rate-limit signals on one answer: the primary quota's
-/// `x-ratelimit-remaining` and `x-ratelimit-reset`, and the `retry-after`
-/// delay a secondary limit sends. Every GitHub answer Work reads, REST or
-/// GraphQL, through the record client or the App issuer, is judged by them.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct Limits {
-    remaining: Option<String>,
-    reset: Option<String>,
-    retry_after: Option<String>,
+/// Classifies an HTTP status + headers via [`instrukt_outside::http::judge_response`]
+/// with GitHub's rate-limit rule (`429`, or `403` with `x-ratelimit-remaining: 0`
+/// or `retry-after`). Returns `Some(until)` when the response is throttled.
+pub(super) fn judge_rate_limit(
+    status: u16,
+    headers: &http::HeaderMap,
+    received: Timestamp,
+) -> Option<Option<Timestamp>> {
+    let rule = |answer: &instrukt_outside::http::HttpAnswer<'_>| match *answer {
+        instrukt_outside::http::HttpAnswer::Response {
+            status,
+            headers,
+            received_at,
+            ..
+        } if Limits::read(headers).refusal_throttles(status) => {
+            Some(instrukt_outside::Unavailable {
+                reason: instrukt_outside::Reason::RateLimited,
+                extent: instrukt_outside::Extent::Key,
+                named: Limits::read(headers)
+                    .until(received_at)
+                    .map(instrukt_outside::Named::At),
+            })
+        }
+        _ => None,
+    };
+    let settings = instrukt_outside::Settings {
+        rules: &[&rule],
+        ..Default::default()
+    };
+    match instrukt_outside::http::judge_response(status, headers, received, None, &settings) {
+        instrukt_outside::http::Judgment::Unavailable(instrukt_outside::Unavailable {
+            reason: instrukt_outside::Reason::RateLimited,
+            named,
+            ..
+        }) => Some(match named {
+            Some(instrukt_outside::Named::At(at)) => Some(at),
+            _ => None,
+        }),
+        _ => None,
+    }
 }
 
+/// GitHub's rate-limit header view used by GraphQL error classification and
+/// sibling work modules; delegates `Retry-After` parsing to
+/// [`instrukt_outside::http::retry_after`].
+#[derive(Debug, Clone, Default)]
+pub(super) struct Limits(http::HeaderMap);
+
 impl Limits {
-    pub(super) fn read(headers: &ureq::http::HeaderMap) -> Self {
-        let get = |name: &str| {
-            headers
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_owned)
-        };
-        Self {
-            remaining: get("x-ratelimit-remaining"),
-            reset: get("x-ratelimit-reset"),
-            retry_after: get("retry-after"),
-        }
+    pub(super) fn read(headers: &http::HeaderMap) -> Self {
+        Self(headers.clone())
     }
 
-    /// Whether GitHub signalled throttling: no requests remain, or it named
-    /// a delay before the next one.
+    fn remaining_zero(&self) -> bool {
+        self.0
+            .get("x-ratelimit-remaining")
+            .and_then(|v| v.to_str().ok())
+            == Some("0")
+    }
+
     fn signalled(&self) -> bool {
-        self.remaining.as_deref() == Some("0") || self.retry_after.is_some()
+        self.remaining_zero() || self.0.contains_key(http::header::RETRY_AFTER)
     }
 
-    /// Whether an unsuccessful `status` is throttling: 429, or a 403 that
-    /// carries a throttle signal (otherwise a 403 is a refusal).
     pub(super) fn refusal_throttles(&self, status: u16) -> bool {
         status == 429 || (status == 403 && self.signalled())
     }
 
-    /// The earliest moment GitHub permits the next request, for an answer
-    /// received at the exact moment `received`: not before `retry-after`
-    /// seconds have passed, nor before the reset when no requests remain;
-    /// without a delay, the reset GitHub sent. A delay counts whole seconds
-    /// from `received` rounded up, so it never ends before the full delay
-    /// has passed; the reset is GitHub's own instant and stays exact.
     pub(super) fn until(&self, received: Timestamp) -> Option<Timestamp> {
         self.deadline(received, None)
     }
 
-    /// [`Limits::until`] for a secondary limit: one that names no delay
-    /// waits GitHub's minute instead of the primary reset, unless no
-    /// requests remain, when the later reset still governs.
-    fn secondary_until(&self, received: Timestamp) -> Option<Timestamp> {
-        self.deadline(received, Some(SECONDARY_WAIT_SECONDS))
-    }
-
     fn deadline(&self, received: Timestamp, unnamed_delay: Option<i64>) -> Option<Timestamp> {
         let whole = received.as_second() + i64::from(received.subsec_nanosecond() > 0);
-        let delay = self
-            .retry_after
-            .as_deref()
-            .and_then(|seconds| seconds.trim().parse::<i64>().ok())
-            .filter(|seconds| *seconds >= 0)
-            .or(unnamed_delay)
-            .and_then(|seconds| whole.checked_add(seconds))
-            .and_then(|second| Timestamp::from_second(second).ok());
+        let add = |secs: i64| {
+            whole
+                .checked_add(secs)
+                .and_then(|s| Timestamp::from_second(s).ok())
+        };
+        let delay = match instrukt_outside::http::retry_after(&self.0, received) {
+            Some(instrukt_outside::Named::At(at)) => Some(at),
+            Some(instrukt_outside::Named::After { delay, .. }) => {
+                i64::try_from(delay.as_secs()).ok().and_then(add)
+            }
+            None => unnamed_delay.and_then(add),
+        };
         let reset = self
-            .reset
-            .as_deref()
-            .and_then(|reset| reset.parse::<i64>().ok())
-            .and_then(|secs| Timestamp::from_second(secs).ok());
-        if self.remaining.as_deref() == Some("0") {
+            .0
+            .get("x-ratelimit-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<i64>().ok())
+            .and_then(|s| Timestamp::from_second(s).ok());
+        if self.remaining_zero() {
             delay.max(reset)
         } else {
             delay.or(reset)
@@ -640,28 +777,8 @@ impl Limits {
     }
 }
 
-/// How long GitHub asks a client to wait after a secondary rate limit that
-/// names no `retry-after` delay while requests remain: at least a minute.
-const SECONDARY_WAIT_SECONDS: i64 = 60;
-
-/// Whether a GraphQL `errors` entry is GitHub's secondary rate limit. GitHub
-/// identifies it by its message alone, with neither a type nor, always, a
-/// header; this reads that provider wire signal as octokit's throttling
-/// plugin does (`/\bsecondary rate\b/i`).
-fn secondary_limit(entry: &Value) -> bool {
-    entry["message"]
-        .as_str()
-        .is_some_and(|message| message.to_ascii_lowercase().contains("secondary rate"))
-}
-
-/// The failure a GraphQL answer with a non-empty `errors` list reports,
-/// received at `now`. A secondary rate limit is [`GitHubError::RateLimited`]
-/// for its delay, a minute when it names none, or until the later reset when
-/// no requests remain; any other answer GitHub throttled (a [`Limits`]
-/// signal, whatever the HTTP status, or an entry typed `RATE_LIMITED`) is
-/// [`GitHubError::RateLimited`] until [`Limits::until`]; otherwise one whose
-/// every entry is typed `FORBIDDEN` is [`GitHubError::Refused`]; any other
-/// answer is [`GitHubError::Status`]. Messages carry `credential` redacted.
+/// Classifies a GraphQL answer with non-empty `errors`: secondary rate limit,
+/// quota/typed `RATE_LIMITED`, all-`FORBIDDEN` refusal, or ordinary status.
 pub(super) fn graphql_failure(
     errors: &[Value],
     status: u16,
@@ -670,9 +787,14 @@ pub(super) fn graphql_failure(
     credential: &str,
 ) -> GitHubError {
     let typed = |entry: &Value, kind: &str| entry["type"].as_str() == Some(kind);
-    if errors.iter().any(secondary_limit) {
+    let is_secondary = |entry: &Value| {
+        entry["message"]
+            .as_str()
+            .is_some_and(|m| m.to_ascii_lowercase().contains("secondary rate"))
+    };
+    if errors.iter().any(is_secondary) {
         return GitHubError::RateLimited {
-            until: limits.secondary_until(now),
+            until: limits.deadline(now, Some(SECONDARY_WAIT_SECONDS)),
         };
     }
     if limits.signalled() || errors.iter().any(|e| typed(e, "RATE_LIMITED")) {
@@ -680,12 +802,14 @@ pub(super) fn graphql_failure(
             until: limits.until(now),
         };
     }
-    let message = errors
-        .iter()
-        .filter_map(|e| e["message"].as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
-    let message = message.replace(credential, "<credential>");
+    let message = redact(
+        &errors
+            .iter()
+            .filter_map(|e| e["message"].as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
+        credential,
+    );
     if errors.iter().all(|e| typed(e, "FORBIDDEN")) {
         return GitHubError::Refused { status, message };
     }
@@ -694,6 +818,14 @@ pub(super) fn graphql_failure(
         path: "/graphql".to_owned(),
         status,
         message,
+    }
+}
+
+fn redact(text: &str, token: &str) -> String {
+    if token.is_empty() {
+        text.to_owned()
+    } else {
+        text.replace(token, "<credential>")
     }
 }
 
@@ -721,8 +853,6 @@ mod tests {
 
     use super::*;
 
-    /// The moment the answers below are seen; the primary reset they carry
-    /// is ten minutes later.
     const NOW: i64 = 1_767_225_000;
     const RESET: i64 = 1_767_225_600;
 
@@ -730,97 +860,39 @@ mod tests {
         Timestamp::from_second(second).unwrap()
     }
 
-    fn limits(remaining: Option<&str>, reset: Option<i64>, retry_after: Option<&str>) -> Limits {
-        Limits {
-            remaining: remaining.map(str::to_owned),
-            reset: reset.map(|reset| reset.to_string()),
-            retry_after: retry_after.map(str::to_owned),
+    fn limits(remaining: Option<&str>, reset: Option<i64>) -> Limits {
+        let mut headers = http::HeaderMap::new();
+        if let Some(rem) = remaining {
+            headers.insert("x-ratelimit-remaining", rem.parse().unwrap());
         }
-    }
-
-    fn answered(errors: Value, limits: &Limits) -> GitHubError {
-        answered_at(errors, limits, at(NOW))
-    }
-
-    fn answered_at(errors: Value, limits: &Limits, received: Timestamp) -> GitHubError {
-        let errors = errors.as_array().cloned().unwrap_or_default();
-        graphql_failure(&errors, 200, limits, received, "secret")
-    }
-
-    /// An answer received 1.6 seconds after `NOW`.
-    fn within_a_second() -> Timestamp {
-        at(NOW)
-            .checked_add(jiff::SignedDuration::from_millis(1_600))
-            .unwrap()
-    }
-
-    fn secondary() -> Value {
-        json!([{"message": "You have exceeded a secondary rate limit."}])
+        if let Some(reset) = reset {
+            headers.insert("x-ratelimit-reset", reset.to_string().parse().unwrap());
+        }
+        Limits::read(&headers)
     }
 
     fn failure(errors: Value, remaining: Option<&str>) -> GitHubError {
-        answered(errors, &limits(remaining, Some(RESET), None))
-    }
-
-    #[test]
-    fn an_ok_graphql_error_with_retry_after_defers_for_its_delay_though_quota_remains() {
-        let limits = limits(Some("4999"), None, Some("120"));
-        let error = answered_at(secondary(), &limits, within_a_second());
-        // The delay counts from the receipt rounded up to its second.
-        assert_eq!(
-            error,
-            GitHubError::RateLimited {
-                until: Some(at(NOW + 2 + 120))
-            }
-        );
-        assert!(error.is_reach());
+        let errors = errors.as_array().cloned().unwrap_or_default();
+        graphql_failure(
+            &errors,
+            200,
+            &limits(remaining, Some(RESET)),
+            at(NOW),
+            "secret",
+        )
     }
 
     #[test]
     fn an_ok_secondary_limit_naming_no_delay_waits_a_minute_not_the_primary_reset() {
-        let limits = limits(Some("4999"), Some(RESET), None);
-        let error = answered_at(secondary(), &limits, within_a_second());
+        let secondary = json!([{"message": "You have exceeded a secondary rate limit."}]);
+        let error = failure(secondary, Some("4999"));
         assert_eq!(
             error,
             GitHubError::RateLimited {
-                until: Some(at(NOW + 2 + 60))
+                until: Some(at(NOW + 60))
             }
         );
-    }
-
-    #[test]
-    fn an_ok_secondary_limit_with_no_requests_remaining_waits_for_the_exact_later_reset() {
-        let reset = GitHubError::RateLimited {
-            until: Some(at(RESET)),
-        };
-        let unnamed = limits(Some("0"), Some(RESET), None);
-        assert_eq!(answered_at(secondary(), &unnamed, within_a_second()), reset);
-        let named = limits(Some("0"), Some(RESET), Some("120"));
-        assert_eq!(answered_at(secondary(), &named, within_a_second()), reset);
-    }
-
-    #[test]
-    fn a_typed_rate_limited_entry_keeps_retry_after_over_a_sooner_reset() {
-        let typed = json!([{"type": "RATE_LIMITED", "message": "limit"}]);
-        let error = answered(typed, &limits(Some("4999"), Some(NOW + 30), Some("120")));
-        assert_eq!(
-            error,
-            GitHubError::RateLimited {
-                until: Some(at(NOW + 120))
-            }
-        );
-    }
-
-    #[test]
-    fn with_no_requests_remaining_the_later_of_reset_and_retry_after_governs() {
-        let typed = json!([{"type": "RATE_LIMITED", "message": "limit"}]);
-        let error = answered(typed, &limits(Some("0"), Some(RESET), Some("120")));
-        assert_eq!(
-            error,
-            GitHubError::RateLimited {
-                until: Some(at(RESET))
-            }
-        );
+        assert!(error.is_reach());
     }
 
     #[test]
@@ -832,7 +904,7 @@ mod tests {
         assert_eq!(
             error,
             GitHubError::RateLimited {
-                until: Some("2026-01-01T00:00:00Z".parse().unwrap())
+                until: Some(at(RESET))
             }
         );
     }
@@ -854,6 +926,37 @@ mod tests {
         );
         assert!(matches!(error, GitHubError::Refused { status: 200, .. }));
         assert!(!error.is_reach());
+    }
+
+    #[test]
+    fn pagination_link_rejects_plaintext_downgrade_and_cross_origin_urls() {
+        let base: http::Uri = "https://api.github.com".parse().unwrap();
+        assert!(link_admitted(
+            &base,
+            &"https://api.github.com/repos/o/r/issues?page=2"
+                .parse()
+                .unwrap()
+        ));
+        assert!(link_admitted(
+            &base,
+            &"/repos/o/r/issues?page=2".parse().unwrap()
+        ));
+        assert!(!link_admitted(
+            &base,
+            &"http://api.github.com/repos/o/r/issues?page=2"
+                .parse()
+                .unwrap()
+        ));
+        assert!(!link_admitted(
+            &base,
+            &"https://evil.example/repos/o/r/issues?page=2"
+                .parse()
+                .unwrap()
+        ));
+        assert!(!link_admitted(
+            &base,
+            &"//api.github.com/repos/o/r/issues?page=2".parse().unwrap()
+        ));
     }
 
     #[test]

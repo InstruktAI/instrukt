@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/session-continuity.rs
+assertion_line: 280
 expression: "support::redact(&result.replace(crew.project.env.path(\"\").to_str().unwrap().trim_end_matches('/'),\n\"[TMP]\"))"
 ---
 parser · change · active
@@ -9,8 +10,7 @@ created: <time> by session t3:lead-1
 revision: 8
 intent:
   Improve parser.
-reflection: reflected to GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: held since <time> by session t3:lead-1
 hold: none
 sessions:

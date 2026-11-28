@@ -25,7 +25,7 @@ review judgment and static review boundary (`sdlc/procedure/lifecycle/review`).
 ## Preconditions
 
 - The slug was supplied by the dispatching `todo-orchestrator`.
-- The checked `input` resolves for every kind; a feature also has its approved
+- The `input` artifact resolves for every kind; a feature also has its approved
   `prd`, and a bug has its `diagnosis` when diagnosis was dispatched.
 - `implementation-plan` and `plan-review-findings` are readable when planning
   was dispatched (fast-track bounded bugs and small localized changes review
@@ -55,7 +55,7 @@ review.
 Read in full (for every artifact present on the slug):
 
 - `input` and, for a feature, `prd`. For a bug, also read `diagnosis` when present.
-  Derived artifacts do not replace the checked input.
+  Derived artifacts do not replace `input`.
 
 - `architecture` when present, plus the pending domain or design snippets
   authored in `<slug>/work`.
@@ -64,7 +64,7 @@ Read in full (for every artifact present on the slug):
 - The relevant project README, generated agent instructions, and current
   project documentation through `instrukt docs`.
 
-The checked `input` and its approved derivations outrank the plan as scope authority. A behavioral delta
+The recorded `input` and its approved derivations outrank the plan as scope authority. A behavioral delta
 that the intent does not call for is a Critical scope finding even when the
 approved plan contains it. For a bug, `input` sharpened by `diagnosis` is the
 scope authority.
@@ -107,7 +107,7 @@ them unless the review scope explicitly includes planning or state edits.
 
 - When `implementation-plan` is present, every planned task is delivered by a
   commit or explicitly deferred under the plan; when no plan was dispatched
-  (fast track), the checked `input` intent (sharpened by `diagnosis` when
+  (fast track), the recorded `input` intent (sharpened by `diagnosis` when
   present) is completely delivered.
 - Every deferred task is justified. A deferred task whose subject is a defect
   in the delivered change is not justified: the delivery is incomplete.

@@ -253,16 +253,22 @@ Check whether the implementation follows existing codebase paradigms:
    to it.
 
    The existing path can also be an established solution outside the system
-   (`sdlc/policy/substrate-anchoring`, `general/principle/grounding`): input whose validity
-   an external specification defines — a data or markup grammar, a protocol, a
-   format — is read through a conforming implementation, unless the change
-   declares a subset the project owns and refuses everything outside it. A
-   hand-built implementation of such a specification with no grounded
-   adopt-vs-build judgment is an undeclared parallel (**Critical**); a
-   constraint offered as the reason to diverge is grounded at its source like
-   any other reason (**Important** when it does not hold). A reviewer checking
-   the change against a canonical implementation of the same grammar has
-   already found the existing path.
+   (`sdlc/policy/substrate-anchoring`, `general/principle/grounding`): an
+   external protocol, API client, auth/OAuth flow, or retry/backoff mechanism
+   adopts a maintained off-the-shelf SDK or library unless a grounded ADR
+   (`general/policy/adr-discipline`) proves a concrete gap that adopting or
+   bridging it cannot satisfy; an externally defined data or markup grammar or
+   format uses a conforming implementation unless the change declares a
+   project-owned subset and refuses everything outside it (or carries a
+   grounded ADR). Introducing or extending a hand-built implementation outside
+   those bounds with no grounded outward assessment and required ADR is an
+   undeclared parallel (**Critical**), in both plan review (including `change`
+   and `bug` plans where `architecture` is skipped) and build or commit review;
+   pre-existing hand-rolled code in the repository and local runtime choices
+   provide no precedent shield. A constraint offered as the reason to diverge
+   is grounded at its source like any other reason (**Important** when it does
+   not hold). A reviewer checking the change against a canonical implementation
+   of the same specification has already found the existing path.
 
 7. **State placement**: Does every piece of durable state the change
    introduces, relocates or changes live where the reviewed design placed it,
@@ -307,6 +313,16 @@ the principle warns against.
 A contract or plan that makes documentation, a prompt or a skill the subject of
 a test, a replay or a score is the same finding, whether code or staged agent
 sessions would run the check (`general/principle/intelligence-boundaries`).
+
+Code that polices agent coordination is also a **Critical** finding here
+(`general/principle/trust-and-guardrails`,
+`general/principle/intelligence-boundaries`): hardcoding agent role names to
+gate workflow steps, inspecting live turn state or conversation transcripts to
+decide coordination, embedding workflow choreography prose in CLI responses or
+help, or fabricating logical provenance. Product feature specifications
+(`docs/project/spec/feature/*`) that prescribe agent-to-agent coordination or
+role handoffs instead of software state and observable tool behavior carry the
+same **Critical** finding.
 
 #### Security review
 
@@ -606,6 +622,16 @@ snippet-body rules — and three checks do:
   acts that role excludes is this check's finding, unless it is that policy's
   counter for an act the reader is already invited to take.
 
+**Behavior-correction check.** When the change corrects what agents did (its
+commit body names the occurrence, `general/policy/documentation-discipline`),
+the reviewer follows every text the acting agent reads at that moment — the
+snippets its load path reaches, the help and prompts of the command it runs,
+the briefs and runtime values it receives — and confirms that path now leads to
+the corrected behavior. A statement still steering the old behavior, including
+one the diff left beside its new text, is **Important** unless the change names
+it as code carried by the todo that delivers it. Checking the diff against its
+own description does not satisfy this check.
+
 **Procedure composition check.** When a changed procedure carries root
 frontmatter, or its subscriptions or Required reads changed, the reviewer reads
 the frontmatter of every other procedure in the corpus, pending ones included,
@@ -663,6 +689,13 @@ wrong-owner placement unless comparison or routing is the snippet's subject.
 The concrete rule belongs in the applicable language policy and the generic
 surface references that owner. Judge the meaning; do not build or rely on a
 keyword scanner.
+
+**Snippet command check.** For every changed snippet region (`docs/**`), verify
+that CLI commands sit inside backticks or fenced code blocks
+(`general/spec/snippet-authoring-schema`). For changed regions in shared
+doctrine (`docs/general/`, `docs/domain/**`), additionally verify compliance
+with the shared-doctrine command rules in
+`general/policy/snippet-value-contract`.
 
 For each changed snippet body, flag the Narration anti-pattern in its four forms
 (`general/policy/snippet-value-contract` owns the full definition; do not re-derive it here):
@@ -778,6 +811,10 @@ Severity guidance:
 - A language-specific directive introduced in a generic snippet → **Important**;
   **Critical** when it conflicts with the applicable language owner or directs
   implementation through the wrong language mechanism.
+- A CLI command written outside backticks or fenced code blocks in any changed
+  snippet (`docs/**`) → **Important**.
+- A shared-doctrine command rule violation (`general/policy/snippet-value-contract`)
+  introduced in `docs/general/` or `docs/domain/**` → **Important**.
 - Pre-existing narration in a region this change did not touch → **drop the
   observation; it is not a finding** (the sweep owns it, not this review).
 

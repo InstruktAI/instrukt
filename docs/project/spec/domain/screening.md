@@ -1,5 +1,5 @@
 ---
-description: The screening bounded context — capability-free calls to the configured OpenAI-compatible endpoint, the screening of untrusted text built on them, and the texts it holds for a person.
+description: The screening bounded context — internal stateless capability-free calls to a configured OpenAI-compatible endpoint (`llm.screening`) and the stateless `instrukt is-safe` safety check over shuffled fragments.
 delivered_by:
   - capability-free-model-call
 ---
@@ -7,215 +7,248 @@ delivered_by:
 
 ## What it is
 
-The screening context puts text in front of a model without lending that text
-any capability, and decides whether untrusted text may reach a tool-capable
-agent. A text's authority comes from the channel that brought it, never from
-what it says: text written outside the project instructs no one, so a model
-that reads it is given nothing to act with, and an agent working from
-instrukt's briefs receives it only once screening released it. The context
-owns the capability-free call to the endpoint the operator configures
-(`project/instrukt/spec/feature/screening/capability-free-calls`), the
-screening of untrusted text through such calls
-(`project/instrukt/spec/feature/screening/untrusted-text-screening`), and the
-texts it holds for a person. It knows nothing of where a text comes from or
-what its caller does with the outcome.
+The screening context puts untrusted text in front of a model without lending
+that text any capability, and decides whether untrusted text is safe (free of
+prompt injection or manipulation) before a brief-governed agent reads it. A
+text's authority comes from the channel that brought it, never from what it
+says: text written outside the project instructs no one, so a model that reads
+it is given nothing to act with.
+
+The context owns:
+
+- the internal reusable capability-free model client
+  (`project/instrukt/spec/feature/screening/capability-free-calls`), which sends
+  a single tool-less chat-completions request to an OpenAI-compatible endpoint
+  configured under global `llm` (starting with `llm.screening`) and returns one
+  bounded text answer; and
+- the stateless safety check (`instrukt is-safe` and its matching internal Rust
+  function, `project/instrukt/spec/feature/screening/untrusted-text-screening`),
+  which screens untrusted text as shuffled 3-to-8-word fragments through more
+  than one independent capability-free check and returns a pure boolean verdict
+  (`safe` or `unsafe` with a short bounded reason).
+
+Screening is completely stateless: it creates and writes no local database,
+lock file, retention state or duplicate copy of screened text, and exposes no
+standalone raw prompt-forwarding CLI command. It knows nothing of where a text
+comes from or what its caller does with an unsafe verdict.
 
 ## Ubiquitous language
 
 **Capability-free call**
-: One chat-completions request to the endpoint that defines no tools and
-  carries one user message, the prompt, with a strict JSON-schema response
-  format and a cap on answer tokens.
+: One OpenAI-compatible `POST {url}/chat/completions` request that omits
+  `tools` and carries a single `user` message (the prompt) with no earlier
+  conversation, no other data and a `max_completion_tokens` cap on the answer.
+  Internal Rust capability only; never exposed as a standalone prompt-forwarding
+  CLI command.
 
 **Endpoint**
-: The OpenAI-compatible chat-completions service and the model the machine's
-  `screening` configuration names.
-
-**Answer shape**
-: The JSON Schema a caller declares. An answer has the shape when the model
-  finished, its content is JSON and that JSON is valid against the schema.
+: The OpenAI-compatible chat-completions service (`url`, `model`, optional
+  `${NAME}` `api_key`, optional `timeout`) admitted from global
+  `llm.screening` (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
 **Answer bound**
-: The most tokens an answer may take: 1024 unless the caller names another,
-  at most 4096.
+: The maximum number of completion tokens a capability-free call requests:
+  default `1024`, allowed range `1` to `4096`.
 
 **Unavailable**
-: The outside gate (`project/instrukt/design/architecture/outside-gate`) judges
-  the try temporarily unavailable: HTTP's standard transport and status rules
-  (`408`, `425`, `429`, `5xx`, unreachable, timed out) plus screening's service
-  rules for endpoint refusals and missing models (`401`, `402`, `403` at
-  endpoint scope; `404` at model key).
+: Transient endpoint or transport unavailability as judged by the outside gate's
+  standard HTTP adapter (`project/instrukt/design/architecture/outside-gate`) —
+  no custom screening service rules turn rejected credentials (`401`/`403`),
+  spend/quota refusals (`402`) or unknown models (`404`) into waits.
 
-**Rejected**
-: The endpoint answers `400`, `413` or `422`, as for a request too large for
-  the model — not temporary unavailability under the outside gate. A rejected
-  request has no answer of its shape: a call is refused and a screening holds
-  the text. Any other non-temporary `4xx` or client/protocol failure returns
-  from the outside gate as a defect without retrying and releases nothing.
+**Endpoint rejection**
+: The endpoint answers `400`, `413` or `422`, rejecting a request as one it
+  cannot serve (such as one too large for the model). Not transient
+  unavailability and not retried: an internal call returns `refused` and
+  `is-safe` returns `unsafe` with a fixed short reason. Any other non-temporary
+  `4xx` (including `401`, `402`, `403`, `404`), any `3xx` or non-`200` `2xx`,
+  or any non-temporary client/TLS/protocol failure is a defect that fails
+  without retrying.
 
 **Waiting**
-: The state of a call or screening while the outside gate waits out an
-  unavailable endpoint and tries again until it answers; nothing is refused,
-  released or held because of the unavailability.
+: The state of a call or screening while the outside gate paces retries against
+  a temporarily unavailable endpoint; no `answered`, `safe` or `unsafe` outcome
+  is produced meanwhile.
 
 **Fragment**
-: Between three and eight consecutive words of a text, words being the runs
-  of characters between whitespace.
+: For nonempty text of six or more words (whitespace-delimited runs), a
+  consecutive run of random length from 3 to 8 words summing to the text's
+  words (at least two fragments). For nonempty text of one to five words, the
+  complete text as a single fragment.
 
 **Shuffle**
-: The fragments of a text in a random order that differs from their order in
-  the text.
+: For six or more words, the text's fragments in a CSPRNG random order
+  guaranteed to differ from their original order, formatted as a JSON array of
+  strings with no original positions. For one to five words, the single-element
+  JSON array.
 
-**Classification**
-: One capability-free call whose prompt is screening's fixed instruction
-  followed by the text's shuffle as a JSON array of strings. Each screening
-  runs two, one after the other, over one shuffle.
+**Check**
+: One independent capability-free call over the text's shuffle asking whether
+  the fragments look manipulative or malicious, expecting a simple JSON verdict
+  deserialized with `serde_json` (no generic JSON-Schema validator). Each
+  screening runs two independent checks sequentially over one shuffle through
+  the same outside gate.
 
 **Verdict**
-: A classification's answer: `benign` with no reason, or `flagged` with one or
-  more reasons from `instructs_reader`, `claims_authority`,
-  `seeks_secrets_or_data`, `seeks_actions`, `hides_content` and
-  `other_manipulation`. A `benign` verdict that carries a reason is not of the
-  verdict's shape.
-
-**Size screening judges**
-: From six words, the fewest that make two fragments, to
-  `screening.max_text_chars` characters.
-
-**Held text**
-: The complete text of a screening that did not release it, kept with its
-  verdicts and the reasons it is held, under a reference.
-
-**Reference**
-: A held text's identity: 128 random bits written as 32 lowercase hexadecimal
-  characters.
-
-**Brief-governed agent**
-: An agent instrukt started or assigned through the selected runtime. Its
-  runtime gives it a caller identity, which the CLI recognises as a session.
-
-**Caller outside any session**
-: A caller without that identity: a person at their terminal, or an agent the
-  operator drives directly, which is the operator's own.
+: A check's parsed JSON answer: `benign` (with no non-empty reason), or
+  `flagged` with a bounded short non-empty `reason` summarizing the concern
+  without quoting the screened text. Any `benign` verdict carrying a non-empty
+  reason, any `flagged` verdict lacking a reason, or any unparseable answer is
+  an invalid verdict and fails safe as `unsafe`. A model-authored `reason` is
+  untrusted model output (a residual second-order prompt-injection surface)
+  that tool-capable callers must treat as untrusted data, never instructions.
 
 ## Ownership boundary
 
-- **Owns:** the request a capability-free call sends and what makes an answer
-  acceptable; screening's service rules for what endpoint answers count as
-  temporary unavailability beyond HTTP's standard rules, and which answers are
-  request rejection; fragments, the shuffle, the classification instruction and
-  count, the verdict vocabulary and the release-or-hold decision; held texts,
-  their store and lifecycle; that a held text reaches only a caller outside any
-  session, and that only such a caller discards one.
-- **Does not own:** the `screening` settings' layer, validation and secret
-  resolution (`project/instrukt/spec/domain/configuration`); standard HTTP
-  status semantics, `Retry-After` reading, backoff schedules, per-key wait
-  state and operator wait reporting, which belong to the outside gate
+- **Owns:** the capability-free chat-completions request shape and response
+  admissibility (`200 OK` headers judged before reading the bounded 1 MiB body,
+  `finish_reason == "stop"`, `400`/`413`/`422` endpoint rejection vs defect);
+  3-to-8-word fragmentation, CSPRNG shuffling, classification prompt, two-check
+  execution rule, simple verdict parsing and pure boolean safety decision;
+  entry validation of prompts, screening text and answer bounds; and the
+  stateless `instrukt is-safe` command semantics.
+- **Does not own:** the `llm` / `llm.screening` configuration layer rules,
+  schema validation, URL admission rules (`admitted_address` + no embedded
+  credentials), withheld-only admission and `${NAME}` secret resolution
+  (`project/instrukt/spec/domain/configuration`,
+  `project/instrukt/spec/feature/configuration/layered-configuration`,
+  `project/instrukt/spec/feature/configuration/owned-files`); standard HTTP
+  unavailability judgment, `Retry-After` handling, backoff schedules, per-key
+  wait state and one-report-per-wait operator reporting
   (`project/instrukt/design/architecture/outside-gate`), constructed by the
-  host and handed down; recognising the caller, which the CLI does through
-  core's caller-identity lookup and passes to screening as a session or a
-  caller outside any session; which text is untrusted, who is outside and
-  bringing a held text before a responsible person, which belong to each
-  consumer; command admission and its action catalog
-  (`project/instrukt/spec/feature/configuration/roles-and-capabilities`).
-- **Published contracts:** `instrukt screening call --shape <file>
-  [--max-tokens <n>] <prompt-file|->`, `instrukt screening screen
-  <file|->`, `instrukt screening show <reference>`, `instrukt screening list`
-  and `instrukt screening discard <reference>`, each with `--json`; the call
-  and the screening as functions of `instrukt-screening`, each taking the
-  caller and the host's outside gate (with a stop check) and returning its
-  outcome once the endpoint has answered.
-- **Allowed dependencies:** configuration supplies the effective `screening`
-  settings and resolves the key reference; core supplies the caller-identity
-  lookup the CLI reads; the outside gate (`instrukt-outside`) supplies outage
-  judgment, wait pacing and operator wait reporting, constructed by the host
-  and handed down. The context relationships are in the context map position
-  below.
+  host and handed down; command admission and its action catalog
+  (`project/instrukt/spec/feature/configuration/roles-and-capabilities`);
+  which external text is untrusted, who is an outside author, withholding
+  unsafe text from brief-governed agents or pointing a responsible person at
+  the source (each consumer's own context); or durable safety-verdict history
+  (deferred to the domain event ledger).
+- **Published contracts:**
+  - CLI command: `instrukt is-safe [<file>] [--json]` (reads stdin by default
+    or when `<file>` is `-`; reads `<file>` when supplied; stateless, read-only).
+  - Internal Rust functions of `instrukt-screening`:
+    - `call(&LlmAdmission, prompt, max_tokens, &Gate, CallerWait, stop)` ->
+      `Result<CallOutcome, CallDefect>` (internal reusable client; no CLI).
+    - `is_safe(&LlmAdmission, text, &Gate, CallerWait, stop)` ->
+      `Result<SafeOutcome, CallDefect>` (in-memory safety check; neither
+      function takes a `caller` parameter).
+- **Allowed dependencies:** `instrukt-core` (global `llm.screening` admission
+  with resolved `SecretValue`, `admitted_address` URL boundary) and
+  `instrukt-outside` (`Gate::call_async`, `CallerWait`, `Key`, `Settings`,
+  `http::build_client`, `http::judge_response`, `http::judge_reqwest_error`,
+  `runtime::block_on`), with `Gate` constructed by the host and handed down.
 - **Implementation roots:** `crates/instrukt-screening/`, which depends on
-  `instrukt-core` and `instrukt-outside`; `instrukt-cli` wires it and
-  constructs the outside gate.
+  `instrukt-core` and `instrukt-outside`; `instrukt-cli` wires
+  `instrukt is-safe`, constructs the foreground `Gate` and suppresses
+  third-party HTTP loggers (`project/instrukt/spec/feature/configuration/logging`).
 
 ## Canonical fields
 
 ### Aggregates
 
-#### Held text
-
-- **Root entity:** the held text.
-- **Contains:** the complete text; each verdict given, with its reasons; the
-  reasons it is held (`flagged`, `not_of_shape`, `cut_off`, `rejected`,
-  `outside_size`); when it was held; when and whether a person discarded it.
-- **Invariants:**
-  - The complete text is kept as handed over, never truncated.
-  - Only a caller outside any session receives the text. A session receives
-    the reference, the verdicts and the reasons, never the text.
-  - Only a caller outside any session discards it. A discarded held text stays
-    readable by such a caller until it is purged.
-  - Screening releases no held text.
-- **Identifier:** the reference.
-- **Lifecycle:** written by `instrukt screening screen` before it replies
-  `held`; current until a caller outside any session discards it; a discarded
-  held text is purged thirty days after it was discarded, by the next
-  `instrukt screening` command that writes the store.
+None. Screening is completely stateless and creates no local database, lock
+file or durable state (`sdlc/policy/state-storage`). Endpoint configuration
+and optional API key secrets are owned by configuration
+(`project/instrukt/spec/domain/configuration`). Active endpoint waits are
+transient in-process state inside the host-constructed `instrukt-outside::Gate`.
 
 ### What a caller waits for
 
-A call or screening returns its outcome once the endpoint has answered. Every
-try to the endpoint runs with the HTTP client's own retries disabled, bounded
-by `screening.timeout`, and brings its outcome through the host's outside gate
-(`project/instrukt/design/architecture/outside-gate`,
-`project/instrukt/policy/checks-and-guards`), using the gate's waiting call
-until the endpoint returns, screening's service rules, and the gate's default
-backoff. Standard HTTP status semantics, `Retry-After`, pause pacing, and one
-report per wait to the command's log and foreground standard error are the
-outside gate's; screening keeps no backoff schedule, `Retry-After` reading or
-wait reporting of its own. A caller that stops the command while it waits
-receives nothing, and nothing of its text is kept.
+Every HTTP try runs through a `reqwest::Client` built by
+`instrukt_outside::http::build_client` with `follow_redirects: false`, a
+10-second connect timeout, the admitted `llm.screening.timeout` per-request
+timeout, and zero HTTP-client retries so `instrukt-outside::Gate` is the single
+retry layer. Every try uses `Gate::call_async` with
+`Key::new("screening", [host_port]).item(model)` (using the credential-free
+`host[:port]` from `llm.screening.url`), `Settings::default()` (standard HTTP
+unavailability rules and `Backoff::DEFAULT`), the caller's `CallerWait`
+(`CallerWait::UntilReturns` for foreground `instrukt is-safe`, or a bounded
+`CallerWait::Within(duration)` — including `Duration::ZERO` for a single try —
+for bounded internal callers), and a `stop` check.
 
-| Operation | Returns |
-| --- | --- |
-| `screening call` | `answered` with the answer, or `refused` with its reason |
-| `screening screen` | `released` with the text, or `held` with the verdicts, the reasons and the reference |
-| `screening show` | a held text's reference, verdicts, reasons and dates, and its text to a caller outside any session |
-| `screening list` | every held text that is not discarded, without its text |
-| `screening discard` | the discarded held text's reference, to a caller outside any session |
+`instrukt-screening` checks `stop()` before every `Gate::call_async` call
+(before try 1 and before check 2) and after `Gate::call_async` returns before
+emitting any outcome. Foreground `instrukt is-safe` constructs a command-scoped
+`Gate` with `Report::foreground(stderr)` (no process-wide global) and cancels
+in-flight HTTP work on `SIGINT`/`SIGTERM` so an interrupted command emits
+nothing on stdout and exits with the signal's status.
 
-A caller whose own wait is shorter than an outage runs the command as
-background work of its runtime, which tells it when the command ends. Code
-that calls the functions in instrukt's process calls them outside every lock
-another operation waits on.
+A caller whose own wait is shorter than an outage either passes a bounded
+`CallerWait::Within(...)` (for in-process callers) or runs `instrukt is-safe`
+as background work of its runtime. In-process callers invoke
+`instrukt-screening` outside every lock another operation waits on.
+
+### Response judgment order
+
+For each try, `(status, headers, received_at)` (with `received_at = gate.now()`
+stamped on header receipt) is judged BEFORE reading any response body:
+
+1. **`200 OK`:** the only status whose body is read, streamed with a 1 MiB cap.
+   Mid-body transport errors route through
+   `instrukt_outside::http::judge_reqwest_error`. Body overflow (> 1 MiB),
+   invalid UTF-8, invalid JSON or missing `choices[0]` produce
+   `CallOutcome::Refused(MalformedAnswer)` without retrying.
+   `choices[0].finish_reason == Some("stop")` is checked before accepting
+   `choices[0].message.content`; any other or missing `finish_reason` produces
+   `CallOutcome::Refused(CutOff)` without retrying.
+2. **`400`, `413`, `422`:** body is unread; produces
+   `CallOutcome::Refused(EndpointRejected { status })` without retrying.
+3. **`3xx` or non-`200` `2xx`:** body is unread; produces `CallDefect` without
+   retrying.
+4. **Any other `>= 400` status** (including `401`, `402`, `403`, `404`, `408`,
+   `425`, `429`, `5xx`): body is unread; judged via
+   `instrukt_outside::http::judge_response` with `Settings::default()`.
+   Transient statuses (`408`, `425`, `429`, `5xx`) return `Tried::Unavailable`
+   to the gate; non-temporary `4xx` (`401`, `402`, `403`, `404`, etc.) return
+   `Tried::Defect` immediately without retrying.
+5. **Pre-response transport error:** judged via
+   `instrukt_outside::http::judge_reqwest_error` with `Settings::default()`.
+
+### Two-check screening rule
+
+Each screening runs two independent checks over one shuffle sequentially
+through the same `&Gate`. If check 1 returns `Waiting`, `Stopped`, `Defect` or
+`EndpointRejected`, screening stops at once with that outcome; otherwise it
+checks `stop()` and runs check 2. Text is `Safe` only when both checks return
+`Verdict::Benign`. If either check returns `Verdict::Flagged`, checks disagree,
+a check's answer is an invalid verdict, or a check ends in `CutOff` or
+`MalformedAnswer`, screening returns `Unsafe { reason }` carrying the model's
+bounded short reason (when flagged, structurally capped in length with no
+code-side free-text quote scanner) or a fixed short reason otherwise.
 
 ### Entry checks
 
-Before a call or screening takes its input, its command refuses, naming what
-is missing and the door, when:
+Before any HTTP request is sent, `call` and `is_safe` refuse at entry (naming
+the cause and, for missing or invalid prerequisites, the repair door, without
+disclosing any secret or embedded credential material) when:
 
-- the effective configuration names no `screening.url` or no
-  `screening.model`;
-- `screening.api_key` is set and its secret does not resolve
+- `llm.screening` is unconfigured (`LlmAdmission::Unconfigured`) or invalid
+  (`LlmAdmission::Withheld`, including malformed URL, embedded URL credentials,
+  non-loopback plaintext `http` URL, missing `url`/`model`, invalid `timeout`,
+  unknown keys or non-`${NAME}` `api_key`);
+- `llm.screening.api_key` is set and its secret fails resolution in
+  `~/.instrukt/secrets.env`
   (`project/instrukt/spec/feature/configuration/owned-files`);
-- the answer shape is not a JSON Schema object, the answer bound is outside 1
-  to 4096, or the prompt or text is empty.
+- the prompt (`call`) or text (`is_safe`) is empty or whitespace-only (zero
+  words), or `max_tokens` (`call`) is outside `1..=4096`;
+- for CLI `instrukt is-safe`, `<file>` or standard input is missing, unreadable
+  or not valid UTF-8.
 
-A nonempty text outside the size screening judges is held, not refused. A
-running command uses the settings it admitted.
+Nonempty text of one to five words passes entry checks and is screened as a
+single fragment.
 
-### Held-text store
+### Outcomes
 
-| Property | Value |
-| --- | --- |
-| Holds | Each held text with its reference, verdicts, reasons and dates; discarded held texts in a table of their own until purged. |
-| Nature | Authoritative: the only copy of each held text. |
-| Owner | The screening context, written only by the `instrukt screening` commands: `screen` writes a held text, `discard` moves one to the discarded table, and a command that writes the store purges discarded held texts past thirty days. |
-| Loss cost | Lost intent: a held text lost drops an outside contribution. |
-| Medium | `state/screening.db`, a SQLite database of its own with its own migrations: held texts grow without a fixed bound and change from held to discarded. |
-| Write isolation | Its own lock, `state/screening.lock`, taken only by the `instrukt screening` commands for each transaction, never while a request to the endpoint is under way. No background writer takes it, and no other context's state is in it. Readers take no lock. |
-| Scope | One computer: the selected home's `state/`. A held text moves with no responsibility between computers. |
-| Lifecycle | Held texts are current until discarded; discarded ones are history, purged thirty days after discard. A held text of an earlier schema is migrated, never discarded. |
-| Rebuild | None: nothing re-creates the store. |
+| Surface / Outcome | Library return | CLI exit | CLI stdout | CLI stderr |
+| --- | --- | --- | --- | --- |
+| **Safe** | `Ok(SafeOutcome::Safe)` | `0` | `true` (or `{"safe":true}` with `--json`) | none (except prior outside-gate wait notices if recovered) |
+| **Unsafe** | `Ok(SafeOutcome::Unsafe { reason })` | `1` | `false` (or `{"safe":false,"reason":"..."}` with `--json`) | none (the unsafe verdict is the command's report) |
+| **Entry refusal** | `Ok(SafeOutcome::Refused(EntryRefusal))` / `Ok(CallOutcome::Refused(Entry(_)))` | `1` (usage error: `2`) | nothing | one line: `instrukt: <cause>[; <door>]` (scrubbed of secrets/credentials) |
+| **Waiting** (bounded wait expired) | `Ok(SafeOutcome::Waiting(Wait))` / `Ok(CallOutcome::Waiting(Wait))` | — (CLI uses `CallerWait::UntilReturns`) | — | — |
+| **Defect** | `Err(CallDefect)` | `1` | nothing | one line: `instrukt: <scrubbed cause>` (no secrets, credentials, prompts or raw bodies) |
+| **Interrupted (`SIGINT`/`SIGTERM`)** | `Ok(SafeOutcome::Stopped)` / `Ok(CallOutcome::Stopped)` | signal default (`130`/`143`) | nothing | any prior outside-gate wait notice only |
 
-A call or screening that is answered, refused or released writes nothing, and
-a waiting one keeps its input only in its own process.
+`call` additionally returns `Ok(CallOutcome::Answered(String))` or
+`Ok(CallOutcome::Refused(CutOff | EndpointRejected { status } | MalformedAnswer))`.
 
 ### Domain events emitted
 
@@ -227,51 +260,47 @@ None.
 
 ## Event subjects and origins
 
-This context emits no events.
+This context emits no events. Durable recording of safety verdicts is outside
+this context and belongs to the future domain event ledger.
 
 ## Use cases
 
-- **capability-free-calls** — `project/instrukt/spec/feature/screening/capability-free-calls` — put outside text in front of a model whose request defines no tools, and receive one answer of a declared shape.
-- **untrusted-text-screening** — `project/instrukt/spec/feature/screening/untrusted-text-screening` — release untrusted text only on every classifier's benign verdict over shuffled fragments, and keep any other text for a person.
+- **capability-free-calls** — `project/instrukt/spec/feature/screening/capability-free-calls` — internal tool-less single-message calls to the configured OpenAI-compatible endpoint returning one bounded text answer.
+- **untrusted-text-screening** — `project/instrukt/spec/feature/screening/untrusted-text-screening` — stateless boolean safety screening of untrusted text over shuffled 3-to-8-word fragments via `instrukt is-safe` and its matching internal function.
 
 ## Governing designs and decisions
 
-- `project/instrukt/design/architecture/overview` — the crate, the held-text
-  store in the home and the model endpoint as an external surface.
+- `project/instrukt/design/architecture/overview` — the `instrukt-screening`
+  crate, `secrets.env` scope and the configured model endpoint as an external
+  surface.
 - `project/instrukt/design/architecture/outside-gate` — the outside gate
-  through which screening judges endpoint unavailability, paces retries and
-  reports waits to the operator.
-- `project/instrukt/policy/checks-and-guards` — entry-check gating, single
-  retry layer through the outside gate, and held-text migration.
+  through which screening judges transient endpoint unavailability, paces
+  retries and reports waits to the operator.
 
 ## Context map position
 
 - **configuration → screening — Customer / Supplier:** the global-only
-  `screening` settings and the resolution of `screening.api_key` from the
-  machine's secrets.
-- **CLI admission → screening — Customer / Supplier:** the caller the CLI
-  recognised through core's caller-identity lookup, passed as a session or a
-  caller outside any session.
-- **screening → CLI admission — Published language:** the action `screening`
-  in the code-owned catalog.
+  `llm.screening` admission (`url`, `model`, optional resolved `api_key` from
+  `secrets.env`, optional `timeout`), withheld alone when invalid so other
+  capabilities run unchanged.
 - **Configured model endpoint — Anti-corruption layer:** translates the
   configured OpenAI-compatible chat-completions endpoint into capability-free
-  calls, bringing every try through the outside gate
+  calls, bringing every try through the host-supplied outside gate
   (`project/instrukt/design/architecture/outside-gate`).
 
 ## Known caveats
 
-- The held-text rule keeps instrukt from handing held or unscreened outside
-  text to brief-governed agents. Agents are trusted; the rule protects them
-  from receiving alien instructions through instrukt, and is no defence
-  against an agent. An agent the operator drives directly is the operator's
-  own and receives what the operator would.
-- Two classifications of one shuffle by one model are separate calls, not
-  different judges.
-- A text of fewer than six words, or in a script that does not separate words
-  with whitespace, makes fewer than two fragments and is held.
-- An endpoint that cuts a long prompt to fit its model's context judges part
-  of it. `screening.max_text_chars` is set below what the model takes.
-- A request the endpoint never answers within `screening.timeout` waits for as
-  long as its command runs; its caller sees why and stops it, or the operator
-  raises the timeout.
+- The capability-free guarantee holds for a plain model with no built-in search
+  or browsing; instrukt performs no runtime check on which model is configured,
+  and a model that searches on its own is outside the guarantee.
+- Two independent checks of one shuffle by one model are separate tool-less
+  calls, not different judges.
+- Nonempty texts of one to five words, or texts in scripts that do not separate
+  words with whitespace, cannot be split into multiple 3-to-8-word fragments
+  and are screened as a single fragment; containment still holds because each
+  check is capability-free.
+- A flagged verdict's short `reason` is authored by a model that read untrusted
+  text and remains a residual second-order prompt-injection surface; callers
+  must treat it as untrusted data, never as instructions.
+- An endpoint that silently truncates prompts exceeding its context window
+  instead of returning `400`/`413`/`422` judges only what it saw.

@@ -4,5 +4,13 @@ AGENTS.override.md
 *.pending-snap
 *.snap.new
 .instrukt/
-
 /.instrukt-home/
+/workspace/
+/scratchpad/
+/trees/
+.DS_Store
+.env
+*.rs.bk
+*.swp
+*.swo
+*~

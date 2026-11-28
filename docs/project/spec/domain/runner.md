@@ -8,13 +8,13 @@ visibility: public
 
 The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the runtime adapter, operational
-session inspection, event-source translation, conversation links and time
+session inspection, event-source translation and time
 eligibility, including anomaly reporting. It executes the enabled modules' work
 in one process, entered through `instrukt run` or `instrukt tick` and woken by
-the OS scheduler. The long-lived `instrukt run` also hosts turn-end conversation
-relay and, through hosting the company context implements, that context's
-connectors (`project/instrukt/spec/domain/company`); scheduled `tick` does
-neither. It has no consumer daemon beside the runner;
+the OS scheduler. The long-lived `instrukt run` also hosts, through hosting the
+company context implements, that context's connectors and connected-conversation
+answer relay (`project/instrukt/spec/domain/company`); scheduled `tick` does
+not. It has no consumer daemon beside the runner;
 with a company's connector declared, an owned service keeps `instrukt run`
 itself running.
 A separate opt-in loopback webhook receiver accepts signed external events,
@@ -73,15 +73,6 @@ Native agent-operation prose is supplied by configuration and rendered through `
   captures each generation and fixed native launch identity. Exact-key ownership
   admits one starter or deliverer at a time.
 
-**Conversation link**
-: A runner-owned relationship between two agent threads in which the human
-  participates from either thread and finished conversational turns reach the
-  peer with their original authorship.
-
-**Relay position**
-: Per-link directional source-stream and completed-delivery progress, retained
-  across ordinary runner restarts.
-
 **Due task**
 : A prepared, authorized task whose recorded schedule makes it eligible for
   execution at the observed time.
@@ -115,20 +106,63 @@ Native agent-operation prose is supplied by configuration and rendered through `
 **Requested review**
 : An independent review of an exact committed worktree head that an authoring
   session asks for with `instrukt review start`, naming coordinates only; the
-  runner renders the reviewer's assignment and starts the requested reviewer
-  on it. It is no review request and emits no event
+  runner renders the reviewer's assignment, starts a requested reviewer on it
+  or wakes the existing reviewer of record (for a re-review, a dispute or an
+  idle head reviewer), and returns each verdict recorded for the head to the
+  session that asked. It is no review request and emits no event
   (`project/instrukt/spec/feature/runner/requested-review`).
 
+**Author ask**
+: The runner's notice to the authoring session of an uncovered commit in the
+  active integration candidate, asking it to decide whether the commit owes
+  review; sent through the session's input delivery and recorded per commit
+  and session. It is no review request
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
+  candidate's authors).
+
+**Proposal handoff**
+: The runner's fact `runner.proposal_approved`: in a company home, an open
+  pull request whose current head is an admitted proposal
+  (`project/instrukt/spec/domain/company`) holds an approving verdict, and the
+  company's standing integrator is woken to integrate that exact head.
+
+**Computer fleet**
+: The computers that share one cluster Redis, each named by its instrukt
+  computer identity. The identity belongs to an instrukt home, so two homes on
+  one machine are two computers of the computer fleet. It is not a project's
+  fleet, its active todos and the sessions working them, which fleet attention
+  concerns (`project/instrukt/spec/feature/runner/fleet-attention`).
+
+**Fleet membership record**
+: The computer fleet's one record of its members in cluster Redis: per member,
+  its computer identity and when it was last seen.
+
+**Fleet member**
+: A computer of the computer fleet whose runner, `instrukt run` or
+  `instrukt tick`, keeps its entry on the fleet membership record; it stays a
+  member while it is offline.
+
+**Fleet query**
+: The runner's bounded request/reply over cluster Redis between computers of
+  the computer fleet: one request to each computer asked, all answers awaited
+  together under one deadline, and for every computer asked either its answer
+  or why there is none.
+
+**Query kind**
+: One consumer's requests and answers on the fleet query, travelling apart from
+  every other kind's: merged history search, and the evaluation report's
+  computer answers.
 
 ## Ownership boundary
 
 
+
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the admission, rendering and start of requested
-  reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
-  runtime capability translation, conversation-link membership, identity-envelope
-  vocabulary and deterministic turn-end relay;
+  activation from events; the admission, rendering, start and wake of
+  requested reviews and the return of their verdicts to the sessions that
+  asked; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  runtime capability translation;
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   container each company's sessions run in on a host, its state, its tools,
@@ -141,12 +175,23 @@ Native agent-operation prose is supplied by configuration and rendered through `
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
+  held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
   import progress (`project/instrukt/spec/feature/runner/history`); the
   requested-review store with its file, lock and migrations, holding the
-  admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`);
+  encrypted home backup and guarded restore, its local bookkeeping and
+  staleness-notification stores, its staleness threshold and local standing
+  query, and convergence of the owned daily home backup timer
+  (`project/instrukt/spec/feature/runner/home-backup`,
+  `project/instrukt/spec/feature/runner/module-installation`); the
+  runner's per-worker failure files (`state/runner-workers/` and
+  `state/computer-fleet.json`), its wake-loop state files
+  (`state/runner-skipped-wake.json` and `state/runner-admission.json`), and its
+  per-Redis reachability store (`state/redis-reachability.db` and
+  `state/redis-reachability.lock`).
+
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
@@ -164,8 +209,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
   operational `instrukt sessions list` surface,
   `instrukt history extract|search|show`,
   `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
-  `instrukt review start`, the sign-in return path, and wake-up
-  and runner-service registration by `instrukt install`;
+  `instrukt review start`, `instrukt backup run|list|restore`, the local-only
+  home backup standing query (core-declared, CLI-wired for publication), the
+  sign-in return path, and wake-up, runner-service, and daily home backup timer
+  registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
   streams and optional notification; instrukt-owned start semantic-key discovery
@@ -201,6 +248,21 @@ contract work calls inside its record transactions, and the raise through
 stays with its owner: work passes the facts of its own record changes, and the
 runner decides which of them are conditions and appends their events.
 
+The runner also owns the fleet query and the fleet membership record: how a
+request reaches each computer asked and its answer comes back, the deadline,
+what the query observes when a computer has no answer, the responders and the
+tick drain that carry each query kind's requests on the computers that kind's
+owner says answer, and who is on the record and when each member was last seen
+(Fleet query and membership, below). Its published contracts there are the
+fleet query and the membership read it offers its in-process consumers, and the
+evaluation-answer interface it declares for work, implemented by work and wired
+by the CLI. It does not own what a kind's requests and answers mean, which
+computers answer a kind, or how a consumer words a missing answer: for merged
+history search these are history's
+(`project/instrukt/spec/feature/runner/history`), and for the evaluation
+report, with which computers a report covers and how their answers pool,
+work's (`project/instrukt/spec/feature/work/eval-report`).
+
 
 The runner also owns worktree reclamation: that and when the disk todo
 worktrees hold is reclaimed on a computer, the removal of a project's declared
@@ -218,6 +280,68 @@ adapter and owns everything else in the thread's lifecycle. It does not own
 whether a todo has reached a terminal outcome, owned by work, or the window's
 admitted value and its validation, owned by configuration
 (`project/instrukt/spec/feature/runner/thread-retention`).
+
+The runner also owns encrypted home backup and guarded restore for a computer's
+instrukt home (`project/instrukt/spec/feature/runner/home-backup`), distinct
+from runner's single-company container export and import
+(`project/instrukt/spec/feature/company/company-containers`). It does not own
+global `backup` configuration schema, entry validation, or company-home
+settings resolution and forward conversion (configuration), or `instrukt status`
+rendering (publication).
+
+The runner also owns carrying a company's knowledge proposals to review and
+integration, and what of them reaches the operator, in a company home
+admitted for automatic review. Its review observation's fetch of a company
+home prunes remote-tracking branches the remote no longer holds. On each
+review observation's tick it considers only the heads of the home's
+remote-tracking branches, never a branch that exists only on the computer,
+and asks the company context's proposal lookups
+(`project/instrukt/spec/domain/company`):
+
+- **Opens pull requests.** For each such head that is an admitted proposal,
+  is not contained in the remote-tracking canonical branch, and that no pull
+  request, open or closed, has as its head, the runner has work's GitHub
+  boundary open a pull request for its branch, as the identity the
+  `company-agent` role selects. The pull request is then reviewed as every
+  eligible pull request is.
+- **Hands off.** When an open pull request's current head is an admitted
+  proposal, holds an approving verdict that work answers is current and covers
+  the canonical branch, and is not contained in the remote-tracking canonical
+  branch, the runner emits `runner.proposal_approved`.
+- **Reports.** `instrukt events status` lists, with their doors, the
+  unestablished entries the company context names and a proposal store whose
+  condition is not usable, derived through the company context's snapshot
+  lookups each time it runs. The runner raises each as an anomaly through
+  `project/instrukt/spec/feature/runner/anomaly-notification` as that
+  contract stands, once per running process.
+
+Opening proposal pull requests, and nothing else, needs the proposal
+pull-request credential, whose readiness work answers as it answers automatic
+review's: met, unmet with a finding, or GitHub cannot be asked
+(`project/instrukt/spec/domain/work`). It is asked as automatic review's is:
+
+- **At entry.** `instrukt install` and `instrukt install --check` ask it for
+  each company home admitted for automatic review, beside automatic review's
+  readiness, and report an unmet answer or one GitHub cannot give as a finding
+  with its repair door
+  (`project/instrukt/spec/feature/runner/module-installation`).
+- **On each pass.** The review observation of a company home asks it once.
+  - **Met:** pull requests are opened as above.
+  - **Unmet:** only the opening of proposal pull requests is withheld, with a
+    warning naming the finding and its door.
+  - **GitHub cannot be asked:** only the opening is withheld for that pass,
+    the source's cause is recorded and a warning is logged, as for automatic
+    review's readiness; the next tick asks again.
+
+Automatic review of the home's other pull requests, the handoff of heads
+already approved and CI observation never wait on this credential. An opening
+GitHub or the runtime cannot answer falls under
+`project/instrukt/spec/feature/runner/pull-request-review`, Availability: a
+warning is logged and the next tick tries again. An opening GitHub refuses
+while the credential is met is a defect of the part: a warning carries GitHub's
+answer, as the review pass warns of its own failures. Neither writes any
+state. The verdict is work's,
+and what the integrator does with the head is workflow's integrator's.
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
@@ -246,10 +370,10 @@ responsibility is distinct from its configured role class.
 - **Invariants:** Execution follows the enabled modules. Todo pickup mode
   controls todos only; event activation remains independently switchable.
   One process handles those enabled responsibilities. It runs only with the
-  prerequisites it admitted at its start or at a later wake; a part that depends
-  on a service outside instrukt retries inside itself until that service returns
-  (`project/instrukt/policy/checks-and-guards`: a prerequisite is gated, an
-  outside failure is retried).
+  prerequisites it admitted at its start or at a later wake
+  (`sdlc/principle/design-fundamentals`, Fail Fast); a long-lived runner part
+  that depends on a service outside instrukt retries transient outages until
+  that service returns (`project/instrukt/design/architecture/outside-gate`).
 - **Identifier:** The invocation itself; no new durable invocation identifier
   is established by this contract.
 - **Lifecycle:** Begins at a runner entry point and ends when that invocation
@@ -277,19 +401,6 @@ responsibility is distinct from its configured role class.
   (`project/instrukt/spec/feature/runner/session-continuity`: only absence
   proves an actor gone). The standing-agent and procedure-event-delivery contracts own continuing
   home/subject responsibility and eligible event delivery; routing itself resolves no session.
-
-#### Conversation link
-
-- **Root entity:** One link between two runtime-scoped native threads.
-- **Contains:** Its two members, active/closed state, opening positions and
-  per-direction pending handover and accepted-delivery evidence.
-- **Invariants:** Admission, attribution, closure and turn eligibility are
-  owned by `project/instrukt/spec/feature/runner/conversation-links`. T3
-  transcripts supply content; transport positions confer no speaker authority.
-- **Lifecycle:** Opening establishes both directions; the long-lived runner
-  follows native completions, resumes retained progress on startup and stops
-  both directions when a member closes the link. State remains runner-owned
-  in the existing state database.
 
 #### Event activation
 
@@ -351,10 +462,7 @@ A project-local subscribed procedure reaches only that project's origin.
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
 A scheduled-only computer reacts to retained instrukt events on its next wake,
-within stream retention. Conversation relay is a separate native-thread reader
-in `instrukt run`, governed by
-`project/instrukt/spec/feature/runner/conversation-links`. Redis is transport
-only; it owns no conversation turns or link decisions.
+within stream retention.
 One consumer's slow handler or unavailable Redis does not block unrelated readers
 or local work. SQLite writer-lock ownership is limited to local write sections;
 network waits and reactions run outside it.
@@ -430,6 +538,326 @@ project or pass, as worktree reclamation reports what stays owed
 Retention runs where the runner already runs: the window adds no wake-up
 demand (`project/instrukt/spec/feature/runner/module-installation`).
 
+### Fleet query and membership
+
+The fleet query carries a request of one query kind to each computer a consumer
+asks, over the cluster connection configured on the asking computer, and waits
+for all their answers together. A consumer asks with a deadline of at most 120
+seconds; the wait ends when every computer asked has answered or the deadline
+passes, whichever comes first. For the evaluation kind, the connection that
+carries the wait does not time out before the deadline, whatever the cluster
+connection's own timeout. Each kind travels on its own per-computer queue, so
+a computer meets only the requests of the kinds it answers, and a build that
+does not know a kind never takes one of its requests. A request lives 120
+seconds; a computer that finds it expired leaves it unanswered. Each request
+names a reply place of its own, random and of the kind's form, and a computer
+answers only to such a place; a request it cannot read, of a form it does not
+know or naming another place is left unanswered and logged on that computer.
+Cluster Redis holds requests and answers for their lifetime and keeps nothing
+of a kind's data beyond it.
+
+A query that cannot start tells its consumer so, for the whole query and
+before any computer is asked: no cluster connection is configured on the
+asking computer, or the configured one cannot be used. Once started, the
+consumer receives, for every computer asked, the answer as it arrived or what
+the query observed instead:
+
+- **The store could not be reached** when the query began.
+- **The request could not be delivered:** the store refused it, or failed
+  while it was sent.
+- **The store failed while the answer was awaited.**
+- **No answer before the wait ended.**
+
+The asking computer is never asked through the store: a consumer that covers it
+reads its own part locally. Reading an answer is the consumer's, and so is the
+wording a consumer gives each of these outcomes; an answer the consumer cannot
+read is the consumer's own reason.
+
+The runner hosts each kind's answering on the computers that kind's owner says
+answer:
+
+- **History kind:** the long-lived `instrukt run`, on history's responder, as
+  `project/instrukt/spec/feature/runner/history` states.
+- **Evaluation kind:** wherever `project/instrukt/spec/feature/work/eval-report`
+  says a computer answers. `instrukt run` answers on a responder of its own,
+  apart from history's, so neither kind's answer waits for the other's.
+  `instrukt tick` answers, before the rest of its wake, every unexpired request
+  waiting for it when it starts, so a computer woken by the minute wake-up
+  answers within the request's life. The answer is work's: the runner obtains
+  it through the evaluation-answer interface and returns it as work gave it.
+  Answering writes no report.
+
+Every runner invocation on a computer with a cluster connection configured
+keeps that computer's entry on the fleet membership record: `instrukt tick`
+on each invocation that is not refused for a running `instrukt run`, and
+`instrukt run` when its evaluation responder starts and at least once a minute
+while it runs. A computer writes only its own entry. A member that stops
+running stays on the record with when it was last seen; nothing removes an
+entry. A consumer reads the whole record. An entry that names no computer
+identity, or whose last-seen time cannot be read, is returned as such and
+never fails the read. A read tells the store being unreachable apart from the
+store refusing the read.
+
+A responder or membership write that cannot reach the cluster store retries:
+`instrukt run`'s responder in its own thread, and `instrukt tick` at its next
+wake, running the rest of its wake meanwhile
+(`project/instrukt/design/architecture/outside-gate`). While the failure lasts it is
+recorded, with when it began, in the computer fleet's failure file
+`state/computer-fleet.json`; a changed failure keeps the time it began, the
+next success removes the file, a configured cluster connection that cannot be
+used is recorded the same way, and the file is removed when no cluster
+connection is configured. A failure to write or remove the file is logged and
+leaves what the writer has recorded as it was, so the next outcome writes it
+again; it is never taken as a recorded success. `instrukt events status`
+reports the file as it reports the runner's other workers, under the name
+`computer-fleet`, and reports a file it cannot read as that worker's failure. The file is written whole beside its previous
+version and renamed over it, by `instrukt run`'s responder or by
+`instrukt tick`'s fleet step, which the runner lock never lets run at once;
+readers take no lock. It is current state the runner owns for this home, and
+losing it costs nothing: the next attempt records the failure again.
+
+
+The evaluation kind's uses of the cluster store — `instrukt run`'s evaluation
+responder, `instrukt tick`'s fleet step, membership writes and the evaluation
+report's asking — write nothing into the state database: the transport they
+use keeps no reachability record, and whether the store can be reached
+shows in `state/computer-fleet.json` instead. The one exception is an answer read from a
+state database older than this build's schema, which first brings it to the
+current schema once under the writer lock, as every read of an older database
+does (`project/instrukt/spec/feature/work/state-database`). Beyond that they
+never wait on, or hold, the writer lock that work commands wait on
+(`sdlc/policy/state-storage`, Write isolation). Background event transport,
+inbound webhook relay and the history-search responder keep each logical Redis's
+one reachability record in `state/redis-reachability.db`, outside the state
+database and its writer lock, logging loss and return once per transition
+(`project/instrukt/spec/feature/runner/event-transport`); interactive paths
+(`instrukt history search`, `instrukt mcp`, `instrukt install`, `instrukt eval`
+and synchronous OAuth/OIDC callbacks) record no reachability so they never
+contend on `state/redis-reachability.lock`.
+Whether the cluster user permits the fleet query is checked where the
+connection enters, at installation
+(`project/instrukt/spec/feature/runner/module-installation`).
+
+
+The fleet membership record is durable state (`sdlc/policy/state-storage`):
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative: the only record of which computers have been fleet members and when each was last seen. |
+| Owner | The runner; each computer's runner writes its own entry and no other. |
+| Loss cost | A member running `instrukt run` writes its entry again within a minute; a member that only ticks writes it again at its next tick, whenever its scheduling runs it. A member that is not running is missing from reports covering the whole computer fleet until it runs again. No evaluation data, stated intent or external effect is lost. |
+| Medium | One hash in cluster Redis, the only store the computer fleet shares, one field per member; each write sets one field in one command. |
+| Write isolation | Writers set separate fields and wait on no one; the record shares the cluster store with requests and answers but no key. |
+| Scope | The cluster. |
+| Durability | As the cluster store persists its data: instrukt's own Redis persists it, an operator-supplied one as its operator configures. |
+| Bound and retirement | One entry of a few dozen bytes per computer identity that ever ran a runner with a cluster connection; a re-created identity adds an entry. Entries are not retired. |
+
+### Home backup and guarded restore
+
+`instrukt backup run`, `instrukt backup list`, and `instrukt backup restore`
+execute as one-shot CLI invocations speaking provider-neutral S3-compatible
+object storage directly through an established S3 client with bounded retries
+and plain upload framing, never routed through `instrukt-outside`
+(`project/instrukt/design/architecture/outside-gate`,
+`project/instrukt/spec/feature/runner/home-backup`).
+
+- **Snapshot confinement and streaming staging:** `instrukt backup run`
+  serializes on `state/backup.lock` without taking `state/writer.lock` or
+  `state/runner.lock`. Before snapshot collection, runner delegates company
+  settings resolution and forward conversion to configuration (which enforces
+  symlink confinement on its own company documents,
+  `project/instrukt/spec/domain/configuration`). Runner confines its own backup
+  roots and post-conversion snapshot inputs, pruning excluded trees before
+  descent (including regenerable `companies/<name>/.instrukt/schemas/`,
+  `state/.backup-staging-*`, `state/.backup-restore-staging-*`,
+  `state/.backup-restore-rollback-*`, and local backup bookkeeping files) and
+  refusing any visited escaping or unresolvable symlink fail-closed; symlinks
+  are never archived as symlink entries. Each discovered SQLite store is
+  snapshotted through core's reusable online-backup primitive into owner-only
+  staging, verified, streamed immediately into the compressed `age`-encrypted
+  archive, and unlinked before the next database is snapshotted. Pre-staging
+  headroom is enforced against the shared-machine free-space floor
+  (`general/policy/shared-machine-resources`) and staging is removed
+  unconditionally on exit.
+- **Publication, post-validation, and bookkeeping errors:** Staged upload,
+  exact-size verification, in-region single-object or multipart server-side
+  promotion, validation marking, and per-machine retention pruning follow
+  `project/instrukt/spec/feature/runner/home-backup`. Runner also cleans stale
+  remote staging objects and incomplete multipart uploads scoped strictly to
+  this computer's namespace. Once `_validated/<key>` is written,
+  `state/backup-state.json` records the published generation and success
+  timestamp even if subsequent staging deletion, retention pruning, or orphan
+  cleanup fails, while still recording the post-validation error, invoking
+  `runner.notify`, and exiting non-zero. On any failed backup run, a failure
+  writing `state/backup-state.json` never suppresses `runner.notify` and
+  surfaces alongside the primary failure.
+- **Guarded restore:** Restore enforces headroom across every filesystem
+  written during staging and swap, stages on the same filesystem as each target
+  subtree (handling mountpoint targets and symlinked `INSTRUKT_HOME` or
+  `state/` layouts without cross-device rename failures), rejects unsafe tar
+  paths and every non-regular/non-directory entry type, and verifies every
+  restored SQLite store before touching the destination. Canonicalizing
+  `--into` against active `INSTRUKT_HOME` prevents bypassing the live-home lock
+  guard. Before acquiring any live-home lock or mutating the destination,
+  restore enforces full component-by-component symlink confinement (rejecting
+  symlinks at every component including the leaf) below the resolved
+  destination root, resolved `state/` directory, and each company folder.
+  Live-home restore verifies confinement on every fixed and dynamically
+  discovered lock path before opening or creating it, then acquires
+  non-blocking exclusive locks across all fixed home, company, and known-issues
+  locks (creating absent fixed locks) and all dynamically discovered active
+  home locks in deterministic order, holding them across the entire swap. After
+  locks are held and before swap mutations or permission changes, restore
+  enforces the same leaf-inclusive confinement on every restored destination
+  path and its SQLite sidecars. During swap, replaced destination files are
+  moved to same-filesystem rollback staging before renaming staged files into
+  place, and pre-existing SQLite sidecars (`-wal`, `-shm`, `-journal`) are
+  moved into that same-filesystem rollback staging after each main database's
+  atomic rename succeeds (never unlinked mid-swap) so rollback restores both
+  replaced databases and their matching sidecars intact; rollback staging and
+  its moved sidecars are deleted only after the entire swap commits. Any
+  mid-swap failure rolls back already-moved entries and sidecars from
+  same-filesystem rollback staging; if rollback fails, restore reports the
+  partial state and names the repeat-restore recovery door. Overwrite
+  confirmation without `--yes` reads the controlling terminal when standard
+  input carries the decryption identity and fails closed non-interactively.
+- **Standing, staleness, alerting, and daily timer:** Runner owns the
+  staleness threshold of `36 hours` past the last successful backup timestamp
+  (or past the first recorded attempt timestamp when no backup has succeeded
+  yet), evaluated whenever global `backup` is configured (whether admitted or
+  withheld) and independently of the latest attempt's outcome. The local-only,
+  lock-free standing query reads global backup configuration and
+  `state/backup-state.json` without remote calls, returning standing or a
+  structured `(path, reason)` error. Failure and staleness notifications follow
+  `project/instrukt/spec/feature/runner/anomaly-notification`: failed runs
+  notify directly; `instrukt tick` and `instrukt run` deduplicate staleness
+  notifications under `state/runner.lock` via
+  `state/backup-staleness-notified.json` keyed by episode anchor, recording the
+  mark before invoking `runner.notify`. In `instrukt tick` and `instrukt run`,
+  an unreadable or newer-schema `state/backup-state.json` logs a warning
+  without aborting unrelated runner work and triggers no fabricated staleness
+  notification, and an unreadable or unwritable deduplication mark logs a
+  warning and skips notification rather than looping. `instrukt events status`
+  reads backup standing independently of project/company admission, surfacing
+  both active failure and staleness (and unreadable bookkeeping errors with
+  path and reason) without either masking the other. Owned daily timer
+  convergence and withdrawal follow
+  `project/instrukt/spec/feature/runner/module-installation`.
+
+
+### Runner background state
+
+
+Background worker failure files, the run loop's wake-loop state files, and the
+per-Redis reachability store live outside the state database so no interactive
+command ever waits behind background writers on `state/writer.lock` or
+`state/redis-reachability.lock` (`sdlc/policy/state-storage`).
+
+
+Each failing worker outside `computer-fleet` (`history-extraction`,
+`history-search`, `readiness`, deferred consumer source transitions and
+keyed-start findings) keeps its current failure in
+`state/runner-workers/<id>.json` (`{worker, failure, since}`, where `<id>` is
+the deterministic digest of `worker`), written whole beside its previous version
+and renamed over it with symlink refusal, preserving `since` across updates and
+removed on recovery, shutdown or feature disable. `instrukt events status` reads
+`state/runner-workers/` alongside `state/computer-fleet.json` without taking any
+lock, skipping concurrent removals (`NotFound`) and surfacing any unreadable
+`.json` file as a worker failure rather than health. Existing rows left in an
+older state database's `runner_workers` table move forward into
+`state/runner-workers/` preserving their original failure text and `since`
+before the table is dropped, and read-only inspection of an older database
+keeps those active rows visible without writing to disk
+(`project/instrukt/spec/feature/work/state-database`). Deferred consumer source
+transitions synchronize handover timeout recording and post-commit clearing per
+`project/instrukt/spec/feature/runner/event-transport`.
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative for `since` (when the active failure streak began) and current operational status of each worker. |
+| Owner | The runner; each worker owns its own file (`state/runner-workers/<id>.json` or `state/computer-fleet.json`). |
+| Loss cost | Nothing beyond resetting `since`: the next failing pass records the failure again; no work, intent or external effect is lost. |
+| Medium | One atomic JSON state file per worker under `state/runner-workers/` (and `state/computer-fleet.json`), written via temp-file + fsync + rename. |
+| Write isolation | One file per worker; fixed workers have one writer at a time (`state/runner.lock`), keyed-start findings serialize per key under `runtime-key-<hash>.lock` for in-guard starts (including `instrukt review start`), under `state/runner.lock` for standing delivery findings, and under the target input lock for delivery-project verification (with atomic write-and-rename preventing corruption on any concurrent access), and consumer source transitions serialize under their per-consumer status lock; readers take no lock; none acquires `state/writer.lock` outside the one-time legacy table removal. |
+| Scope | One home (`~/.instrukt`). |
+| Durability | Persisted across restarts while failing so `since` and status survive until recovery; removed on success, shutdown or disable. |
+| Bound and retirement | Zero files while healthy; one ~250-byte file per currently failing worker or start key, removed when that worker or key recovers. |
+
+Background Redis writers (`instrukt run`, `instrukt tick` and `instrukt webhooks
+serve`'s inbound webhook relay) keep each logical Redis source's last observed
+reachability in `state/redis-reachability.db` (SQLite, WAL mode), keyed by the
+endpoint identity digest, with `state/redis-reachability.lock` as its exclusive
+write-isolation unit. Steady-state commands perform a lock-free WAL read and
+return immediately when reachability is unchanged. On a transition or missing
+row, background writers serialize on `state/redis-reachability.lock`, re-read
+under the lock, upsert the row and emit `redis_reachable` or
+`redis_unreachable` once. Interactive paths (`instrukt history search`,
+`instrukt eval`, `instrukt mcp`, `instrukt install` and synchronous OAuth/OIDC
+ingress callbacks) use unrecorded transport and never write this store or wait
+on its lock. Existing rows left in an older state database's
+`redis_reachability` table move forward into `state/redis-reachability.db`
+before the legacy table is dropped, preserving transition continuity across
+upgrade (`project/instrukt/spec/feature/work/state-database`). On each runner
+wake or tick, entries for endpoints no longer in the admitted Redis
+configuration are retired while preserving every configured endpoint's
+transition state.
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | External bookkeeping: last observed reachability of a logical Redis endpoint for once-per-transition logging (`project/instrukt/spec/feature/runner/event-transport`). |
+| Owner | The runner's transport `Endpoint`. |
+| Loss cost | At most one repeated `redis_reachable` or `redis_unreachable` log entry on the next background Redis command; no work, event, cursor or external effect is lost. |
+| Medium | Dedicated SQLite store (`state/redis-reachability.db`, WAL mode) with exclusive advisory lock (`state/redis-reachability.lock`), matching its multi-process background writers (`instrukt run`/`tick` and webhook ingress relay). |
+| Write isolation | Background writers only serialize on `state/redis-reachability.lock` on transitions and retirement; steady-state reads take no lock and perform no write; interactive commands never write or lock it; `state/writer.lock` is never acquired outside the one-time legacy table removal. |
+| Scope | One home (`~/.instrukt`). |
+| Durability | Persisted across restarts and invocations (`instrukt run`, `instrukt tick`, `instrukt webhooks serve`) so repeated passes do not repeat transition logs. |
+| Bound and retirement | Bounded by the currently configured logical Redis endpoints (typically 1–2 rows; 0 when unconfigured), transiently plus any superseded endpoint until the next runner wake or tick retires unconfigured rows while keeping current endpoints' transition state. |
+
+
+The run loop keeps its last skipped wake in `state/runner-skipped-wake.json`
+(`{at, cause}`) and its last configuration admission outcome in
+`state/runner-admission.json` (`{at, outcome}`, where `outcome` is `replaced`
+or `kept`). Each file is written whole beside its previous version and renamed
+over it with symlink refusal; the next non-skipped wake removes
+`state/runner-skipped-wake.json` with symlink refusal (treating absence as a
+no-op). `instrukt events status` reads both files without taking any lock or
+creating files, refusing symbolic links and surfacing unreadable or corrupt
+files as errors rather than healthy state. Existing rows left in an older state
+database's `runner_skipped_wake` and `runner_admission` tables move forward
+into `state/runner-skipped-wake.json` and `state/runner-admission.json` without
+overwriting newer files before both legacy tables are dropped, and read-only
+inspection of an older database keeps those legacy rows visible without writing
+to disk (`project/instrukt/spec/feature/work/state-database`).
+
+`state/runner-skipped-wake.json` is durable operational state
+(`sdlc/policy/state-storage`):
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative operational state for the run loop's last skipped wake (timestamp and cause). |
+| Owner | The runner (`instrukt run`'s main wake loop). |
+| Loss cost | Losing it hides the last skipped wake in `instrukt events status` until the next skipped wake; the next non-skipped wake removes it anyway. No work, intent, or external effect is lost. |
+| Medium | One bounded atomic JSON state file (`state/runner-skipped-wake.json`, `< 1 KiB`), written whole via temp-file + fsync + rename with symlink refusal. |
+| Write isolation | Single writer (`instrukt run`'s main wake loop, serialized across processes by `state/runner.lock`); readers take no lock; `state/writer.lock` is never acquired outside the one-time legacy table removal. |
+| Scope | One home (`~/.instrukt`). |
+| Durability | Persisted across wakes and restarts until the next non-skipped wake clears it. |
+| Bound and retirement | Absent while wakes succeed; at most one ~200-byte file while the latest wake was skipped, removed on the next non-skipped wake; excluded from home backups. |
+
+`state/runner-admission.json` is durable operational state
+(`sdlc/policy/state-storage`):
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative operational state for what the running `instrukt run` last did with admitted configuration (`at` and `outcome`: `replaced` or `kept`). |
+| Owner | The runner (`instrukt run`'s main wake loop). |
+| Loss cost | Losing it leaves `admission.runner` null in `instrukt events status` until the next runner wake overwrites it. No work, intent, configuration generation, or external effect is lost. |
+| Medium | One bounded atomic JSON state file (`state/runner-admission.json`, `< 256 B`), written whole via temp-file + fsync + rename with symlink refusal. |
+| Write isolation | Single writer (`instrukt run`'s main wake loop, serialized across processes by `state/runner.lock`); readers take no lock; `state/writer.lock` is never acquired outside the one-time legacy table removal. |
+| Scope | One home (`~/.instrukt`). |
+| Durability | Persisted across wakes and restarts until overwritten on the next startup or wake admission. |
+| Bound and retirement | At most one ~100-byte file, overwritten in place on startup and every wake; never grows; excluded from home backups. |
+
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -474,6 +902,22 @@ in data.
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
 | `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
+
+`runner.candidate_held` is an occurrence with the integration branch,
+`repository_ref:<project>/origin/integrate`, as its subject.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.candidate_held` | On a project that opted in to automatic review, workflow finds the active integration candidate held (`project/instrukt/spec/feature/workflow/integration-gate`) and the runtime has answered for every session its uncovered commits name | Project, candidate commit, and each uncovered commit with the sessions it names and whether each was asked or no author of ours can decide for it | Project, candidate commit: a candidate is reported held once | Workflow's subscribed integrator, told which candidate waits on whose decisions; the event authorizes nothing by itself (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held candidate's authors) |
+
+`runner.proposal_approved` is a state: a newer head of the same pull request
+takes the place of an older one that delivery has not selected for handover.
+Its subject is the pull request, `pull_request:<project>/<number>`; the head
+commit stays in data.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.proposal_approved` | In a company home admitted for automatic review, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the remote-tracking canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
 
 Fleet attention's conditions are occurrences with a todo subject in their
 project origin; which facts count, and from what point, is
@@ -543,9 +987,6 @@ related references.
   chosen, refusing a feature the chosen runtime cannot carry, and native
   delegation with record-backed attempts. Archive search and agent-owned
   session ending are retired goals.
-- **Conversation links** — `project/instrukt/spec/feature/runner/conversation-links`
-  — hold a three-way conversation across two agent threads and close it for
-  everyone; includes the runner-owned identity-envelope vocabulary.
 - **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
@@ -554,7 +995,7 @@ related references.
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
-- **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
+- **Company containers** — [project/instrukt/spec/feature/company/company-containers](../feature/company/company-containers.md)
   — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
 
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
@@ -586,6 +1027,9 @@ related references.
 - **Thread retention** — [project/instrukt/spec/feature/runner/thread-retention](../feature/runner/thread-retention.md)
   — have long-quiet finished threads leave the thread list without anyone archiving them.
 
+- **Home backup** — [project/instrukt/spec/feature/runner/home-backup](../feature/runner/home-backup.md)
+  — encrypted nightly offsite backup and guarded restore of an instrukt home to provider-neutral S3-compatible object storage.
+
 ## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module boundaries
@@ -606,6 +1050,14 @@ related references.
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
+Carrying a company's knowledge proposals adds these crossings:
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work → runner | Customer / Supplier | Through its GitHub boundary, the proposal pull-request credential's readiness (met, unmet with a finding, or GitHub cannot be asked), whether any pull request has a commit as its head, and opening a pull request for a branch under the proposal pull-request credential |
+| runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
+
 Fleet attention adds these crossings
 (`project/instrukt/spec/feature/runner/fleet-attention`):
 
@@ -615,26 +1067,41 @@ Fleet attention adds these crossings
 | work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an episode |
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 
+The evaluation report across computers adds these crossings
+(`project/instrukt/spec/feature/work/eval-report`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet query, carrying the evaluation report's request to the computers it covers and returning each answer or why there is none, and the fleet membership record, read by the report on the asking computer |
+| work → runner | Customer / Supplier | This computer's answer to an evaluation request, through the evaluation-answer interface the runner declares, work implements and the CLI wires; the runner's responder returns it unread |
+
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries
 a verdict and whether both identities are ready, and workflow says whether the
-active candidate's content is covered. Through work's command contract the
+active candidate's content is covered and, for a held candidate, which
+uncovered commits wait on which session's decision and whether the candidate
+owes its own review. Through work's command contract the
 runner records or withdraws a derived approval and has outstanding verdicts published,
 handing over the eligible pull requests it observed at each head. It supplies
 work with a commit's review requests, each with its number, standing, the
 session it reached and pinned base, with the input that opened the turn a
 session has in progress when it offers a revision, and with a named session's
-conversation
+conversation; it supplies workflow with whether the selected runtime holds a
+named session. For a held candidate it sends each author ask through its input
+delivery and tells the integrator with `runner.candidate_held`
 (`project/instrukt/spec/domain/context-map`).
 
 
 For a requested review the runner asks work whether the head's verdict stands
 here, with the session that recorded its current version, or was handed off,
-with the export that handed it off, and for the pinned base work admits its
-verdict against; it reads the commit's review requests from its own delivery
-records.
+with the export that handed it off, for the pinned base work admits its
+verdict against and, for a re-review, for the commit of that project whose
+standing verdict has a version with the prior report's digest; it reads the
+commit's review requests from its own delivery records.
 It starts the requested reviewer through the runtime adapter under its own
-start key; work admits that reviewer's verdict like any other
+start key, or wakes the existing reviewer of record under its start key; work
+admits that reviewer's verdict like any other and hands each version it records
+to the runner, which queues a verdict notice for each session that asked
 (`project/instrukt/spec/feature/runner/requested-review`).
 
 
@@ -674,6 +1141,13 @@ answers: configuration supplies the computer's admitted retention window, and
 work the native sessions bound to, or holding the execution claim of, a
 project's todos that have not reached a terminal outcome. The runtime adapter lists finished threads and archives them
 (`project/instrukt/spec/domain/context-map`).
+
+For home backup, configuration supplies admitted global `backup` settings
+(withheld alone when invalid) and company-home settings forward conversion,
+runner's S3-compatible storage adapter forms an anti-corruption layer over
+provider-neutral S3 APIs, and runner supplies publication's `instrukt status`
+with the local-only, lock-free `HomeBackupStanding` query behind an interface
+core declares and the CLI wires (`project/instrukt/spec/domain/context-map`).
 
 ## Known caveats
 

@@ -24,11 +24,12 @@ prototyping.
   - a clean adoption or greenfield workspace (`sdlc/procedure/project-analysis`
     or `sdlc/procedure/greenfield-intake`), where one session executes Steps 1–5
     directly; or
-  - a tracked todo lifecycle following the pre-entry and build split defined in
-    Step 4 below (pre-entry icebox authoring and independent review of Steps 1
-    and 4 before active entry under `sdlc/policy/todo-creation-discipline`,
-    followed by `planner` / `plan-reviewer` and admitted `builder` executing
-    Steps 2–3 in `<slug>/work`).
+  - a tracked todo lifecycle following the written-ahead and build split
+    defined in Step 4 below (the creating session's authoring, independent
+    review and merge of Steps 1 and 4 while the todo is held under
+    `sdlc/policy/todo-creation-discipline`, followed by `planner` /
+    `plan-reviewer` and admitted `builder` executing Steps 2–3 in
+    `<slug>/work`).
 - Repository manifests, runtime entrypoints, and existing `docs/project/`
   snippets are readable.
 
@@ -172,30 +173,27 @@ Following `general/procedure/doc-snippet-authoring`,
      both IDs under `listed` in `docs/project/index.yaml`, run
      `instrukt docs render`, and verify with `instrukt docs validate` and
      `instrukt docs render --check`.
-   - **Tracked repository todo lifecycle:** Before active lifecycle entry
-     (`sdlc/policy/todo-creation-discipline`), the creating/filing session:
-     1. Creates `<slug>` in the icebox (`instrukt todo create <slug> --kind change --icebox ...`,
-        carrying zero mixed application changes).
-     2. In a short-lived temporary worktree branched from `<canonical-ref>` (on
-        a temporary local branch or detached HEAD, never leaving a local
-        `refs/heads/<slug>/work` branch), authors both fills as pending
-        documentation (`delivered_by: [<slug>]` for new fills, omitted from
-        `docs/project/index.yaml` while pending per
+   - **Tracked repository todo lifecycle:** The creating/filing session writes
+     the fills ahead (`sdlc/policy/todo-creation-discipline`):
+     1. Creates `<slug>` held (`instrukt todo create <slug> --kind change --hold --reason ...`,
+        carrying zero mixed application changes), the reason naming the
+        one-off branch below and its merge onto main.
+     2. In a one-off worktree (`general/policy/commits`), authors both fills as
+        pending documentation (`delivered_by: [<slug>]` for new fills, omitted
+        from `docs/project/index.yaml` while pending per
         `general/spec/snippet-authoring-schema` and
         `general/procedure/doc-snippet-authoring`; pending markers or sibling
         companions for edits to already-delivered fills), verifies with
-        `instrukt docs validate` and `instrukt docs render --check`, commits via
-        `instrukt repo commit --todo <slug>`, and pushes the exact commit to
-        `origin/<slug>/work` (`git push origin HEAD:refs/heads/<slug>/work`).
+        `instrukt docs validate` and `instrukt docs render --check`, and commits
+        via `instrukt repo commit --todo <slug> --review`.
      3. Obtains independent commit-review `APPROVE`
         (`sdlc/procedure/lifecycle/work/review-commits`) bound to that exact
-        commit SHA (resolving any required changes and re-pushing
-        `origin/<slug>/work`).
-     4. Removes the temporary worktree and deletes any temporary local branch
-        (confirming no local `refs/heads/<slug>/work` remains so native
-        placement creates `<slug>/work` cleanly from `origin/<slug>/work`), then
-        enters `<slug>` into the active lifecycle via
-        `instrukt todo unfreeze <slug>`.
+        commit SHA (resolving any required changes), and hands the reviewed
+        head to the integrator.
+     4. Once the integrator has merged it onto main, removes the one-off
+        worktree and its branch and releases the hold
+        (`instrukt todo update <slug> --release`); the todo's orchestrator
+        creates `<slug>/work` from main when it starts.
 
      In the active lifecycle, `planner` (`sdlc/procedure/lifecycle/prepare/plan-draft`) plans only Steps 2–3
      against those reviewed fills without assigning documentation tasks to
@@ -218,7 +216,7 @@ Following `general/procedure/doc-snippet-authoring`,
 If a declared surface requires a brand-new external paid or legal third-party
 account absent from the org sandbox credential pool and unemulatable locally,
 record it under declared blind spots in `verification-substrate.md` (via
-pre-entry authoring or preparation when inside a tracked todo) and report that
+written-ahead authoring or preparation when inside a tracked todo) and report that
 single credential-pool request once while completing the rest of the bootstrap.
 
 ## Outputs
@@ -226,8 +224,8 @@ single credential-pool request once while completing the rest of the bootstrap.
 - `docs/project/spec/verification-substrate.md` (Layer 1) and
   `docs/project/policy/reliability-checklist.md` (Layer 2) — live, listed under
   `listed` in `docs/project/index.yaml`, and rendered into `AGENTS.md` on direct
-  adoption/greenfield entry; or pre-entry independently reviewed pending
-  carriers in `<slug>/work` folded, added under `listed` in
+  adoption/greenfield entry; or independently reviewed pending carriers,
+  written ahead and merged onto main or written in `<slug>/work`, folded, added under `listed` in
   `docs/project/index.yaml`, and rendered into `AGENTS.md` at delivery
   (`sdlc/procedure/lifecycle/integrate`).
 - `verification/` stack (`Dockerfile.verify`, `docker-compose.verify.yml`,

@@ -1,10 +1,11 @@
 //! The runtime's readiness, kept by the runner off every start path: one
 //! refresh when the runner starts and one on each of its wakes, on a thread
 //! of its own. A start reads the last snapshot a refresh published and never
-//! waits on one in progress. The `readiness` row in `runner_workers` lives
-//! as long as the worker: written by a failed refresh, removed by the next
-//! success and when the worker ends, a stop by SIGINT or SIGTERM included,
-//! which also revokes the kept token.
+//! waits on one in progress. The `readiness` failure file lives as long as
+//! the worker: written by a failed refresh, removed by the next success and
+//! when the worker ends, a stop by SIGINT or SIGTERM included, which also
+//! revokes the kept token without touching the state database's writer lock
+//! (`Home::writer_lock_file`).
 
 use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
@@ -15,14 +16,14 @@ use jiff::Timestamp;
 
 use crate::runtime::Readiness;
 
-/// The worker's name in `runner_workers`.
+/// The worker's name in its failure file and `instrukt events status`.
 const READINESS: &str = "readiness";
 
 /// Refreshes `readiness` at `now`. A refresh that fails keeps the last
-/// snapshot published and is recorded in `runner_workers` until a refresh
-/// succeeds; a successful one applies the snapshot's usage windows once.
-/// `recorded` says whether this process left a failure row (or found one
-/// it must clear on its first success).
+/// snapshot published and records its failure file until a refresh succeeds;
+/// a successful one applies the snapshot's usage windows once. `recorded`
+/// says whether this process left a failure file (or found one it must clear
+/// on its first success).
 pub(crate) fn refresh(
     home: &Home,
     readiness: &mut dyn Readiness,
@@ -34,8 +35,8 @@ pub(crate) fn refresh(
             if let Err(error) = crate::agents::apply_usage(home, &observed) {
                 tracing::warn!(event = "readiness_usage_unapplied", %error);
             }
-            if std::mem::take(recorded) {
-                crate::state::worker_state(home, READINESS, None);
+            if *recorded && crate::state::worker_state(home, READINESS, None) {
+                *recorded = false;
             }
         }
         Err(error) => {
@@ -46,7 +47,7 @@ pub(crate) fn refresh(
     }
 }
 
-/// Ends the `readiness` worker's row: its worker is gone.
+/// Removes the `readiness` worker's failure file: its worker is gone.
 pub(crate) fn ended(home: &Home) {
     crate::state::worker_state(home, READINESS, None);
 }
@@ -66,8 +67,8 @@ impl Worker {
         clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
     ) -> std::io::Result<Self> {
         let home = home.clone();
-        // A stop by SIGINT or SIGTERM revokes the kept token and ends the
-        // worker's row before the process ends.
+        // A stop by SIGINT or SIGTERM revokes the kept token and removes the
+        // worker's failure file before the process ends.
         let stopper = readiness.stopper();
         let stopping_home = home.clone();
         instrukt_core::process::on_stop(Box::new(move || {
@@ -78,7 +79,7 @@ impl Worker {
         let handle = std::thread::Builder::new()
             .name("readiness".into())
             .spawn(move || {
-                // An earlier process's failure row is cleared by the first
+                // An earlier process's failure file is cleared by the first
                 // refresh that succeeds.
                 let mut recorded = true;
                 refresh(&home, readiness.as_mut(), &*clock, &mut recorded);

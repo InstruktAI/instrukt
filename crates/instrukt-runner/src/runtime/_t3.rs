@@ -62,7 +62,19 @@ impl T3 {
                 serde_json::json!({"type":"worktree", "baseRef":worktree.from, "branch":worktree.branch})
             }
             (None, Some(path)) => {
-                serde_json::json!({"type":"existing_worktree","worktreePath":path})
+                let branch = instrukt_core::git::run(path, ["branch", "--show-current"])
+                    .map_err(|e| failure("launch", e.to_string()))?;
+                let branch = branch.trim();
+                if branch.is_empty() {
+                    return Err(failure(
+                        "launch",
+                        format!(
+                            "existing worktree {} has no checked-out branch",
+                            path.display()
+                        ),
+                    ));
+                }
+                serde_json::json!({"type":"existing_worktree","worktreePath":path,"branch":branch})
             }
             (None, None) => serde_json::json!({"type":"root"}),
         };
@@ -550,7 +562,11 @@ impl RuntimeAdapter for T3 {
         text: &str,
         now: jiff::Timestamp,
     ) -> Result<super::InputObservation, SessionsError> {
-        self.show(session, 0)?;
+        let shown = self.show(session, 0)?;
+        let thread = shown.thread.decode()?;
+        if thread.presence != super::Presence::Present {
+            return Err(SessionsError::Gone(session.clone()));
+        }
         let inputs = self.input_evidence(session, Some(text))?;
         let message = inputs.into_iter().find(|input| input.text == text);
         Ok(super::InputObservation {
@@ -599,10 +615,10 @@ impl RuntimeAdapter for T3 {
             .input_evidence(session, None)?
             .into_iter()
             .find(|m| {
+                let body = crate::control::Control::unwrap_any(&m.text).unwrap_or(&m.text);
                 m.state != super::InputState::Consumed
-                    && (m.text.starts_with("instrukt delivery log\n")
-                        || m.text
-                            .starts_with("instrukt system-origin procedure assignment\n"))
+                    && (body.starts_with("instrukt delivery log\n")
+                        || body.starts_with("instrukt system-origin procedure assignment\n"))
             })
             .map(|m| m.text);
         Ok(super::AssignmentEvidence {

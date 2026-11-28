@@ -1,14 +1,6 @@
 ---
-activation_trigger: >-
-  Use as soon as you consider creating, changing or retiring a taxonomy snippet
-  under `docs/general/`, `docs/domain/<name>/` or `docs/project/`, companions
-  included, or company home knowledge (a company repository's documents under
-  `docs/` and the file that selects them). Ordinary README or website prose never activates it. Changes to
-  directive text for agents elsewhere still require an update to the owning
-  snippet and independent review of the commit under
-  `general/policy/documentation-discipline`.
-description: Establish whether documentation work is ready and authorized, then author
-  snippets according to the taxonomy, schema, and policies.
+activation_trigger: 'First considering creating/changing/retiring a snippet under `docs/general/`, `docs/domain/<name>/`, `docs/project/` (incl. companions), or company home (`docs/` + index); not README/website prose.'
+description: 'Check readiness/authority, then author or retire snippets and company docs.'
 visibility: public
 ---
 
@@ -41,7 +33,11 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
 0.  **Establish authoring authority, then earn the snippet.** Load this procedure
     when a snippet first enters consideration, before drafting its shape. A
     bounded dispatched brief or an original explicit authoring request supplies
-    authority for its scope. When the current human conversation began as
+    authority for its scope. Finding a bounded documentation-only fix to an
+    existing snippet supplies authority to make it at once in a short-lived
+    one-off worktree (`sdlc/policy/todo-creation-discipline`, Fix bounded
+    findings in context); a company's agent reports instead, and a fix whose
+    correctness is contested goes to the lifecycle. When the current human conversation began as
     exploration or design, authoring starts only after every active participant
     agrees the outcome and the human releases it for materialization. Silence,
     unilateral confidence, partial agreement, and automated checkpoint or
@@ -164,7 +160,7 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     so it names that moment and nothing wider. A
     procedure reached only through a workflow, a dispatcher or another procedure
     is reached through that starter and carries no trigger.
-13. **Changing an existing snippet — bounded, wholesale, or retired.** For tracked repository todos, author these pending carriers in `<slug>/work`. Before delivery, `--target <slug>` reads `<slug>/work` (falling back to a legacy prepare branch during upgrade); when the todo delivers, `integrate` folds the pending carriers into the current contract on `main` (clearing `binding_reservations` once attached tests are present). A live snippet is never overwritten or deleted in place to describe a change before it is delivered. Match the pending carrier to the shape of the change: bounded additions, replacements, and removals stay in body markers; wholesale reworks use a companion; retiring the whole snippet uses an empty companion. The pending carrier names the delivering `<slug>`.
+13. **Changing an existing snippet — bounded, wholesale, or retired.** For tracked repository todos, author these pending carriers where `general/policy/commits` places the work: in `<slug>/work` by the todo's orchestrator and the workers it dispatches, or written ahead in a one-off worktree and merged onto main before the todo starts. Before delivery, `--target <slug>` reads `<slug>/work` (falling back to a legacy prepare branch during upgrade); when the todo delivers, `integrate` folds the pending carriers into the current contract on `main` (clearing `binding_reservations` once attached tests are present). A live snippet is never overwritten or deleted in place to describe a change before it is delivered. Match the pending carrier to the shape of the change: bounded additions, replacements, and removals stay in body markers; wholesale reworks use a companion; retiring the whole snippet uses an empty companion. The pending carrier names the delivering `<slug>`.
 
             - **Present-tense body (governs both forms).** Author the wrapped or companion body as the **future live contract**, in present tense, exactly as it must read once delivered. On delivery the marker lines vanish (ADD) or the companion replaces the parent (REPLACE) and the body stays **verbatim** — so it must already read as correct current-state contract with nothing stripped. The delivering `<slug>` is carried by the planned marker or the companion filename. A slug names work and a snippet body states contract, so **no slug appears in body prose**. Do not write "Pending `<slug>`, …", "the new surface is …", "will", "is planned", or any history/rationale narration inside the body (`general/policy/snippet-value-contract`). DON'T: `Pending <slug>, the manual-parking surface is: …`. DO: `The manual-parking surface is: …` — wrapped in `<!-- planned:<slug> -->`, which is the only place the slug appears.
             - **Change-shape heuristic.** A bounded localized edit uses an in-body marker: `planned` for added content, `planned-change` for replacement or removal. A wholesale rewrite uses a companion file. Retiring the whole snippet uses an empty companion file. ADRs do not use pending markers or companions; they land as immutable decision records.

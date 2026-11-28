@@ -2,13 +2,19 @@
 //! shares the demand model and executes no infrastructure mutation steps.
 //! instrukt's services are found by the names this home gives them; nothing
 //! records what installation wrote.
+mod _backup;
 mod _demand;
+mod _event_status;
 pub(crate) mod _launch;
 mod _package;
+mod _proposals;
 mod _redis;
 mod _services;
+mod _wakeup;
 use crate::install::{Scheduler, WakeUp};
 use _demand::Demand;
+pub use _event_status::events_status;
+pub use _wakeup::{RunnerWakeup, WakeupRefusal, runner_wakeup};
 use instrukt_blueprint::{Graphify, GraphifyState, graphify_version};
 use instrukt_core::{
     config::{Configuration, Env, Module},
@@ -47,6 +53,8 @@ fn inspection_error(resource: &'static str, error: impl std::fmt::Display) -> In
 pub enum ResourceKind {
     #[serde(rename = "wake-up")]
     WakeUp,
+    #[serde(rename = "backup timer")]
+    BackupTimer,
     #[serde(rename = "redis")]
     Redis,
     #[serde(rename = "receiver")]
@@ -64,6 +72,7 @@ impl ResourceKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::WakeUp => "wake-up",
+            Self::BackupTimer => "backup timer",
             Self::Redis => "redis",
             Self::Receiver => "receiver",
             Self::LocalRedis => "local Redis",
@@ -291,12 +300,14 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     if request.module.is_none() && !request.conversations {
         admission_findings(request, &mut report);
+        _backup::converge(request, &mut report);
     }
     if request.module.is_none() {
         runner_service(request, &demand, &mut report);
     }
     runtime_projects(request, &demand, &mut report);
     if request.conversations {
+        fleet_permissions(request, &demand, &global, &mut report);
         boot_prerequisite(request, &demand, &mut report);
         return Ok(report);
     }
@@ -356,6 +367,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             report.finding("receiver", error);
         }
     }
+    fleet_permissions(request, &demand, &global, &mut report);
     if request.module.is_none()
         && let Err(error) = _services::report_unknown(request, &mut report)
     {
@@ -463,11 +475,12 @@ fn runtime_projects(request: &Request<'_>, demand: &Demand, report: &mut Report)
 
 /// The admission findings that withhold a responsibility on this computer
 /// though the rest of the layer is admitted: event responses switched on
-/// without the event transport they are carried on (`modules.events`), and
-/// automatic review switched on without what it needs
-/// (`review.automatic`), and a declaration of regenerable output that is not
-/// admitted, which withholds worktree reclamation for its project. On a
-/// check, the two identities' readiness is asked for every project admitted
+/// without the event transport they are carried on (`modules.events`),
+/// automatic review switched on without what it needs (`review.automatic`),
+/// a declaration of regenerable output that is not admitted (which withholds
+/// worktree reclamation for its project), and thread retention or global home
+/// backup withholding (`backup` is reported directly by [`_backup::converge`]). On
+/// a check, the two identities' readiness is asked for every project admitted
 /// for automatic review.
 fn admission_findings(request: &Request<'_>, report: &mut Report) {
     use instrukt_core::config::FindingKind;
@@ -514,6 +527,10 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             );
         }
     }
+    // The proposal pull-request credential is checked where it enters, on
+    // install and on its check alike, for every company home admitted for
+    // automatic review.
+    _proposals::readiness(request, &candidate, report);
     if !request.check {
         return;
     }
@@ -560,8 +577,8 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
 
 /// On Linux every owned unit is a systemd user unit that has to run without
 /// a login; one finding names those that need the user's service manager to
-/// start at boot when it does not. A wake-up registered with cron needs no
-/// such setting, and instrukt never changes it.
+/// start at boot when it does not. A wake-up or daily backup timer registered
+/// with cron needs no such setting, and instrukt never changes it.
 fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &mut Report) {
     if request.scheduler != Scheduler::SystemdUser {
         return;
@@ -571,6 +588,7 @@ fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &m
         (ResourceKind::Receiver, "the receiver's socket and service"),
         (ResourceKind::Redis, "the private local Redis service"),
         (ResourceKind::WakeUp, "the minute timer"),
+        (ResourceKind::BackupTimer, "the daily home backup timer"),
     ]
     .into_iter()
     .filter(|(kind, _)| {
@@ -589,6 +607,50 @@ fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &m
         );
     }
 }
+/// Where a cluster connection is configured and the computer has a demand
+/// this run covers that keeps a runner or a cluster reader — history,
+/// events, an MCP server with sign-in, the minute wake-up or the runner
+/// service — the cluster user must permit the computer fleet's query
+/// (`project/instrukt/spec/feature/runner/module-installation`).
+fn fleet_permissions(
+    request: &Request<'_>,
+    demand: &Demand,
+    global: &Configuration,
+    report: &mut Report,
+) {
+    let demanded = || -> anyhow::Result<bool> {
+        if global.cluster_redis_url()?.is_none() {
+            return Ok(false);
+        }
+        let history = !demand.history.is_empty();
+        let events = !demand.events.is_empty()
+            || (global.module_enabled(Module::Events)? && global.ingress_url()?.is_some());
+        let sign_in = !demand.sign_in.is_empty();
+        let wake_up = !demand.projects().is_empty() && global.ticks_enabled()?;
+        let service = !demand.conversations.is_empty();
+        Ok(if request.conversations {
+            service
+        } else {
+            match request.module {
+                None => history || events || sign_in || wake_up || service,
+                Some(Module::History) => history,
+                Some(Module::Events) => events || sign_in,
+                Some(Module::Todos) => wake_up,
+                Some(Module::Blueprint) => false,
+            }
+        })
+    };
+    match demanded() {
+        Ok(false) => {}
+        Ok(true) => {
+            if let Err(error) = _redis::fleet(request) {
+                report.finding("fleet Redis", error);
+            }
+        }
+        Err(error) => report.finding("fleet Redis", error),
+    }
+}
+
 /// The owned service that keeps `instrukt run` running while a company
 /// home declares a connector; withdrawn when that
 /// demand ends. Its state is recorded in the report as it was found.
@@ -826,9 +888,18 @@ pub fn ticks_status(
     request: &Request<'_>,
     now: jiff::Timestamp,
 ) -> Result<TickStatus, InstallationError> {
-    let mut registration = Report::default();
-    let demand = _demand::read(request.home, request.cwd, &mut registration)
+    let mut demand_report = Report::default();
+    let demand = _demand::read(request.home, request.cwd, &mut demand_report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
+    ticks_status_with_demand(request, &demand, now)
+}
+
+fn ticks_status_with_demand(
+    request: &Request<'_>,
+    demand: &Demand,
+    now: jiff::Timestamp,
+) -> Result<TickStatus, InstallationError> {
+    let mut registration = Report::default();
     let enabled = !demand.projects().is_empty();
     let policy = Configuration::load_global(request.home)?.ticks_enabled()?;
     let tick = _services::tick(request);
@@ -869,190 +940,6 @@ pub fn ticks_status(
         stale,
     })
 }
-/// Read retained transport/activation facts without enabling events or creating groups.
-fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
-    use instrukt_core::state_db::rusqlite::OptionalExtension as _;
-    let state = crate::state::RunnerState::new(request.home);
-    // What the runner keeps in its state is reported whatever the files say
-    // now: an invalid machine layer must not hide why the runner holds on.
-    let failures=state.read(|conn,path| {
-        let mut stmt=conn.prepare("SELECT event_id, state, failure FROM procedure_activations WHERE failure IS NOT NULL AND state!='set_aside'").map_err(crate::state::sql(path))?;
-        let rows=stmt.query_map([],|row| Ok(serde_json::json!({"id":row.get::<_,String>(0)?,"state":row.get::<_,String>(1)?,"failure":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
-        rows.collect::<Result<Vec<_>,_>>().map_err(crate::state::sql(path))
-    })?.unwrap_or_default();
-    // What the retained consumers hold whatever the files say now.
-    let consumers = crate::consumers::status(request.home, &state)?;
-    let stopped_executions = crate::executions::Executions::new(&state).stopped()?;
-    let input_findings = state.read(|conn, path| {
-        let sql = crate::state::sql(path);
-        let mut stmt = conn.prepare("SELECT runtime,session,input_id,state,failure,evidence_source,evidence_at FROM runtime_inputs WHERE state='unconfirmed' OR (state='accepted' AND waiting=1 AND failure IS NOT NULL) ORDER BY rowid").map_err(&sql)?;
-        stmt.query_map([], |row| Ok(serde_json::json!({
-            "session":format!("{}:{}", row.get::<_,String>(0)?,row.get::<_,String>(1)?),
-            "input_id":row.get::<_,String>(2)?,"state":row.get::<_,String>(3)?,"failure":row.get::<_,Option<String>>(4)?,"evidence_source":row.get::<_,Option<String>>(5)?,"evidence_at":row.get::<_,Option<String>>(6)?
-        }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)
-    })?.unwrap_or_default();
-    let set_aside = state.read(|conn, path| {
-        let sql = crate::state::sql(path);
-        // A mirrored activation and its input account for one retained entry.
-        let rows = "SELECT event_id AS id, accepted_at AS at, failure FROM procedure_activations WHERE state='set_aside'
-            UNION ALL SELECT i.input_id, i.arrived_at, i.failure FROM runtime_inputs i WHERE i.state='set_aside'
-            AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.input_id=i.input_id AND d.target=(i.runtime || ':' || i.session) AND d.state='set_aside')";
-        let count: u64 = conn.query_row(&format!("SELECT count(*) FROM ({rows})"), [], |row| row.get(0)).map_err(&sql)?;
-        let mut statement = conn.prepare(&format!("SELECT id,at,failure FROM ({rows}) ORDER BY julianday(at) DESC,id LIMIT ?1")).map_err(&sql)?;
-        let recent = statement.query_map([crate::inputs::SET_ASIDE_STATUS_LIMIT], |row| Ok(serde_json::json!({
-            "id":row.get::<_,String>(0)?,"at":row.get::<_,String>(1)?,"failure":row.get::<_,Option<String>>(2)?
-        }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?;
-        Ok(serde_json::json!({"count":count,"recent":recent}))
-    })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
-    // The history workers' current failures, while they last.
-    let workers = state.read(|conn, path| {
-        let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
-        let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
-    })?.unwrap_or_default();
-    // The run loop's last skipped wake, until a wake is not skipped.
-    let skipped_wake = state.read(|conn, path| {
-        conn.query_row("SELECT at,cause FROM runner_skipped_wake WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"cause":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
-    })?.flatten();
-    // What the running runner last did with the configuration it admitted:
-    // replaced its generation, or kept the one in force.
-    let runner = state.read(|conn, path| {
-        conn.query_row("SELECT at,outcome FROM runner_admission WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
-    })?.flatten();
-    let links = crate::links::status(request.home)
-        .map_err(|e| inspection_error("conversation links", e))?;
-    let conversations = request
-        .company
-        .map(|company| company.status(request.home, request.now))
-        .transpose()
-        .map_err(|e| inspection_error("conversations", e))?
-        .unwrap_or(serde_json::Value::Null);
-    Ok(serde_json::json!({
-        "runner": runner, "workers": workers, "skipped_wake": skipped_wake,
-        "activation_failures": failures, "consumers": consumers,
-        "stopped_executions": stopped_executions, "input_findings": input_findings,
-        "set_aside": set_aside, "links": links, "conversations": conversations
-    }))
-}
-
-pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, InstallationError> {
-    let home = request.home.for_inspection();
-    let request = &Request {
-        home: &home,
-        ..request.clone()
-    };
-    let mut status = match retained_event_status(request) {
-        Ok(status) => status,
-        Err(InstallationError::State(crate::state::StateError::Db(
-            error @ instrukt_core::state_db::StateDbError::Newer { .. },
-        ))) => {
-            serde_json::json!({"state_database": {"path": home.state_db_file(), "reason": error.to_string()}})
-        }
-        Err(error) => return Err(error),
-    };
-    let runner = status["runner"].take();
-    if let Some(fields) = status.as_object_mut() {
-        fields.remove("runner");
-    }
-    // This computer's own machine ID, as it reads it, for comparison with the
-    // other computers; reading creates no ID.
-    let computer = instrukt_core::machine::existing_machine_id(request.home)
-        .map_err(|e| inspection_error("machine ID", e))?
-        .map(|id| id.as_str().to_owned());
-    // What the files admit now: each project's admitted modules, the findings
-    // of what is left out, or why no generation can be admitted at all.
-    let candidate = instrukt_core::config::Admitted::load(request.home);
-    let notification_configured = candidate.as_ref().ok().and_then(|candidate| {
-        candidate
-            .generation
-            .global()
-            .runner_notify()
-            .ok()
-            .map(|notify| matches!(notify, instrukt_core::config::Notify::Command(_)))
-    });
-    let admission = match &candidate {
-        Ok(candidate) => serde_json::json!({
-            "error": null,
-            "runner": runner,
-            "projects": candidate.generation.projects().iter().map(|project| serde_json::json!({
-                "project": project.slug.as_str(),
-                "todos": project.todos,
-                "events": project.events,
-                "history": project.history,
-            })).collect::<Vec<_>>(),
-            "findings": candidate.findings.iter().map(|finding| serde_json::json!({
-                "document": finding.document,
-                "key": finding.key,
-                "message": finding.message,
-            })).collect::<Vec<_>>(),
-        }),
-        Err(error) => {
-            serde_json::json!({"error": error.to_string(), "runner": runner, "projects": [], "findings": []})
-        }
-    };
-    if candidate.is_err() {
-        // Nothing read from the configuration can be shown: what depends on
-        // it is absent, and the admission error says why.
-        return Ok(merge_status(
-            status,
-            serde_json::json!({"computer":computer,"ingress":null,"enabled_projects":null,"transport":null,"infrastructure":null,"findings":[],"admission":admission,"notification_configured":notification_configured,"runner_service":null}),
-        ));
-    }
-    let mut report = Report::default();
-    let demand = _demand::read(request.home, request.cwd, &mut report)
-        .map_err(|e| InstallationError::Demand(e.to_string()))?;
-    let infrastructure = converge(&Request {
-        check: true,
-        module: Some(Module::Events),
-        ..request.clone()
-    })?;
-    // Only the runner service's state is shown: it is read alone, without
-    // asking the runtime about anything the status leaves out.
-    let mut service = Report::default();
-    runner_service(
-        &Request {
-            check: true,
-            module: None,
-            conversations: true,
-            ..request.clone()
-        },
-        &demand,
-        &mut service,
-    );
-    let runner_service = service.runner_service;
-    let global = Configuration::load_global(request.home)?.get(None, request.env)?;
-    let configured = global.get("redis").is_some();
-    let redis = if demand.events.is_empty() && !configured {
-        vec![]
-    } else {
-        _redis::inspect(request, &mut report).map_err(|e| inspection_error("Redis", e))?
-    };
-    // This computer's own two ingress settings, as it reads them.
-    let setting = |key: &str| {
-        global
-            .get("ingress")
-            .and_then(|ingress| ingress.get(key))
-            .and_then(serde_yaml_ng::Value::as_str)
-            .map(str::to_owned)
-    };
-    Ok(merge_status(
-        status,
-        serde_json::json!({"computer":computer,"ingress":{"computer":setting("computer"),"reactions":setting("reactions")},"enabled_projects":demand.events,"transport":redis,"infrastructure":infrastructure,"findings":report.findings,"admission":admission,"notification_configured":notification_configured,"runner_service":runner_service}),
-    ))
-}
-
-fn merge_status(
-    mut retained: serde_json::Value,
-    mut configured: serde_json::Value,
-) -> serde_json::Value {
-    if let (Some(retained), Some(configured)) =
-        (retained.as_object_mut(), configured.as_object_mut())
-    {
-        retained.append(configured);
-    }
-    retained
-}
-
 /// Inspect retained failure identities and coordinates without exposing payloads.
 pub fn dead_letters(request: &Request<'_>) -> Result<Vec<serde_json::Value>, InstallationError> {
     _redis::dead_letters(request).map_err(|e| inspection_error("dead letters", e))

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 469
 expression: "conversation.join(\"\\n---\\n\").replace(prefix, \"<prefix>\")"
 ---
 instrukt-test: [instrukt record · nested-lists · rev 1 on rev 0]
@@ -14,4 +15,4 @@ maintainer: /instrukt approve prd <prefix>
 ---
 instruktai[bot]: @maintainer: recorded your approval of prd `<prefix>`.
 
-<!-- instrukt:command-reply:1026 -->
+<!-- instrukt:command-reply:1022 -->

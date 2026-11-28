@@ -300,7 +300,7 @@ fn resolve_values(
 
 /// A value as a fenced block whose fence is longer than any backtick run
 /// inside it; nothing for an empty value.
-fn fenced(value: &str) -> String {
+pub fn fenced(value: &str) -> String {
     let output = value.trim_end_matches(['\n', '\r']);
     if output.trim().is_empty() {
         return String::new();

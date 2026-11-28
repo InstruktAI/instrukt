@@ -428,6 +428,7 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         "feature",
         "Lists keep their depth everywhere.",
     );
+    project.tick();
     let todo = |args: &[&str]| {
         let mut command = project.env.instrukt_process(project.repo.path());
         command.arg("todo").args(args);
@@ -435,21 +436,32 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     };
     let read = || finished_within(todo(&["artifacts", "read", "list-depth", "log"]), UNBLOCKED);
 
-    // The coming reflection stops at its artifact upload, and again at the
-    // issue fields once GitHub holds the artifact version.
+    // Record the first local change; it returns locally without contacting GitHub.
+    let requests_before = project.github.requests().len();
+    project.ok(["artifacts", "write", "list-depth", "log", FIRST]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before,
+        "artifacts write must not contact GitHub"
+    );
+
+    // The runner's reflection pass stops at its artifact upload, and again at
+    // the issue fields once GitHub holds the artifact version.
     let upload = project.github.pause_once("POST", "/issues/1/artifacts");
     let fields = project.github.pause_once("PATCH", "/issues/1");
-    let first = todo(&["artifacts", "write", "list-depth", "log", FIRST])
+    let first = project
+        .tick_command()
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     assert!(
         upload.wait_until_received(Duration::from_secs(30)),
-        "the first command's reflection never reached GitHub"
+        "the runner's reflection never reached GitHub"
     );
 
-    // Reads complete while a local write holds the writer lock.
+    // Reads (list, show, artifacts read) complete while a local write holds
+    // the writer lock and a reflection holds the reflection lock.
     let writer = instrukt_core::fsx::LockGuard::acquire(
         &project.env.instrukt_home().join("state/writer.lock"),
         Duration::from_secs(5),
@@ -459,6 +471,12 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .expect("listing the work waited on the writer lock or on GitHub");
     assert!(listing.status.success(), "{listing:?}");
     let listing = String::from_utf8(listing.stdout).unwrap();
+    let shown_while_locked = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
+        .expect("showing the todo waited on the writer lock or on GitHub");
+    assert!(
+        shown_while_locked.status.success(),
+        "{shown_while_locked:?}"
+    );
     let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
     assert!(current.status.success(), "{current:?}");
     let current = String::from_utf8(current.stdout).unwrap();
@@ -470,7 +488,7 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     drop(upload);
     assert!(
         fields.wait_until_received(Duration::from_secs(30)),
-        "the first command's issue update never reached GitHub"
+        "the runner's issue update never reached GitHub"
     );
 
     // A local change to the same todo commits while the reflection is in
@@ -506,9 +524,52 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     drop(fields);
     let first = first.wait_with_output().unwrap();
     assert!(first.status.success(), "{first:?}");
-    // The next reflection that takes the lock — here a command that changes
-    // nothing — reflects what the second command left pending.
-    project.ok(["update", "list-depth"]);
+    // The next runner tick reflects what the second command left pending.
+    project.tick();
+
+    // Even when an expired withdrawn todo is present in SQLite, `todo show`
+    // stays read-only and never acquires `writer.lock` to purge it.
+    let expired = |args: &[&str]| {
+        let mut command = project.env.instrukt_process(project.repo.path());
+        command
+            .env("INSTRUKT_NOW", "2029-12-20T09:00:00Z")
+            .arg("todo")
+            .args(args);
+        command
+    };
+    assert!(
+        expired(&[
+            "create",
+            "expired-withdrawn",
+            "Withdrawn past recovery window.",
+            "--kind",
+            "change",
+            "--approved",
+        ])
+        .output()
+        .unwrap()
+        .status
+        .success()
+    );
+    assert!(
+        expired(&["remove", "expired-withdrawn"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let writer = instrukt_core::fsx::LockGuard::acquire(
+        &project.env.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let show_with_expired = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
+        .expect("todo show waited on writer.lock when an expired withdrawn todo existed");
+    assert!(show_with_expired.status.success(), "{show_with_expired:?}");
+    let list_with_expired = finished_within(todo(&["list"]), UNBLOCKED)
+        .expect("todo list waited on writer.lock when an expired withdrawn todo existed");
+    assert!(list_with_expired.status.success(), "{list_with_expired:?}");
+    drop(writer);
 
     // Both changes reached GitHub intact.
     let listed = project.ok(["artifacts", "list", "list-depth"]);
@@ -848,6 +909,16 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
     project.env.set_env("INSTRUKT_NOW", "2026-11-23T09:00:00Z");
     // GitHub cannot be read: the command answers from the migrated database.
     project.github.stop();
+    let mut redis = common::redis::RedisServer::new(&project.env);
+    let socket = std::path::Path::new(redis.url.strip_prefix("unix://").unwrap());
+    let resolved = socket
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(socket.file_name().unwrap());
+    let cluster_source =
+        instrukt_runner::events::occurrence_id(&[&format!("unix:{}", resolved.display()), "0"]);
     let state = project.env.instrukt_home().join("state");
     std::fs::create_dir_all(&state).unwrap();
     let file = state.join("instrukt.db");
@@ -857,6 +928,31 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
             .unwrap();
         // The v35 work rows: no shipped migration since changed their shape.
         db.execute_batch(V35_WORK).unwrap();
+        db.execute(
+            "INSERT INTO runner_workers(worker,failure,since) VALUES('history-extraction','stale','2026-11-23T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO runner_workers(worker,failure,since) VALUES('runtime-start:t3:demo','start refused','2026-11-23T07:30:00Z')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO redis_reachability(source,reachable) VALUES(?1,1)",
+            [&cluster_source],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO runner_skipped_wake(id,at,cause) VALUES(1,'2026-11-23T08:15:00Z','dispatch lock held')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO runner_admission(id,at,outcome) VALUES(1,'2026-11-23T08:10:00Z','kept')",
+            [],
+        )
+        .unwrap();
         let version: u32 = db
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
@@ -864,14 +960,127 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
         work_rows(&db)
     };
 
-    // The real CLI migrates the database and reads the work through it.
+    let read_events_status = |env: &common::TestEnv| -> serde_json::Value {
+        let out = env
+            .run(env.home(), ["events", "status", "--json"])
+            .success();
+        serde_json::from_slice(&out.get_output().stdout).unwrap()
+    };
+    let read_workers =
+        |env: &common::TestEnv| -> serde_json::Value { read_events_status(env)["workers"].clone() };
+    let read_wake_loop_status = |env: &common::TestEnv| -> serde_json::Value {
+        let status = read_events_status(env);
+        serde_json::json!({
+            "skipped_wake": status["skipped_wake"],
+            "admission_runner": status["admission"]["runner"],
+        })
+    };
+
+    // Read-only inspection of the v37 database preserves active workers and
+    // wake-loop rows while leaving the file on disk byte-for-byte untouched
+    // and creating neither wake-loop state file.
+    let v37_bytes = std::fs::read(&file).unwrap();
+    let pre_upgrade_workers = read_workers(&project.env);
+    let pre_upgrade_wake_loop = read_wake_loop_status(&project.env);
+    assert_eq!(std::fs::read(&file).unwrap(), v37_bytes);
+    assert!(!state.join("runner-skipped-wake.json").exists());
+    assert!(!state.join("runner-admission.json").exists());
+    insta::assert_json_snapshot!(pre_upgrade_workers, @r#"
+    [
+      {
+        "worker": "history-extraction",
+        "failure": "stale",
+        "since": "2026-11-23T08:00:00Z"
+      },
+      {
+        "worker": "runtime-start:t3:demo",
+        "failure": "start refused",
+        "since": "2026-11-23T07:30:00Z"
+      }
+    ]
+    "#);
+    insta::assert_json_snapshot!(pre_upgrade_wake_loop, @r#"
+    {
+      "skipped_wake": {
+        "at": "2026-11-23T08:15:00Z",
+        "cause": "dispatch lock held"
+      },
+      "admission_runner": {
+        "at": "2026-11-23T08:10:00Z",
+        "outcome": "kept"
+      }
+    }
+    "#);
+
+    // The real CLI migrates the database and reads the work through it,
+    // keeping populated legacy worker, reachability, and wake-loop tables
+    // until the runner transfers them.
     project.ok(["list"]);
+    {
+        let raw = Connection::open(&file).unwrap();
+        let version: u32 = raw
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, instrukt_core::state_db::schema_version());
+        assert_eq!(work_rows(&raw), before);
+    }
+    assert_eq!(read_workers(&project.env), pre_upgrade_workers);
+    assert_eq!(read_wake_loop_status(&project.env), pre_upgrade_wake_loop);
+    assert!(!state.join("runner-skipped-wake.json").exists());
+    assert!(!state.join("runner-admission.json").exists());
+
+    // A runner tick moves the active worker, reachability, and wake-loop rows
+    // into their isolated stores, drops all four legacy tables, preserves
+    // original timestamps, and suppresses duplicate redis_reachable logging.
+    let global_path = project.env.instrukt_home().join("instrukt.yaml");
+    let mut global = std::fs::read_to_string(&global_path).unwrap();
+    global.push_str(&format!(
+        "\nmodules: {{events: true}}\nredis:\n  cluster:\n    url: '{}'\n",
+        redis.url
+    ));
+    std::fs::write(&global_path, global).unwrap();
+    project.env.run(project.env.home(), ["tick"]).success();
+    assert_eq!(read_workers(&project.env), pre_upgrade_workers);
+    assert_eq!(read_wake_loop_status(&project.env), pre_upgrade_wake_loop);
+    assert!(state.join("runner-skipped-wake.json").exists());
+    assert!(state.join("runner-admission.json").exists());
+
     let raw = Connection::open(&file).unwrap();
-    let version: u32 = raw
-        .pragma_query_value(None, "user_version", |row| row.get(0))
+    let retired: u32 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability', 'runner_skipped_wake', 'runner_admission')",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_eq!(version, instrukt_core::state_db::schema_version());
-    assert_eq!(work_rows(&raw), before);
+    assert_eq!(
+        retired, 0,
+        "runner move drops retired runner_workers, redis_reachability, runner_skipped_wake, and runner_admission tables"
+    );
+    let reachability_log = |env: &common::TestEnv| {
+        let log = std::fs::read_to_string(env.log_dir().join("tick.log")).unwrap_or_default();
+        log.lines()
+            .filter(|line| line.contains(" logger=instrukt_runner::transport::_reachability "))
+            .map(|line| {
+                line.split_once(' ')
+                    .unwrap()
+                    .1
+                    .replace(&cluster_source, "[CLUSTER]")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(
+        reachability_log(&project.env),
+        "",
+        "migrated reachable=true state suppresses duplicate redis_reachable log"
+    );
+    redis.stop();
+    project.env.run(project.env.home(), ["tick"]).success();
+    insta::assert_snapshot!(
+        reachability_log(&project.env),
+        @r#"level=WARNING logger=instrukt_runner::transport::_reachability msg="" event=redis_unreachable source=[CLUSTER]"#
+    );
 
     // Unrelated records of every kind a standing lookup reads.
     raw.execute_batch(

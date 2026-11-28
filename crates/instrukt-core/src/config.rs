@@ -10,7 +10,9 @@
 
 mod _admitted;
 mod _agents;
+mod _agents_file;
 mod _agents_migrate;
+mod _backup;
 mod _company;
 mod _company_document;
 mod _connectors;
@@ -20,6 +22,7 @@ mod _error;
 mod _features;
 mod _generation;
 mod _github_org;
+mod _identity;
 mod _interpolate;
 mod _layer;
 mod _mcp;
@@ -45,13 +48,18 @@ pub use _agents::{
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
     current_role,
 };
+pub use _agents_file::{agents_revision, agents_value, patch_agents};
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,
     Current, Offer, serve,
 };
+pub use _backup::{
+    BACKUP_KEY, BackupAdmission, BackupConfig, BackupTime, DEFAULT_BACKUP_KEEP,
+    DEFAULT_BACKUP_TIME, SecretValue, inspect_global_backup, withholds_backup,
+};
 pub use _company::{Member, Members};
-pub use _company_document::{COMPANY_DOCUMENT, write_company_settings};
+pub use _company_document::{COMPANY_DOCUMENT, convert_company_document, write_company_settings};
 pub use _connectors::{
     ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
     install_connector_declarations,
@@ -64,10 +72,14 @@ pub use _generation::{
     company_repository, decide as decide_generation, skeleton_layer, write_skeleton,
 };
 pub use _github_org::{GITHUB_ORG_KEY, admit_github_org};
+pub use _identity::{
+    COMPANY_NAME_KEY, CompanyIdentity, CompanyName, CompanyNameError, IdentityFinding,
+    company_identity,
+};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
-    bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,
-    review_switch, review_target, revision, unloadable_machine_layer,
+    bring_current, converted_project_layer, document_lock_path, init, inspect_layer, migrate,
+    parse_patch, patch, review_switch, review_target, revision, unloadable_machine_layer,
 };
 pub use _mcp::{
     CompanyIssuerConfig, DEFAULT_ISSUER_SIGNING_KEY_NAME, McpClient, McpServer, McpSignIn,

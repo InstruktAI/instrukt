@@ -15,7 +15,8 @@ use instrukt_core::publication::{
 use instrukt_core::repository::{
     self, CommitRequest, GENERATED_FILE, GenerationOutcome, Hook, HookChange, HookInvocation,
     HookRunRecord, HooksDir, HooksReport, InitPart, KEPT_INSTRUCTIONS, KeptInstructions,
-    NotWritten, PROJECT_DOCS, PartOutcome, SectionChange, SectionStatus, SyncOutcome,
+    NotWritten, PROJECT_DOCS, PartOutcome, RepositoryError, ReviewRouting, SectionChange,
+    SectionStatus, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -37,7 +38,7 @@ pub struct InitArgs {
     /// The name people write the company by; needed only when its
     /// repository is created.
     #[arg(long, value_name = "NAME", requires = "company")]
-    name: Option<instrukt_core::publication::CompanyName>,
+    name: Option<instrukt_core::config::CompanyName>,
     /// The company's GitHub administrator, a person's GitHub account; needed
     /// only when its repository is created.
     #[arg(long, value_name = "LOGIN", requires = "company")]
@@ -590,7 +591,10 @@ enum RepoCommand {
     /// Commit as the acting agent: its configured git author, a `Session:`
     /// trailer when a runtime's session variable is set, `Human-Involved:`
     /// always, and `Todo:` or `Planned-Todo:` with --todo. Outside an agent
-    /// session the commit is the git user's own. Prints the commit's id.
+    /// session the commit is the git user's own. In an adopted project it
+    /// takes the author's review-routing choice (`general/policy/commits`):
+    /// --review, or --exempt <BASIS>, which records the commit's exemption
+    /// once it exists. Prints the commit's id.
     Commit(CommitArgs),
     /// Reclaim the declared regenerable output of the worktree this
     /// session's todo assignment records; it takes no location. Prints each
@@ -619,10 +623,14 @@ struct CommitArgs {
     /// The work item this commit belongs to.
     #[arg(long, value_name = "SLUG")]
     todo: Option<String>,
-    /// Commit exactly these paths as they are in the working tree, new
-    /// files included; everything else in the index stays as it was.
-    #[arg(long, num_args = 1.., value_name = "PATH")]
-    only: Vec<PathBuf>,
+    /// The commit goes to the independent review of a head that contains
+    /// it: a requested review, or its todo's build review.
+    #[arg(long)]
+    review: bool,
+    /// The commit owes no independent review, for this basis; recorded as
+    /// its exemption once the commit exists.
+    #[arg(long, value_name = "BASIS")]
+    exempt: Option<String>,
 }
 
 pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
@@ -740,17 +748,35 @@ fn commit(args: CommitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         message,
         human_involved: args.human_involved,
         todo: args.todo.as_deref().map(TodoSlug::parse).transpose()?,
-        only: args.only,
+        routing: ReviewRouting::from_options(args.review, args.exempt)?,
     };
-    let sha = repository::commit(
+    match repository::commit(
         &ctx.home,
         &ctx.cwd,
         &crate::wiring::environment(ctx)?,
         &core_wiring(ctx)?,
         &request,
-    )?;
-    ctx.out.line(sha.as_str())?;
-    Ok(ExitCode::SUCCESS)
+    ) {
+        Ok(sha) => {
+            ctx.out.line(sha.as_str())?;
+            Ok(ExitCode::SUCCESS)
+        }
+        // The commit stands: its id comes first, then the refusal's door.
+        Err(RepositoryError::ExemptionNotRecorded {
+            commit,
+            basis,
+            cause,
+        }) => {
+            ctx.out.line(commit.as_str())?;
+            Err(RepositoryError::ExemptionNotRecorded {
+                commit,
+                basis,
+                cause,
+            }
+            .into())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn read_text(path: &Path, what: &str) -> anyhow::Result<String> {

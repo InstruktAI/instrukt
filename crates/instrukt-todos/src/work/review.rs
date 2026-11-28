@@ -5,6 +5,8 @@
 //! on a commit.
 
 mod _admission;
+mod _candidate;
+mod _head_verdicts;
 mod _moment;
 mod _publication;
 mod _published;
@@ -13,7 +15,6 @@ mod _store;
 mod _transfer;
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use instrukt_core::git;
 use instrukt_core::home::Home;
@@ -21,6 +22,7 @@ use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef};
 use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 
+pub use _head_verdicts::HeadVerdictWork;
 pub use _moment::Moment;
 #[cfg(test)]
 pub(crate) use _publication::BODY_LIMIT;
@@ -29,19 +31,12 @@ pub(crate) use _publication::shortened;
 pub use _published::{Delivery, DeliveryState, Derived, Destination, Recognised};
 pub use _transfer::Statement;
 
-use _admission::{Offer, RequestCheck, TurnDecision};
 use _store::Held;
 
 use crate::evidence::ContentDigest;
 
 /// The remote whose canonical branch evidence is judged against.
 const REMOTE: &str = "origin";
-
-/// How long a recording command asks a runtime that cannot say again.
-const TURN_WAIT: Duration = Duration::from_secs(30);
-
-/// How often within that wait the runtime is asked again.
-const TURN_RETRY: Duration = Duration::from_secs(1);
 
 /// A review's outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,7 +101,7 @@ pub struct Version {
     pub name: ContentDigest,
     pub report: String,
     pub reviewer: SessionRef,
-    /// The session that entered a handed-over approval.
+    /// The session that entered the verdict on the reviewer's behalf.
     pub entered_by: Option<SessionRef>,
     /// The pinned base the review started from.
     pub base: CommitSha,
@@ -298,45 +293,50 @@ impl ReviewProject {
         base: &CommitSha,
         head: &CommitSha,
     ) -> Result<Vec<(CommitSha, Vec<String>)>, ReviewError> {
-        self.trailers(&[&format!("{base}..{head}")])
+        if base == head {
+            commit_sessions(&self.root, &["-1", head.as_str()])
+        } else {
+            commit_sessions(&self.root, &[&format!("{base}..{head}")])
+        }
     }
 
     /// The sessions `commit`'s `Session:` trailers name.
     fn sessions_of(&self, commit: &CommitSha) -> Result<Vec<String>, ReviewError> {
-        Ok(self
-            .trailers(&["-1", commit.as_str()])?
+        Ok(commit_sessions(&self.root, &["-1", commit.as_str()])?
             .into_iter()
             .next()
             .map(|(_, sessions)| sessions)
             .unwrap_or_default())
     }
+}
 
-    /// The commits `revisions` select, each with the sessions its
-    /// `Session:` trailers name.
-    fn trailers(&self, revisions: &[&str]) -> Result<Vec<(CommitSha, Vec<String>)>, ReviewError> {
-        let mut args = vec![
-            "log",
-            "--format=%H%x1f%(trailers:key=Session,valueonly,separator=%x1e)%x1d",
-        ];
-        args.extend(revisions);
-        let text = git::run(&self.root, args)?;
-        text.split('\u{1d}')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(|entry| {
-                let (sha, sessions) = entry.split_once('\u{1f}').unwrap_or((entry, ""));
-                let sha = CommitSha::parse(sha.trim())
-                    .map_err(|_| ReviewError::Record(format!("commit id `{sha}` from git")))?;
-                let sessions = sessions
-                    .split('\u{1e}')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                Ok((sha, sessions))
-            })
-            .collect()
-    }
+/// The commits selected by Git and the sessions named in their trailers.
+pub(crate) fn commit_sessions(
+    root: &Path,
+    revisions: &[&str],
+) -> Result<Vec<(CommitSha, Vec<String>)>, ReviewError> {
+    let mut args = vec![
+        "log",
+        "--format=%H%x1f%(trailers:key=Session,valueonly,separator=%x1e)%x1d",
+    ];
+    args.extend(revisions);
+    let text = git::run(root, args)?;
+    text.split('\u{1d}')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let (sha, sessions) = entry.split_once('\u{1f}').unwrap_or((entry, ""));
+            let sha = CommitSha::parse(sha.trim())
+                .map_err(|_| ReviewError::Record(format!("commit id `{sha}` from git")))?;
+            let sessions = sessions
+                .split('\u{1e}')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect();
+            Ok((sha, sessions))
+        })
+        .collect()
 }
 
 /// A head verdict offered for recording.
@@ -348,9 +348,6 @@ pub struct RecordRequest {
     pub report: String,
     /// The calling session, when one resolves.
     pub caller: Option<SessionRef>,
-    /// The session whose approval the caller enters, for a handed-over
-    /// approval.
-    pub reviewer: Option<SessionRef>,
 }
 
 /// What a recording admitted.
@@ -360,27 +357,28 @@ pub struct Recorded {
     pub version: u64,
     pub name: ContentDigest,
     pub moment: Moment,
+    pub base: CommitSha,
+    pub reviewer: SessionRef,
+    pub recorded_at: Timestamp,
 }
 
 /// Admits and records a head verdict (`instrukt review record`). Every read
-/// that may wait — git, delivery's records, the runtime — happens before
+/// that may wait happens before
 /// `state/review.lock` is taken; the transaction reads the commit's state
 /// again and decides under the lock.
 pub fn record(
     home: &Home,
-    env: &instrukt_core::config::Env,
+    _env: &instrukt_core::config::Env,
     project: &ReviewProject,
     request: &RecordRequest,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<Recorded, ReviewError> {
     let head = project.commit(&request.head)?;
-    let Some(caller) = request.caller.clone() else {
+    let Some(reviewer) = request.caller.clone() else {
         return Err(refused(
             "no session resolves for this caller; record a verdict from the reviewing agent session the selected runtime recognises",
         ));
     };
-    let entering = request.reviewer.as_ref().map(|_| caller.clone());
-    let reviewer = request.reviewer.clone().unwrap_or(caller);
     if request.report.trim().is_empty() {
         return Err(refused(
             "the report is missing; supply the complete review report with --report",
@@ -389,40 +387,17 @@ pub fn record(
     let state = RunnerState::new(home);
     let requests = instrukt_runner::review::requests(&state, &project.slug, &head)?;
     let held = held_here(home, &project.slug, &head)?;
-    let (offer, check) = _admission::offer(&held, &reviewer, &requests);
-    if let Offer::HandedOff(export) = &offer {
-        return Err(handed_off(&head, export));
-    }
-    let answers = match check {
-        RequestCheck::Unrequested => None,
-        RequestCheck::Answers(number) => Some(number),
-        RequestCheck::Refused {
-            number,
-            standing,
-            holder,
-        } => {
-            let holder = holder
-                .map(|session| format!(" and is held by session {session}"))
-                .unwrap_or_else(|| ", and no session holds it yet".to_owned());
+    let answers = match &held {
+        Held::HandedOff { export } => return Err(handed_off(&head, export)),
+        Held::Stands { current, .. } if current.reviewer != reviewer => {
             return Err(refused(format!(
-                "review request {number} for {head} is {standing:?}{holder}; only the session it was handed over to records this commit's verdict"
+                "{head} is settled by session {}'s verdict; see `instrukt review show {head}`",
+                current.reviewer
             )));
         }
+        Held::Stands { .. } => None,
+        Held::Nothing => _admission::answered_request(&requests, &reviewer),
     };
-    let returned_base = match &entering {
-        Some(entering) => handed_over(home, env, &head, &reviewer, entering, request, &held)?,
-        None => false,
-    };
-    match offer {
-        Offer::First | Offer::Revision => {}
-        Offer::AskTurn => ask_turn(&state, project, &head, &reviewer)?,
-        Offer::SettledByAnother(session) => {
-            return Err(refused(format!(
-                "{head} is settled by session {session}'s verdict; see `instrukt review show {head}`"
-            )));
-        }
-        Offer::HandedOff(export) => return Err(handed_off(&head, &export)),
-    }
     let (canonical, pinned) = pinned_base(project, &head, &held, &requests)?;
     let Some(pinned) = pinned else {
         return Err(refused(format!(
@@ -437,22 +412,16 @@ pub fn record(
     }
     let base_on_canonical = project.contains(pinned.as_str(), &canonical)?;
     let commits = project.sessions_in(&pinned, &head)?;
-    for session in std::iter::once(&reviewer).chain(entering.as_ref()) {
-        let naming: Vec<String> = commits
-            .iter()
-            .filter(|(_, sessions)| sessions.iter().any(|s| s == &session.to_string()))
-            .map(|(sha, _)| sha.to_string())
-            .collect();
-        if !naming.is_empty() {
-            return Err(refused(format!(
-                "session {session} authored reviewed commits {}; the review needs a session none of them names",
-                naming.join(", ")
-            )));
-        }
-    }
-    if entering.is_some() && !_admission::names_commit(&request.report, &base) && !returned_base {
+    let reviewer_ref = reviewer.to_string();
+    let naming: Vec<String> = commits
+        .iter()
+        .filter(|(_, sessions)| sessions.contains(&reviewer_ref))
+        .map(|(sha, _)| sha.to_string())
+        .collect();
+    if !naming.is_empty() {
         return Err(refused(format!(
-            "the base {base} is named neither in session {reviewer}'s message returning the report nor in the report"
+            "session {reviewer} authored reviewed commits {}; the review needs a session none of them names",
+            naming.join(", ")
         )));
     }
     let unattributed = commits
@@ -485,7 +454,7 @@ pub fn record(
             name: ContentDigest::of(&request.report),
             report: request.report.clone(),
             reviewer: reviewer.clone(),
-            entered_by: entering.clone(),
+            entered_by: None,
             base: pinned.clone(),
             base_on_canonical,
             request: answers,
@@ -501,67 +470,13 @@ pub fn record(
             version: number,
             name: version.name,
             moment: version.moment,
+            base: version.base,
+            reviewer: version.reviewer,
+            recorded_at: version.recorded_at,
         })
     })?;
     tracing::info!(event = "review_verdict_admitted", project = %project.slug, head = %recorded.head, version = recorded.version, verdict = request.verdict.as_str(), request = ?answers);
     Ok(recorded)
-}
-
-/// The facts work establishes beside a handed-over approval's statement:
-/// an approving report, no verdict of the commit yet, an entering session
-/// other than the named one, and a message the named session authored that
-/// names the head together with the report's digest. Returns whether such a
-/// message also names the supplied base.
-fn handed_over(
-    home: &Home,
-    env: &instrukt_core::config::Env,
-    head: &CommitSha,
-    reviewer: &SessionRef,
-    entering: &SessionRef,
-    request: &RecordRequest,
-    held: &Held,
-) -> Result<bool, ReviewError> {
-    if request.verdict != Verdict::Approve || !_admission::approving(&request.report) {
-        return Err(refused(
-            "a handed-over result is entered only as an approval whose report ends in the approving verdict line `Verdict: APPROVE`",
-        ));
-    }
-    if held != &Held::Nothing {
-        return Err(refused(format!(
-            "{head} already has a verdict; a handed-over approval is entered only for a commit that has none"
-        )));
-    }
-    if entering == reviewer {
-        return Err(refused(
-            "the named session records its own result without --reviewer",
-        ));
-    }
-    let messages = match instrukt_runner::review::conversation(home, env, reviewer) {
-        instrukt_runner::review::Conversation::Read { messages, .. } => messages,
-        instrukt_runner::review::Conversation::CannotRead(cause) => {
-            return Err(refused(format!(
-                "session {reviewer}'s conversation cannot be read ({cause}); nothing is recorded"
-            )));
-        }
-    };
-    let digest = ContentDigest::of(&request.report);
-    let returning: Vec<&str> = messages
-        .iter()
-        .filter(|message| message.role == instrukt_runner::runtime::conversations::Role::Assistant)
-        .map(|message| message.text.as_str())
-        .filter(|text| _admission::names_head_and_digest(text, head, digest.as_str()))
-        .collect();
-    if returning.is_empty() {
-        return Err(refused(format!(
-            "no message session {reviewer} authored names {head} together with the report's digest {digest}"
-        )));
-    }
-    let base = CommitSha::parse(&request.base).ok();
-    Ok(base.is_some_and(|base| {
-        returning
-            .iter()
-            .any(|text| _admission::names_commit(text, &base))
-    }))
 }
 
 /// What this computer holds of `head`'s verdict, read without a lock.
@@ -591,41 +506,6 @@ fn handed_off(head: &CommitSha, export: &str) -> ReviewError {
     refused(format!(
         "{head}'s verdict was handed off by export {export}; record on the computer that imported it, or import here a file that carries the commit's verdict"
     ))
-}
-
-/// Asks which input opened the reviewing session's turn until the runtime
-/// answers or the command's wait has passed.
-fn ask_turn(
-    state: &RunnerState,
-    project: &ReviewProject,
-    head: &CommitSha,
-    reviewer: &SessionRef,
-) -> Result<(), ReviewError> {
-    let started = Instant::now();
-    loop {
-        let answer = instrukt_runner::review::turn_opening(state, &project.slug, head, reviewer)?;
-        match _admission::turn_decision(&answer) {
-            TurnDecision::Admit => return Ok(()),
-            TurnDecision::OpenedByRequest(number) => {
-                return Err(refused(format!(
-                    "review request {number} for {head} opened the turn session {reviewer} has in progress, and {head} is already settled; that request is answered by the verdict that stands"
-                )));
-            }
-            TurnDecision::NoTurn => {
-                return Err(refused(format!(
-                    "session {reviewer} has no turn in progress; a revision is recorded within a turn of its session"
-                )));
-            }
-            TurnDecision::AskAgain(cause) => {
-                if started.elapsed() >= TURN_WAIT {
-                    return Err(refused(format!(
-                        "the runtime adapter cannot say which input opened session {reviewer}'s turn ({cause}); nothing is recorded: run the same command with the same report once the runtime answers"
-                    )));
-                }
-                std::thread::sleep(TURN_RETRY);
-            }
-        }
-    }
 }
 
 /// The cutoff before which history is retired: the work record's recovery
@@ -824,6 +704,41 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
         self.access.review_readiness(repository, now)
     }
 
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness {
+        use instrukt_core::interfaces::ProposalReadiness as _;
+        self.access.proposal_readiness(repository, now)
+    }
+
+    fn heads_pull(
+        &self,
+        repository: &str,
+        head: &CommitSha,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<bool, String> {
+        super::_proposals::heads_pull(&self.access, repository, head, clock)
+    }
+
+    fn open_proposal(
+        &self,
+        proposal: &instrukt_runner::interfaces::ProposalPull<'_>,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<instrukt_runner::interfaces::ProposalOpening, String> {
+        super::_proposals::open(&self.access, proposal, clock)
+    }
+
+    fn approved_head(
+        &self,
+        project: &ProjectSlug,
+        head: &CommitSha,
+    ) -> Result<Option<CommitSha>, String> {
+        let held = evidence(&self.home, project, head).map_err(|error| error.to_string())?;
+        Ok(approving(&held).map(|version| version.base.clone()))
+    }
+
     fn identities(&self) -> Result<instrukt_runner::interfaces::ReviewIdentities, String> {
         self.access
             .review_identities()
@@ -864,15 +779,11 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
 
     fn candidate(
         &self,
-        project: &instrukt_runner::interfaces::ProjectRef,
-        repository: &str,
-        candidate: &CommitSha,
-        pulls: &[u64],
+        query: &instrukt_runner::interfaces::CandidateQuery<'_>,
         now: Timestamp,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<instrukt_runner::interfaces::CandidateFinding, String> {
-        candidate_finding(self, project, repository, candidate, pulls, now, clock)
-            .map_err(|error| error.to_string())
+        _candidate::candidate_finding(self, query, now, clock).map_err(|error| error.to_string())
     }
 
     fn publish(
@@ -895,66 +806,6 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
             clock,
         )
         .map_err(|error| error.to_string())
-    }
-}
-
-/// Work's answers a requested review is admitted on
-/// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask):
-/// a head's verdict standing, its pinned base and the review history
-/// retention cutoff, read from this home alone, without a lock.
-pub struct HeadVerdictWork {
-    home: Home,
-}
-
-impl HeadVerdictWork {
-    pub fn new(home: Home) -> Self {
-        Self { home }
-    }
-
-    fn answer(
-        &self,
-        project: &instrukt_runner::interfaces::ProjectRef,
-        head: &CommitSha,
-    ) -> Result<instrukt_runner::interfaces::HeadVerdict, ReviewError> {
-        use instrukt_runner::interfaces::{HeadVerdict, HeadVerdictValue, VerdictStanding};
-        let state = RunnerState::new(&self.home);
-        let requests = instrukt_runner::review::requests(&state, &project.slug, head)?;
-        let held = held_here(&self.home, &project.slug, head)?;
-        let review_project = ReviewProject {
-            slug: project.slug.clone(),
-            root: project.root.clone(),
-        };
-        let (_, pinned_base) = pinned_base(&review_project, head, &held, &requests)?;
-        let standing = match held {
-            Held::Nothing => VerdictStanding::Nothing,
-            Held::Stands { current, .. } => VerdictStanding::Stands {
-                verdict: match current.verdict {
-                    Verdict::Approve => HeadVerdictValue::Approve,
-                    Verdict::NeedsWork => HeadVerdictValue::NeedsWork,
-                },
-                recorder: current.reviewer.clone(),
-            },
-            Held::HandedOff { export } => VerdictStanding::HandedOff { export },
-        };
-        Ok(HeadVerdict {
-            standing,
-            pinned_base,
-        })
-    }
-}
-
-impl instrukt_runner::interfaces::HeadVerdicts for HeadVerdictWork {
-    fn head_verdict(
-        &self,
-        project: &instrukt_runner::interfaces::ProjectRef,
-        head: &CommitSha,
-    ) -> Result<instrukt_runner::interfaces::HeadVerdict, String> {
-        self.answer(project, head)
-            .map_err(|error| error.to_string())
-    }
-
-    fn history_cutoff(&self, now: Timestamp) -> Timestamp {
-        retention_cutoff(now)
     }
 }
 
@@ -1405,334 +1256,12 @@ fn derived_target(approval: &Derived) -> _recognition::Target {
     }
 }
 
-/// The evidence candidate coverage reads, as work holds it.
-struct CoverageReader<'a> {
-    work: &'a ReviewWork,
-    project: &'a instrukt_runner::interfaces::ProjectRef,
-}
-
-impl CoverageReader<'_> {
-    /// The todo a commit's `Todo:` trailer names.
-    fn todo_of(&self, commit: &CommitSha) -> Result<Option<crate::evidence::TodoEvidence>, String> {
-        let Some(records) = &self.work.records else {
-            return Ok(None);
-        };
-        let named = git::run(
-            &self.project.root,
-            [
-                "log",
-                "-1",
-                "--format=%(trailers:key=Todo,valueonly)",
-                commit.as_str(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        let Some(slug) = named
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .and_then(|slug| instrukt_core::ids::TodoSlug::parse(slug).ok())
-        else {
-            return Ok(None);
-        };
-        records
-            .evidence(self.project, &slug)
-            .map_err(|e| e.to_string())
-    }
-}
-
-/// An independent approval a todo's record binds to an exact head.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RecordApproval {
-    head: CommitSha,
-    report: String,
-    /// For a build-review approval, its stamp's record order: how the
-    /// todo's reflection names the verdicts reviewed on its pull request.
-    /// None for a reviewed preparation head.
-    build: Option<u64>,
-}
-
-impl RecordApproval {
-    /// The pull request this approval cites: for a build-review approval,
-    /// the todo's pull request once `reflected` — the pull request and the
-    /// build verdicts reviewed there — holds its own verdict, whatever
-    /// became of any other; never for a reviewed preparation head.
-    fn cited_pull(&self, reflected: Option<&(u64, Vec<u64>)>) -> Option<u64> {
-        match (self.build, reflected) {
-            (Some(sequence), Some((pull, reviews))) if reviews.contains(&sequence) => Some(*pull),
-            _ => None,
-        }
-    }
-
-    /// The covering item's reference (`github-apps`, Verdict publication):
-    /// the todo, the approval and its report's digest, and the pull request
-    /// it cites.
-    fn reference(
-        &self,
-        todo: &instrukt_core::ids::TodoSlug,
-        reflected: Option<&(u64, Vec<u64>)>,
-    ) -> String {
-        let (head, report) = (&self.head, &self.report);
-        match (self.build, self.cited_pull(reflected)) {
-            (Some(_), Some(pull)) => format!(
-                "build-review approval of {head} in todo {todo} ({report}), reflected as a review on pull request #{pull}"
-            ),
-            (Some(_), None) => format!("build-review approval of {head} in todo {todo} ({report})"),
-            (None, _) => format!("preparation-head approval of {head} in todo {todo} ({report})"),
-        }
-    }
-}
-
-/// The head a todo's record approves last, when the last build verdict or
-/// preparation-head review of that head among `facts` approves it.
-fn record_approval<'a>(
-    stamps: impl IntoIterator<Item = (u64, &'a crate::evidence::StampFact)>,
-    commit: Option<&CommitSha>,
-) -> Option<RecordApproval> {
-    use crate::evidence::{BuildVerdict, ReviewVerdict, StampFact};
-    let mut last: Option<(RecordApproval, bool)> = None;
-    for (sequence, fact) in stamps {
-        let (head, report, approves, build) = match fact {
-            StampFact::BuildVerdict {
-                verdict,
-                target,
-                report,
-            } => (
-                target,
-                report,
-                *verdict == BuildVerdict::Approve,
-                Some(sequence),
-            ),
-            StampFact::PreparationHeadReviewed {
-                verdict,
-                head,
-                report,
-            } => (head, report, *verdict == ReviewVerdict::Approve, None),
-            _ => continue,
-        };
-        if commit.is_none_or(|commit| commit == head) {
-            last = Some((
-                RecordApproval {
-                    head: head.clone(),
-                    report: report.to_string(),
-                    build,
-                },
-                approves,
-            ));
-        }
-    }
-    last.filter(|(_, approves)| *approves)
-        .map(|(approval, _)| approval)
-}
-
-impl CoverageReader<'_> {
-    /// The todo's pull request with the build verdicts reviewed there, by
-    /// their stamps' record order, when it has one.
-    fn reflection(&self, todo: &super::TodoId) -> Result<Option<(u64, Vec<u64>)>, String> {
-        use instrukt_core::state_db::rusqlite::OptionalExtension as _;
-        let Some(db) = instrukt_core::state_db::StateRead::open(&self.work.home)
-            .map_err(|error| error.to_string())?
-        else {
-            return Ok(None);
-        };
-        db.conn()
-            .query_row(
-                "SELECT pull_number, reviews FROM reflections
-                 WHERE todo_id = ?1 AND pull_number IS NOT NULL",
-                [todo.as_str()],
-                |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .map(|(pull, reviews)| {
-                serde_json::from_str::<Vec<u64>>(&reviews)
-                    .map(|reviews| (pull, reviews))
-                    .map_err(|error| error.to_string())
-            })
-            .transpose()
-    }
-}
-
-impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
-    fn approved(&self, commit: &CommitSha) -> Result<Option<crate::workflow::Approved>, String> {
-        let held =
-            evidence(&self.work.home, &self.project.slug, commit).map_err(|e| e.to_string())?;
-        if let Some(version) = held.current()
-            && version.verdict == Verdict::Approve
-            && version.base_on_canonical
-        {
-            return Ok(Some(crate::workflow::Approved {
-                reference: format!(
-                    "head verdict {} of {commit} by {}",
-                    version.name, version.reviewer
-                ),
-                todo: None,
-            }));
-        }
-        let Some(record) = self.todo_of(commit)? else {
-            return Ok(None);
-        };
-        let Some(approval) = record_approval(
-            record.stamps.iter().map(|s| (s.sequence, &s.fact)),
-            Some(commit),
-        ) else {
-            return Ok(None);
-        };
-        let reflected = match approval.build {
-            Some(_) => self.reflection(&record.id)?,
-            None => None,
-        };
-        Ok(Some(crate::workflow::Approved {
-            reference: approval.reference(&record.slug, reflected.as_ref()),
-            todo: Some(record.slug.clone()),
-        }))
-    }
-
-    fn exempted(&self, commit: &CommitSha) -> Result<Option<String>, String> {
-        let held =
-            evidence(&self.work.home, &self.project.slug, commit).map_err(|e| e.to_string())?;
-        Ok(held.exemption.map(|exemption| {
-            format!(
-                "exemption of {commit}: {} (declared by {})",
-                exemption.basis,
-                exemption
-                    .declared_by
-                    .map_or_else(|| "no resolved session".to_owned(), |s| s.to_string())
-            )
-        }))
-    }
-
-    fn delivery_head(
-        &self,
-        todo: &instrukt_core::ids::TodoSlug,
-    ) -> Result<Option<CommitSha>, String> {
-        let Some(records) = &self.work.records else {
-            return Ok(None);
-        };
-        Ok(records
-            .evidence(self.project, todo)
-            .map_err(|e| e.to_string())?
-            .and_then(|record| {
-                record_approval(record.stamps.iter().map(|s| (s.sequence, &s.fact)), None)
-            })
-            .map(|approval| approval.head))
-    }
-
-    fn red_promotion(&self, head: &CommitSha) -> Result<Option<CommitSha>, String> {
-        let state = RunnerState::new(&self.work.home);
-        if !instrukt_runner::review::observed_red(&state, &self.project.slug, head)
-            .map_err(|e| e.to_string())?
-        {
-            return Ok(None);
-        }
-        let held =
-            evidence(&self.work.home, &self.project.slug, head).map_err(|e| e.to_string())?;
-        if let Some(version) = held.current() {
-            return Ok(Some(version.base.clone()));
-        }
-        let derived = derived_approval(&self.work.home, &self.project.slug, head)
-            .map_err(|e| e.to_string())?;
-        Ok(derived.and_then(|d| CommitSha::parse(&d.canonical).ok()))
-    }
-}
-
-/// Work's part of a candidate's coverage (`integration-gate`, Review
-/// coverage of a candidate): the candidate's own verdict settles it;
-/// otherwise workflow derives coverage, and the derived approval is
-/// recorded and published, or withdrawn while GitHub does not show it.
-fn candidate_finding(
-    work: &ReviewWork,
-    project: &instrukt_runner::interfaces::ProjectRef,
-    repository: &str,
-    candidate: &CommitSha,
-    pulls: &[u64],
-    now: Timestamp,
-    clock: &dyn Fn() -> Timestamp,
-) -> Result<instrukt_runner::interfaces::CandidateFinding, ReviewError> {
-    use instrukt_runner::interfaces::CandidateFinding;
-    let held = evidence(&work.home, &project.slug, candidate)?;
-    if held
-        .current()
-        .is_some_and(|version| version.base_on_canonical)
-    {
-        return Ok(CandidateFinding::Settled);
-    }
-    let recorded = derived_approval(&work.home, &project.slug, candidate)?;
-    let shown = |approval: &Derived| {
-        held.deliveries.iter().any(|d| {
-            d.destination == Destination::Status
-                && d.state == DeliveryState::Shown
-                && d.name == approval.name
-        })
-    };
-    if let Some(approval) = recorded.as_ref().filter(|a| a.withdrawn.is_none())
-        && shown(approval)
-    {
-        return Ok(CandidateFinding::Settled);
-    }
-    let canonical_branch = git::default_branch(&project.root, REMOTE)?;
-    let canonical = format!("refs/remotes/{REMOTE}/{canonical_branch}");
-    let reader = CoverageReader { work, project };
-    match crate::workflow::coverage(&project.root, candidate, &canonical, &reader) {
-        crate::workflow::Coverage::CannotAnswer(cause) => Ok(CandidateFinding::CannotAnswer(cause)),
-        crate::workflow::Coverage::Uncovered(commit) => {
-            if let Some(approval) = recorded.as_ref().filter(|a| a.withdrawn.is_none()) {
-                let mut db = _published::open(&work.home)?;
-                db.write(|tx| _published::withdraw(tx, &project.slug, approval, &commit, now))?;
-                tracing::info!(event = "review_derived_approval_withdrawn", project = %project.slug, candidate = %candidate, uncovered = %commit);
-            }
-            Ok(CandidateFinding::Owed)
-        }
-        crate::workflow::Coverage::Covered(items) => {
-            let based = git::run(
-                &project.root,
-                ["merge-base", candidate.as_str(), canonical.as_str()],
-            )?;
-            let coverage = serde_json::to_string_pretty(&serde_json::json!({
-                "candidate": candidate.as_str(),
-                "canonical": based.trim(),
-                "covering": items.iter().map(|item| serde_json::json!({
-                    "commit": item.commit.as_str(),
-                    "kind": item.kind.as_str(),
-                    "evidence": item.reference,
-                })).collect::<Vec<_>>(),
-            }))
-            .map_err(|e| ReviewError::Record(e.to_string()))?;
-            let approval = Derived {
-                candidate: candidate.clone(),
-                canonical: based.trim().to_owned(),
-                name: ContentDigest::of(&coverage),
-                coverage,
-                moment: Moment::decided(now, None),
-                recorded_at: now,
-                withdrawn: None,
-                imported: false,
-            };
-            let mut db = _published::open(&work.home)?;
-            db.write(|tx| _published::record_derived(tx, &project.slug, &approval))?;
-            drop(db);
-            tracing::info!(event = "review_derived_approval_recorded", project = %project.slug, candidate = %candidate, items = items.len());
-            let gh = work
-                .access
-                .review_client(repository, clock)
-                .map_err(|error| refused(error.to_string()))?;
-            let reviewer = work
-                .access
-                .review_identities()
-                .map_err(|error| refused(error.to_string()))?
-                .reviewer;
-            _recognition::Publication {
-                home: &work.home,
-                gh: &gh,
-                project: &project.slug,
-                repository,
-                reviewer: &reviewer,
-                now,
-            }
-            .deliver(candidate, &derived_target(&approval), pulls)?;
-            Ok(CandidateFinding::Covered)
-        }
-    }
+/// The current head verdict of `held` when it approves and its pinned base
+/// covers the canonical branch: the one approval check coverage and the
+/// proposal handoff both read.
+pub(super) fn approving(held: &CommitEvidence) -> Option<&Version> {
+    held.current()
+        .filter(|version| version.verdict == Verdict::Approve && version.base_on_canonical)
 }
 
 #[cfg(test)]
@@ -1884,7 +1413,6 @@ mod tests {
                 verdict: Verdict::Approve,
                 report: "report".into(),
                 caller: Some(SessionRef::parse("t3:reviewer").unwrap()),
-                reviewer: None,
             },
             &|| at("2026-11-24T00:00:00Z"),
         );
@@ -2162,50 +1690,5 @@ mod tests {
         assert_eq!(held(&withdrawn), None);
         assert_eq!(held(&past), None);
         assert!(held(&active).is_some());
-    }
-
-    fn build(verdict: crate::evidence::BuildVerdict, target: char) -> crate::evidence::StampFact {
-        crate::evidence::StampFact::BuildVerdict {
-            verdict,
-            target: sha(target),
-            report: ContentDigest::of("report"),
-        }
-    }
-
-    #[test]
-    fn a_finalized_approval_cites_the_todos_pull_request_once_its_own_verdict_is_reflected_there() {
-        use crate::evidence::BuildVerdict::{Approve, ChangesRequested};
-        let facts = [build(ChangesRequested, 'a'), build(Approve, 'a')];
-        let stamps = [(3, &facts[0]), (7, &facts[1])];
-        let approval = record_approval(stamps, Some(&sha('a'))).unwrap();
-        assert_eq!(approval.build, Some(7));
-        assert_eq!(approval.cited_pull(Some(&(12, vec![3, 7]))), Some(12));
-        assert_eq!(
-            approval.cited_pull(Some(&(12, vec![3]))),
-            None,
-            "not yet reflected there"
-        );
-        assert_eq!(approval.cited_pull(None), None);
-    }
-
-    #[test]
-    fn an_approval_is_cited_when_an_earlier_verdict_is_not_reflected() {
-        use crate::evidence::BuildVerdict::{Approve, ChangesRequested};
-        let facts = [build(ChangesRequested, 'a'), build(Approve, 'a')];
-        let stamps = [(3, &facts[0]), (7, &facts[1])];
-        let approval = record_approval(stamps, Some(&sha('a'))).unwrap();
-        assert_eq!(approval.cited_pull(Some(&(12, vec![7]))), Some(12));
-    }
-
-    #[test]
-    fn a_reviewed_preparation_heads_approval_cites_no_pull_request() {
-        let facts = [crate::evidence::StampFact::PreparationHeadReviewed {
-            verdict: crate::evidence::ReviewVerdict::Approve,
-            head: sha('a'),
-            report: ContentDigest::of("report"),
-        }];
-        let approval = record_approval([(1, &facts[0])], Some(&sha('a'))).unwrap();
-        assert_eq!(approval.build, None);
-        assert_eq!(approval.cited_pull(Some(&(12, vec![1]))), None);
     }
 }

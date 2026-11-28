@@ -26,12 +26,16 @@ becoming unreachable preserves its pending positions; it never causes silent
 rerouting. Cluster configuration is required for enabled event transport; its
 unreachability does not stop unaffected local readers or unrelated local work.
 
+
 A scope selects one logical endpoint/database. Connections to the same logical
 Redis are shared and each source is read once per logical consumer. Separate
 blocking-read connections do not hold unrelated writers. A timeout shorter than
 the configured blocking-read interval is refused at configuration load. Each
-Redis has one reachability record, logging loss and return once per transition;
-its readers resume after recovery without discarding positions.
+Redis has one reachability record kept outside the state database
+(`project/instrukt/spec/domain/runner`, Runner background state), logging loss
+and return once per transition; its readers resume after recovery without
+discarding positions.
+
 
 ### Coordinates, order and reader lifetime
 
@@ -59,18 +63,26 @@ settles its outstanding former cluster group in order before retiring that
 group and reading the local scope. The new local position is captured before
 producers run. A connection outage never masquerades as this planned handover.
 
+
 A former source no longer in the configuration cannot be drained: it is marked
 abandoned when the change is admitted, the new source runs at once, and
 `instrukt events status` names the abandoned source and that its pending events
 stay unread in that Redis. Configured again, it is drained like any retiring
 source from its own group. A source transition waits for the reader's in-flight
 drain to finish, within a one-second handover budget. If the reader still
-holds the source, the transition is reported as deferred and left for the
-next runner attempt or installation retry. A hosted runner uses the same
-budget while waiting for its old readers to stop. Other wake-up work proceeds
-while it waits for a later attempt. `instrukt events status` shows pending
-source transitions, their cause and age. After a transition, a reader with the
-previous binding can no longer read or acknowledge entries on that source.
+holds the source, the transition is reported as deferred outside the state
+database (`project/instrukt/spec/domain/runner`, Runner background state) and
+left for the next runner attempt or installation retry. A hosted runner uses the
+same budget while waiting for its old readers to stop. Other wake-up work
+proceeds while it waits for a later attempt. `instrukt events status` shows
+pending source transitions, their cause and age. Recording a deferred timeout
+and clearing it after `consumer_sources` commits serialize on a per-consumer
+transition status lock while the binder holds the handover lock (with a
+non-blocking recheck of the handover lock before recording a timeout); a crash
+between commit and clear self-heals on the next bind. After a transition, a
+reader with the previous binding can no longer read or acknowledge entries on
+that source.
+
 
 Dead-letter announcements use one bounded best-effort XADD after parking is
 settled, as `project/instrukt/spec/feature/runner/event-consumers` owns. They have

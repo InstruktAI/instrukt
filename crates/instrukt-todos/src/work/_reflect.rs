@@ -486,10 +486,12 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
             Some(address) if recovered => remote_versions(gh, number, address, confirmed)?,
             _ => Vec::new(),
         };
-        // Versions keep their order: a version maps to a remote version
-        // after the one its predecessor maps to.
+        // Uploaded or matched versions map strictly after `floor`; a version
+        // repeating its predecessor's content inherits its remote version or refusal.
         let mut floor = 0;
-        for version in &mut artifact.versions {
+        for i in 0..artifact.versions.len() {
+            let (before, rest) = artifact.versions.split_at_mut(i);
+            let version = &mut rest[0];
             if let Some(n) = version.remote {
                 floor = floor.max(n);
                 continue;
@@ -500,6 +502,12 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
             {
                 version.remote = Some(*n);
                 floor = *n;
+                continue;
+            }
+            // Content that does not change does not move: a version repeating the
+            // one before it takes that version's place on GitHub, or its refusal.
+            if let Some(previous) = before.last().filter(|p| p.digest == version.digest) {
+                version.remote = previous.remote;
                 continue;
             }
             let Some(content) = version.content.clone() else {
@@ -905,7 +913,7 @@ fn build_verdicts(record: &TodoRecord) -> Vec<BuildVerdictView> {
 
 /// `text` percent-encoded for a URL path or query, keeping unreserved
 /// characters and the `/` and `:` a branch reference uses.
-fn encode(text: &str) -> String {
+pub(super) fn encode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {

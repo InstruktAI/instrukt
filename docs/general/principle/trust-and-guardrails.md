@@ -1,5 +1,5 @@
 ---
-description: 'Agents are trusted by default. A guardrail earns its place only where restoring state cannot repair the harm — interference and contract violation. Everything else is direction, carried by briefs.'
+description: 'Trust by default; guardrails gate only unrepairable harm (interference, contract violation; rest is brief direction), tools stay neutral facts, and on a guardrail refusal stop, tell someone, and read its door.'
 visibility: 'public'
 ---
 
@@ -15,6 +15,8 @@ A guardrail earns its place only where **restoring state cannot repair the harm*
 - **Contract violation** — a contract changed underneath the party executing it. The document is recoverable; the work performed against the wrong version is not.
 
 Everything else is direction. Direction is carried by the agent's brief, not by a gate.
+
+Tools are neutral surfaces of fact, not workflow police. A CLI, ledger, or store records neutral facts about objects and guards only the two unrepairable harms above; workflow choreography, role interaction, and turn-state rules live in briefs and procedures, never in tool code or gates. A tool's help describes what its verbs do and record, and a tool records only provenance that is observed rather than inferred or fabricated.
 
 Reversibility is an invariant of the state layer, engineered rather than enforced: durable records are versioned, removals are soft, and a mutation that cannot be undone is a defect in the state layer, never an occasion for a permission rule. A gate placed around a destructive operation makes the destructiveness permanent, because the gate outlives the repair.
 

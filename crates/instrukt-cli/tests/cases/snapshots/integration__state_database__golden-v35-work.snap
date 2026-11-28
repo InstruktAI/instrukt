@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/state-database.rs
+assertion_line: 864
 expression: "support::redact(&format!(\"{listed}---\\n{shown}---\\n{artifacts}---\\n{plan}\"))"
 ---
 list-depth · change · active · on hold: Waits for the parser review. · claimed on <id 1> · reflection pending
@@ -11,8 +12,7 @@ created: <time> by session t3:lead-1
 revision: 4
 intent:
   Lists keep their depth everywhere.
-reflection: pending: GitHub is unreachable
-GitHub not read (GitHub is unreachable): shown as this computer records it; what people did on the issue since its last read is applied by the next read
+reflection: pending: the pull request waits for branch `list-depth` on GitHub
 issue: #1
 claim: held since <time> by session t3:lead-1
 hold: Waits for the parser review. (manual, by session t3:lead-1, <time>)

@@ -1,5 +1,5 @@
 ---
-description: 'Guidelines for resolving conflicts between documentation, instructions, and code.'
+description: 'Resolving conflicts between docs, instructions, and code.'
 visibility: 'public'
 ---
 
@@ -13,14 +13,17 @@ visibility: 'public'
   authorize delivery scope; they stand outside this precedence ladder and grant
   no exemption from standing principles, policies, or verified substrate reality
   (`general/policy/human-contract`).
-- Treat documentation as direction; use code to confirm behavior.
+- Code is ground truth for current behavior; documentation is the contract for
+  intended behavior.
 
 ## Rationale
 
 - Consistent priority prevents indecision and hidden rule‑picking.
 - Delivery inputs are authored before full grounding; separating them from
   governing contracts preserves standing invariants across every review gate.
-- Code is the ground truth when docs and behavior diverge.
+- Separating observed behavior from documented contract keeps code bugs from
+  silently rewriting specifications while preventing stale docs from masking
+  what the system actually runs.
 
 ## Scope
 

@@ -213,7 +213,7 @@ fn event_config(env: &TestEnv, local: Option<&str>, cluster: &str, ingress: Opti
     let local = local
         .map(|url| format!("  local: {{url: '{url}'}}\n"))
         .unwrap_or_default();
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 7\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 8\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
@@ -896,7 +896,8 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
     insta::assert_json_snapshot!(report["findings"], @r#"
     [
-      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
+      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation",
+      "fleet Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
     ]
     "#);
     let after: redis::Value = redis::cmd("XINFO")
@@ -925,7 +926,7 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
             .assert()
             .success();
     }
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 7\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 8\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
     env.run(env.home(), ["install", "--check"]).failure();
     redis::cmd("ACL")
         .arg("SETUSER")
@@ -1171,7 +1172,7 @@ fi
     assert!(registration.exists());
     std::fs::write(
         another.join("instrukt.yaml"),
-        "schema_version: 7\nmodules: {history: false}\n",
+        "schema_version: 8\nmodules: {history: false}\n",
     )
     .unwrap();
     env.set_env("INSTRUKT_HOME", another.to_str().unwrap());
@@ -1510,7 +1511,7 @@ fn an_earlier_releases_installation_record_is_left_by_inspection_and_removed_by_
     env.set_env("PATH", "");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 7\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let github = env.with_fake_github();
@@ -2632,7 +2633,7 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     std::fs::write(
         &global,
         format!(
-            "schema_version: 7\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
+            "schema_version: 8\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
         ),
     )
     .unwrap();
@@ -3109,4 +3110,141 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
             &String::from_utf8_lossy(&unmet.get_output().stdout)
         )
     );
+}
+
+// spec: project/instrukt/spec/feature/runner/module-installation UC-MI16
+#[test]
+fn install_converges_updates_withholds_and_withdraws_the_daily_home_backup_timer() {
+    let mut env = TestEnv::new();
+    manager(&mut env);
+    let recipient = age::x25519::Identity::generate().to_public().to_string();
+    let global_path = env.instrukt_home().join("instrukt.yaml");
+    std::fs::create_dir_all(env.instrukt_home()).unwrap();
+    let write_backup_cfg = |time: &str, with_secrets: bool| {
+        let yaml = [
+            format!(
+                "schema_version: {}",
+                instrukt_core::config::GLOBAL_SCHEMA_VERSION
+            ),
+            "runner: {runtime: t3}".to_owned(),
+            "backup:".to_owned(),
+            "  endpoint: https://s3.example.test".to_owned(),
+            "  region: auto".to_owned(),
+            "  bucket: bkt".to_owned(),
+            "  access_key_id: ${BK_KEY}".to_owned(),
+            "  secret_access_key: ${BK_SECRET}".to_owned(),
+            format!("  age_recipient: {recipient}"),
+            format!("  time: '{time}'"),
+            String::new(),
+        ]
+        .join("\n");
+        std::fs::write(&global_path, yaml).unwrap();
+        let secrets = env.instrukt_home().join("secrets.env");
+        if with_secrets {
+            std::fs::write(&secrets, "BK_KEY=ak\nBK_SECRET=sk\n").unwrap();
+            std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        } else if secrets.exists() {
+            std::fs::remove_file(&secrets).unwrap();
+        }
+    };
+
+    write_backup_cfg("04:15", true);
+    let installed = json(&env, &["install", "--json"]);
+    let backup_res = installed["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "backup timer")
+        .expect("backup timer resource present");
+    assert_eq!(backup_res["disposition"], "installed", "{installed}");
+    let paths: Vec<String> = backup_res["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    assert!(!paths.is_empty());
+    let joined_contents: String = paths
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined_contents.contains("backup"));
+    assert!(joined_contents.contains("run"));
+    assert!(joined_contents.contains("15"));
+
+    let checked = json(&env, &["install", "--check", "--json"]);
+    let checked_res = checked["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "backup timer")
+        .unwrap();
+    assert_eq!(checked_res["disposition"], "reused", "{checked}");
+
+    write_backup_cfg("05:45", true);
+    env.run(env.home(), ["install", "--check"]).failure();
+    let repaired = json(&env, &["install", "--json"]);
+    let rep_res = repaired["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "backup timer")
+        .unwrap();
+    assert_eq!(rep_res["disposition"], "repaired", "{repaired}");
+    let repaired_contents: String = paths
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(repaired_contents.contains("45"));
+
+    write_backup_cfg("05:45", false);
+    let withheld_out = env.run(env.home(), ["install", "--json"]).failure();
+    let withheld: serde_json::Value =
+        serde_json::from_slice(&withheld_out.get_output().stdout).unwrap();
+    let wh_res = withheld["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "backup timer")
+        .unwrap();
+    assert_eq!(wh_res["disposition"], "unmet", "{withheld}");
+    for p in &paths {
+        assert!(
+            std::path::Path::new(p).exists(),
+            "withheld config must not withdraw existing timer file {p}"
+        );
+    }
+
+    std::fs::write(
+        &global_path,
+        format!(
+            "schema_version: {}\nrunner: {{runtime: t3}}\n",
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    env.run(env.home(), ["install", "--module", "todos"])
+        .success();
+    for p in &paths {
+        assert!(
+            std::path::Path::new(p).exists(),
+            "filtered --module install must leave backup timer untouched: {p}"
+        );
+    }
+    let withdrawn = json(&env, &["install", "--json"]);
+    let wd_res = withdrawn["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "backup timer")
+        .unwrap();
+    assert_eq!(wd_res["disposition"], "withdrawn", "{withdrawn}");
+    for p in &paths {
+        assert!(
+            !std::path::Path::new(p).exists(),
+            "unfiltered install should have withdrawn {p}"
+        );
+    }
 }

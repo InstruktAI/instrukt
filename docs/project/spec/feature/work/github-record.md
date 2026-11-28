@@ -53,10 +53,10 @@ read follows pages up to its page limit; reaching it with a full last page is
 stated in the command's report as an incomplete read, never passed off as the
 whole list.
 
-Beyond that, a todo's issue is read with a conditional request on
-`instrukt todo show <slug>` and before any command acts on the todo. A read
-that cannot reach GitHub does not block the command: it proceeds on the
-record, says so, and the next read applies what it missed.
+Todo commands never read GitHub, never flush reflection and open no GitHub App
+client or token: they read and write this computer's local record alone, so
+inbound human controls take effect and local writes appear on GitHub at
+runner-tick cadence.
 
 ### Issues and visible work
 
@@ -132,11 +132,10 @@ never an implicit opt-out.
 
 Reflection publishes a repository todo's work branch while the todo is built
 and reviewed: from the branch its build start records until the todo is
-delivered or a withdrawal of it begins. Each runner tick's flush compares the
-branch's local head with the head its last publication left on the remote the
-default branch tracks, and pushes the branch there when the local head has
-moved; a command's own flush publishes nothing, so no command waits on the
-remote. A publication only ever
+delivered or a withdrawal of it begins. Each runner tick's reflection pass
+compares the branch's local head with the head its last publication left on
+the remote the default branch tracks, and pushes the branch there when the
+local head has moved. A publication only ever
 fast-forwards the remote branch; it never forces it. A remote branch that
 moved where the local one cannot fast-forward it is reported with the todo
 as the reason its publication is outstanding, and is left as it is. An
@@ -193,7 +192,8 @@ for it, without reading the content of earlier versions.
 The `instrukt todo artifacts` command family provides `list <slug>`,
 `read <slug> <name>`, `write <slug> <name> <content>` and
 `diff <slug> <name> <old-digest> <new-digest>` through the local record.
-Writing appends a version; diff compares retained evidence. Stamp evidence is
+Writing appends a version, except that a write matching the current version's
+content, provenance and writer records nothing; diff compares retained evidence. Stamp evidence is
 owned by `project/instrukt/spec/feature/work/stamps`.
 
 ### Writer and convergence
@@ -228,18 +228,16 @@ pending and the local record continues. Identity/issuance failures retain
 their secret-safe cause and never select a human fallback.
 
 A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
-reflection; no separate writer process runs. Every runner tick flushes
-pending reflection under that lock, held across GitHub requests. A command
-that writes the record and finds the lock free flushes pending reflection
-under it before it returns. A command that finds the lock held by another
-process never waits on it: it returns as soon as its local write is
-committed, reports its reflection as pending, and leaves what it did not
-reflect to the next flush that acquires the lock. The
-separate writer lock guards only local
-state-database write transactions and is released before each network wait. Reflection
-takes it briefly for each local commit of what it learned. Lock order is always
-reflection → writer; commands finish their local write and release the writer
-lock before trying the reflection lock. Local readers take neither lock.
+reflection; no separate writer process runs. The runner's reflection pass is
+the single path that acquires that lock, reads inbound human controls from
+GitHub and flushes pending reflection out, holding the lock across GitHub
+requests. A command that writes the record commits locally, marks reflection
+pending and returns without touching GitHub, opening a GitHub App client or
+token, or acquiring the reflection lock; the next runner reflection pass
+reflects it. The separate writer lock guards only local
+state-database write transactions and is released before each network wait.
+Reflection takes it briefly for each local commit of what it learned. Lock
+order is always reflection → writer. Local readers take neither lock.
 Confirmation records the revision actually reflected; a newer local revision
 remains pending.
 
@@ -252,24 +250,22 @@ Inbound approvals and change requests are accepted only from logins in the
 project layer’s `github.approvers` with write access to the repository. An
 approver comments on the todo's issue:
 
-- `/instrukt approve <prd|task> <digest-prefix>` — applied by the next read
-  of the issue only when the prefix matches the current evidence digest of that gate,
-  with GitHub attribution. On a mismatch the issue is answered that the
-  evidence changed and must be approved again, and the record is unchanged.
-- `/instrukt request-changes <prd|task>` followed by the reason — needs no
-  digest.
+- `/instrukt approve <prd|task> <digest-prefix>` — applied by the runner's next
+  reflection read of the issue only when the prefix matches the current
+  evidence digest of that gate, with GitHub attribution. On a mismatch the issue
+  is answered that the evidence changed and must be approved again, and the
+  record is unchanged.
+- `/instrukt request-changes <prd|task>` followed by the reason — applied by the
+  runner's next reflection read of the issue; needs no digest.
 
 A comment from anyone else changes no work record and is answered on the
 issue.
 
-An applied approval or request-changes decision wakes the todo's current
-claim-holding orchestrator if that session is alive, with the as-soon-as-possible
-intent. The notice carries the decision, gate, reason when given, attribution
-and bound evidence. The decision and pending attention commit before runtime
-I/O; failed observation or delivery retains its cause and retries under
-`project/instrukt/spec/feature/runner/session-continuity`. With no live
-orchestrator it is only a state update: next pickup or a deliberate start
-continues from it. No approval event or second stamp-driven wake is emitted.
+An applied approval or request-changes decision and its pending attention
+commit together. The notice carries the decision, gate, reason when given,
+attribution and bound evidence. Delivery targets the session holding the
+claim and retries as specified by
+`project/instrukt/spec/feature/runner/session-continuity`.
 Re-reading an already applied comment neither reapplies the decision nor
 creates another notice. The decision stamp retains its source comment
 identity in the record. Its confirmation reply is retained with acceptance and
@@ -318,7 +314,9 @@ reflection is outstanding. The same content is not sent again: a refused
 request is sent again only once what it sends, or the published branch head
 it concerns, has changed. The todo's other reflection continues, the local
 record continues and other todos reflect independently. A refused artifact
-version is followed by the artifact's next version as usual.
+version is followed by the artifact's next version as usual. Content that does
+not change does not move: an artifact version whose content repeats the version
+before it is not sent, and takes that version's place on GitHub or its refusal.
 
 ## Use cases
 
@@ -326,21 +324,23 @@ version is followed by the artifact's next version as usual.
 
 ```gherkin
   Given a developer has a todo available on their computer
-  And GitHub is unreachable
   When they record progress on that todo
+  Then the command commits locally and returns without contacting GitHub
+  And its reflection remains pending until the runner reflects it
+  But when GitHub is unreachable during reflection
   Then the accepted progress remains available locally
   And its GitHub reflection remains pending
   But when no GitHub credentials are available on their computer
   Then the progress is still recorded locally
-  And its reflection is reported as pending for lack of credentials
+  And the runner's reflection reports it as pending for lack of credentials
   But when GitHub is limiting their requests
   Then the reflection waits and completes once GitHub accepts requests again
   But when GitHub refuses the reflected content as invalid
   Then the progress is still recorded locally
   And the refusal is reported with the reason GitHub gave for it
-  But when another process on their computer is reflecting
-  Then the command returns as soon as the progress is recorded locally
-  And its reflection remains pending until the next reflection on their computer reflects it
+  But when the runner is already reflecting on their computer
+  Then recording progress still returns as soon as it is recorded locally
+  And its reflection completes on the next runner reflection pass
 ```
 
 ### UC-GR2: Inspect a delivery's evidence on GitHub
@@ -388,16 +388,13 @@ version is followed by the artifact's next version as usual.
 
 ### UC-GR7: A todo whose claim moves to a developer's computer is current when work starts
 
-### UC-GR8: Continue preparation after a GitHub decision
+### UC-GR8: Record a GitHub approval decision
 
 ```gherkin
-Given a developer has a current reviewed approval gate on a todo's GitHub issue
+Given a todo has current approval-gate evidence
 When an authorized approver submits an admissible approval or request-changes comment
-Then the decision is recorded with GitHub attribution and current evidence
-And its live claim-holding orchestrator receives the decision as soon as its runtime permits
-But when there is no live orchestrator
-Then only the record changes and the next pickup or deliberate start continues from it
-And replaying that comment creates no second decision notice
+Then the decision records GitHub attribution and current evidence
+And replaying the comment creates no second decision or notice
 ```
 
 ### UC-GR9: Control a todo's hold from its GitHub issue

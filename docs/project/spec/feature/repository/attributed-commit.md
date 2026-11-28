@@ -61,13 +61,41 @@ configuration entry. The adapter's metadata carries the observation.
 
 ### What is committed
 
-- `--only <paths>` commits exactly those paths as they are in the working
-  tree, new files included, and leaves everything else in the index as it
-  was.
+- Commits what the caller staged in git's index, as plain `git commit` does;
+  `instrukt repo commit` stages nothing.
 - The project's own git hooks run as for any commit, and the commit waits for
   them however long they take; a hook that refuses the
   commit leaves nothing committed.
 - Works in any git repository; the project layer is not required.
+
+### Review routing
+
+Every commit carries its author's review-routing choice, the either-or of
+`general/policy/commits`, which the command takes when committing.
+
+| Option | The choice | What it records |
+| --- | --- | --- |
+| `--review` | The commit goes to the independent review of a head that contains it: a requested review, or a todo's build review. | Nothing. |
+| `--exempt <basis>` | The commit owes no independent review, for the stated basis. | The commit's exemption with that basis, through work's admission (`project/instrukt/spec/feature/work/github-apps`, Admission of review evidence). |
+
+- **In an adopted project** exactly one of them is required. Without either,
+  nothing is committed and the refusal names both options and
+  `general/policy/commits`; both together, or an empty basis, are refused the
+  same way.
+- **Outside an adopted project** no review evidence is kept, so the choice is
+  not required: `--review` is taken and records nothing, and `--exempt` is
+  refused before anything is committed, naming that review evidence belongs to
+  an adopted project.
+- **The exemption follows the commit.** It is recorded once the commit exists,
+  declared by the caller, which is the session the commit's `Session:` trailer
+  names when one resolves. When work refuses it or cannot record it, the
+  commit stands: the command prints the commit's id, names
+  `instrukt review exempt --commit <id> --basis <basis>` as the door and ends
+  failed.
+- **A decision taken after committing** is recorded with
+  `instrukt review exempt`.
+- **The choice is no trailer.** The message carries only the trailers above;
+  the exemption is review evidence, and a review choice leaves no trace.
 
 ### Worktree commits and review
 
@@ -102,6 +130,17 @@ And the commit records whether a human was involved as the developer declared
 
 Retired: no agent authors direct commits on main. Worktree-head review precedes integration.
 
+### UC-RC4: An interrupted commit leaves the repository as it was
+
+```gherkin
+Given an agent committing a staged change while the project's hook runs
+When the commit is stopped by an interrupt or termination signal
+Then nothing is committed
+And git holds no lock in the repository
+And the staged change remains staged in the index
+And the agent's next commit succeeds
+```
+
 ## Known caveats
 
 - T3's caller lookup supplies a native session without verified provider-agent
@@ -110,7 +149,6 @@ Retired: no agent authors direct commits on main. Worktree-head review precedes 
   never supplies identity evidence.
 - Outside the bot-role path, a resolved agent with no configured git author is
   refused with the door `agents.<name>.git_author`.
-- Without `--only`, commit includes what the caller staged, as plain git; `--only` commits exactly the given paths.
 
 ## See Also
 

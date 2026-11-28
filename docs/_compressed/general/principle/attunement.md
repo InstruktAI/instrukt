@@ -1,5 +1,5 @@
 ---
-source_sha256: bd6a72c601564bbb95274e7f8f33bb8967b2d4ecd2a0a2a4b6fd7a81c513f2c5
+source_sha256: 3f2c248566ba39f7a93b6def3dbd2439c65852d2d86790f1a83d230628cfd77d
 model: claude-opus-5-5
 ---
 - MUST sense breath phase first, act in its register -- mode fits phase.

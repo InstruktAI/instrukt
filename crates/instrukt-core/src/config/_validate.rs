@@ -124,6 +124,15 @@ fn findings_in_scope(
         ));
     }
     if layer.kind() == LayerKind::Global
+        && let Some(backup) = value
+            .get(super::_backup::BACKUP_KEY)
+            .filter(|v| !v.is_null())
+    {
+        let machine_secrets =
+            super::_secrets::SecretSnapshot::read(home, &super::SecretSource::Machine);
+        super::_backup::check_secrets(backup, &machine_secrets, &mut found);
+    }
+    if layer.kind() == LayerKind::Global
         && let Some(ingress) = value.get("ingress")
         && ingress.get("reactions").is_some()
         && ingress.get("computer").is_none()
@@ -624,6 +633,7 @@ pub(crate) fn judge(
         LayerKind::Project => {
             required_modules(value, &effective, &mut found);
             event_transport(&effective, &mut found);
+            found.extend(super::_identity::findings(value));
         }
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
@@ -850,18 +860,7 @@ fn references(value: &Value, kind: LayerKind, effective: &Value, out: &mut Vec<K
     let mut strings = Vec::new();
     collect_strings(&_schema::permitted(value, kind), "", &mut strings);
     for (path, text) in strings {
-        if [
-            "webhooks",
-            "github.apps",
-            "members",
-            "connectors",
-            "mcp",
-            "mcp_clients",
-            "issuer",
-        ]
-        .iter()
-        .any(|root| path == *root || path.starts_with(&format!("{root}.")))
-        {
+        if super::_interpolate::stored_reference(&path) {
             continue;
         }
         let error = Interpolator::new(effective, Mode::Check)

@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/integration-gate.rs
-assertion_line: 267
 expression: "work ::\nredact(&\nformat!(\"{}\\n---\\n{}\", project.rt.sent(INTEGRATOR, 1),\nproject.rt.sent(INTEGRATOR,\n2)).replace(&failed,\n\"<failed candidate>\").replace(&repaired, \"<repaired candidate>\"))"
 ---
 [Instrukt Notification]

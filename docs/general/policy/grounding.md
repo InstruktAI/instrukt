@@ -1,5 +1,5 @@
 ---
-description: What an agent must have done before asserting something that steers an action or enters a durable record, and what counts as a grounding violation.
+description: 'Pre-claim grounding for consequential assertions/records and grounding violations.'
 ---
 
 # Grounding — Policy

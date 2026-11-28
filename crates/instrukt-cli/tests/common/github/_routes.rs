@@ -203,6 +203,21 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             }
         }
         ("GET", ["commits", sha, "status"]) => Reply::ok(state.repo(&full).combined_status(sha)),
+        ("GET", ["commits", sha, "pulls"]) => {
+            // The pull requests whose head is the commit, open or closed.
+            let r = state.repo(&full);
+            let items = r
+                .issues
+                .values()
+                .filter(|i| {
+                    i.pull
+                        .as_ref()
+                        .is_some_and(|p| r.branch_head(&p.head).as_deref() == Some(*sha))
+                })
+                .filter_map(|i| r.pull_json(&base, &full, i.number))
+                .collect();
+            paginate(&base, path, query, items)
+        }
         ("GET", ["commits", sha, "check-runs"]) => {
             Reply::ok(state.repo(&full).check_runs_json(sha))
         }

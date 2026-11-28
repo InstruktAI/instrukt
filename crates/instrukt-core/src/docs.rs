@@ -98,7 +98,7 @@ mod _validate;
 use std::path::PathBuf;
 
 pub(crate) use _company::{
-    CompanyDocument, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText,
+    CompanyDocument, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_body,
     company_document, company_paths, company_references,
 };
 pub use _corpus::{
@@ -120,7 +120,7 @@ pub use _position::{
 };
 pub use _refs::{RefTarget, Reference};
 pub(crate) use _render::render_unit_body;
-pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
+pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, fenced, render};
 pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_domain, index};
 pub use _schema::{
     EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,

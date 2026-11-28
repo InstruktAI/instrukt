@@ -47,13 +47,14 @@ admitted with thread retention withheld, as
 `project/instrukt/spec/feature/configuration/layered-configuration` decides.
 No part
 of the runner reads those files on its own
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters; nothing running handles a missing one).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter; nothing running handles a missing one).
 
 Company connections and the conversation relay follow the admitted generation
 as it changes. Adding a connector starts it, changing its settings or tokens
 renews its connection, and withdrawing it ends that connection. The
 connector checks its provider permissions before taking member questions.
+
 
 **Parts that depend on a service outside instrukt.** The conversation relay (on
 T3's conversation source), the connectors (on the provider), the event readers (on
@@ -62,13 +63,17 @@ Redis) each retry inside themselves until their service returns, and report thei
 state in `instrukt events status`; a part never ends the runner because its
 service is away. A wake that cannot take the runtime-dispatch lock within its wait
 is skipped and the next wake tries again; `instrukt events status` shows the last
-skipped wake with its time and cause until a wake that is not skipped. Lock waits are measured on the clock that
-measures the limits of started programs
+skipped wake with its time and cause until a wake that is not skipped. The run
+loop records its last configuration admission outcome and last skipped wake
+outside the state database (`project/instrukt/spec/domain/runner`, Runner
+background state), so wake-loop updates never wait on `state/writer.lock`. Lock
+waits are measured on the clock that measures the limits of started programs
 (`project/instrukt/spec/feature/configuration/layered-configuration`). The
 runner ends only when it cannot start: no home, the runner lock held by another
 runner, a state database it cannot open or one newer than it knows
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried, a
-defect is fixed in the code).
+(`project/instrukt/design/architecture/outside-gate`: transient outside outages
+are retried while code defects are fixed in code).
+
 
 | Capability | Runner responsibility |
 | --- | --- |
@@ -99,16 +104,15 @@ it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup;
 which finished threads are archived, and when, is the runner's thread
 retention (`project/instrukt/spec/feature/runner/thread-retention`).
-Every tick also reads GitHub for what people did on the issues of the todos in
-this computer's record (`project/instrukt/spec/feature/work/github-record`).
-Every tick flushes pending work-record reflection under the
-per-computer reflection lock. A command that writes the record flushes under
-that lock when it is free and never waits on it when another process holds
-it, leaving its reflection to the next flush that acquires it
-(`project/instrukt/spec/feature/work/github-record`). Reflection holds that lock across GitHub requests and takes the writer
-lock only briefly for each local commit of what it learned. Lock order is always
-reflection → writer; the local transaction releases the writer lock before a
-flush acquires the reflection lock. Local readers take neither lock.
+Every tick is the single path that talks to GitHub for the work record: it
+reads inbound human controls from the issues of this computer's live todos
+before pickup and flushes pending work-record reflection after pickup,
+serializing both under the per-computer reflection lock
+(`project/instrukt/spec/feature/work/github-record`). Todo commands never
+read GitHub, never flush reflection and never acquire the reflection lock.
+Reflection holds that lock across GitHub requests and takes the writer lock
+only briefly for each local commit of what it learned. Lock order is always
+reflection → writer. Local readers take neither lock.
 
 ### Enablement and infrastructure
 
@@ -158,7 +162,7 @@ Time determines whether an authorized task is due; due status does not replace
 the todo pickup policy. Task timing belongs to
 `project/instrukt/spec/feature/runner/task-timing`.
 
-### Agent selection and intent checks
+### Agent selection
 
 Dispatch resolves the procedure's role through `agents.yaml`, with per-task
 overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
@@ -179,12 +183,6 @@ have no flag there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
-
-The responsible orchestrator delegates the intent checker natively on the
-computer where the originating conversation is readable, using the configured
-native instruction. Work records the attempt and native child id through
-`todo attempt` and `todo bind`. The runtime delivers its result to its parent;
-the work record carries the checked record and stamp, not the conversation.
 
 ### Dispatch evidence
 
@@ -239,7 +237,9 @@ its refusal then names that declaration too; it does not admit `tick`. `run`
 serves those two modules, history and conversations: it refuses only when
 todos, events and history are off and there is no conversation demand, and
 then names the three switches and the connector declaration. `install` and `ticks status` always
-work; `eval report` needs no switch and reports only the record it can access.
+work; `eval report` needs no switch and reports only the records it can access:
+this computer's and those of the computers that answer it
+(`project/instrukt/spec/feature/work/eval-report`).
 
 ## Use cases
 
@@ -276,6 +276,17 @@ When their project has a todo ready for pickup
 Then the todo is picked up
 And the developer sees in status that the project's event responses are not admitted, with the setting they need
 ```
+
+
+### UC-RD4: A developer sees runner admission and skipped-wake updates while local work writes are in progress
+
+```gherkin
+Given a developer has a running runner on their computer while a local work write is in progress
+When the runner evaluates configuration on a wake, skips a wake while dispatch is busy, and completes the next unblocked wake
+Then the runner's configuration admission outcome and skipped-wake status update without waiting for the local work write to finish
+And the developer inspecting runner status sees the updated admission outcome, the skipped wake while it stands, and no skipped wake after the unblocked wake, with inspection making no local changes
+```
+
 
 ## Known caveats
 

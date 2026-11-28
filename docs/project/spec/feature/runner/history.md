@@ -135,11 +135,13 @@ counts enabled history independently as demand for cluster Redis for merged
 search, without local event consumers, minute wake-up or receiver demand.
 History never requires `modules.events`.
 
-Merged search reuses the existing configured cluster transport and explicitly
-named instrukt computer identities. A remote answer requires a running,
-history-enabled participant. The computer hosting a history store remains distinct
-from original source-computer provenance. Redis transports bounded queries and
-answers and holds no central durable archive.
+Merged search is the history kind of the runner's fleet query
+(`project/instrukt/spec/domain/runner`): it reuses the existing configured
+cluster transport and explicitly named instrukt computer identities, and
+never consults the fleet membership record. A remote answer requires a
+running, history-enabled participant. The computer hosting a history store
+remains distinct from original source-computer provenance. Redis transports
+bounded queries and answers and holds no central durable archive.
 
 Failed catch-up and unavailable participants remain explicit in the result.
 Successful retained matches still return, with unsuccessful completion status

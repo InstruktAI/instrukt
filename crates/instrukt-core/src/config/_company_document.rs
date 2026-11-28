@@ -61,6 +61,7 @@ pub(crate) fn resolve_in(dir: &Path) -> Result<CompanyDocument, ConfigError> {
     let company_present = present(&company)?;
     let legacy_is_company = match is_company_document(&legacy) {
         Ok(declares) => declares,
+        Err(error @ ConfigError::LinkedCompanyDocument { .. }) => return Err(error),
         Err(_) if company_present => false,
         Err(error) => return Err(error),
     };
@@ -82,6 +83,9 @@ pub(crate) fn declares_company(value: &Value) -> bool {
 
 fn present(path: &Path) -> Result<bool, ConfigError> {
     match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(ConfigError::LinkedCompanyDocument {
+            path: path.to_path_buf(),
+        }),
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(ConfigError::Read {
@@ -92,7 +96,16 @@ fn present(path: &Path) -> Result<bool, ConfigError> {
 }
 
 fn is_company_document(path: &Path) -> Result<bool, ConfigError> {
+    if !present(path)? {
+        return Ok(false);
+    }
     Ok(super::_layer::read(path)?.is_some_and(|document| declares_company(&document.value)))
+}
+
+/// Public entry point for runner/backup to bring a company home's legacy
+/// settings document forward to `company.yaml` before snapshotting.
+pub fn convert_company_document(home: &Home, name: &ProjectSlug) -> Result<(), ConfigError> {
+    convert(home, name)
 }
 
 /// Converts the legacy settings document of company `name`'s home to
@@ -101,20 +114,28 @@ fn is_company_document(path: &Path) -> Result<bool, ConfigError> {
 /// write lock, every byte kept. Nothing happens without a legacy document;
 /// both present is refused and neither file changes.
 pub(crate) fn convert(home: &Home, name: &ProjectSlug) -> Result<(), ConfigError> {
-    let dir = home.company_dir(name);
+    let rel = PathBuf::from("companies").join(name.as_str());
+    let dir = crate::fsx::confined(home.root(), &rel)?;
+    // Confinement resolves home.root(), while diagnostics name the home's own spelling.
+    let reported = home.company_dir(name);
+    let both = || ConfigError::BothCompanyDocuments {
+        company: reported.join(COMPANY_DOCUMENT),
+        legacy: reported.join(CONFIG_FILE_NAME),
+    };
     match resolve_in(&dir)? {
         CompanyDocument::Legacy(_) => {}
-        CompanyDocument::Both { company, legacy } => {
-            return Err(ConfigError::BothCompanyDocuments { company, legacy });
-        }
+        CompanyDocument::Both { .. } => return Err(both()),
         CompanyDocument::Present(_) | CompanyDocument::Absent => return Ok(()),
     }
     ignore_local_material(&dir)?;
     let company = dir.join(COMPANY_DOCUMENT);
     let _lock = LockGuard::acquire(&lock_path(home, &company), WRITE_LOCK_TIMEOUT)?;
-    // Another writer may have converted it while this one waited.
-    let CompanyDocument::Legacy(legacy) = resolve_in(&dir)? else {
-        return Ok(());
+    // Another writer may have converted it while this one waited; if both
+    // documents appeared in the meantime, refuse rather than swallowing.
+    let legacy = match resolve_in(&dir)? {
+        CompanyDocument::Legacy(legacy) => legacy,
+        CompanyDocument::Both { .. } => return Err(both()),
+        CompanyDocument::Present(_) | CompanyDocument::Absent => return Ok(()),
     };
     crate::fsx::rename(&legacy, &company).map_err(|source| {
         ConfigError::Fs(FsError::Write {
@@ -380,6 +401,38 @@ mod tests {
     }
 
     #[test]
+    fn converting_with_both_present_under_a_symlinked_home_root_names_the_homes_documents() {
+        let scratch = tempfile::tempdir().unwrap();
+        let real_user_home = scratch.path().join("real");
+        let linked_user_home = scratch.path().join("linked");
+        std::fs::create_dir_all(&real_user_home).unwrap();
+        std::os::unix::fs::symlink(&real_user_home, &linked_user_home).unwrap();
+
+        let home = Home::at_user_home(linked_user_home).for_writing();
+        let dir = home.company_dir(&acme());
+        let company_path = dir.join(COMPANY_DOCUMENT);
+        let legacy_path = dir.join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&company_path, COMPANY_YAML).unwrap();
+        std::fs::write(&legacy_path, LEGACY).unwrap();
+        let company_before = std::fs::read(&company_path).unwrap();
+        let legacy_before = std::fs::read(&legacy_path).unwrap();
+
+        let error = convert(&home, &acme()).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                ConfigError::BothCompanyDocuments { company, legacy }
+                    if company == &company_path && legacy == &legacy_path
+            ),
+            "{error}"
+        );
+        assert_eq!(std::fs::read(&company_path).unwrap(), company_before);
+        assert_eq!(std::fs::read(&legacy_path).unwrap(), legacy_before);
+        assert!(!dir.join(".gitignore").exists());
+    }
+
+    #[test]
     fn converting_a_legacy_document_keeps_every_byte_and_ignores_it_first() {
         let legacy = format!("# my settings\n{LEGACY}");
         let (_root, home, dir) = home_with(&[
@@ -481,5 +534,42 @@ mod tests {
             std::fs::read_to_string(dir.path().join(COMPANY_DOCUMENT)).unwrap(),
             held
         );
+    }
+
+    #[test]
+    fn symlinked_company_yaml_and_legacy_instrukt_yaml_are_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("outside.yaml");
+        std::fs::write(&target, LEGACY).unwrap();
+
+        // Symlinked company.yaml is refused.
+        let (_root, home, dir) = home_with(&[]);
+        std::os::unix::fs::symlink(&target, dir.join(COMPANY_DOCUMENT)).unwrap();
+        assert!(matches!(
+            resolve(&home, &acme()),
+            Err(ConfigError::LinkedCompanyDocument { .. })
+        ));
+
+        // Symlinked legacy instrukt.yaml beside regular company.yaml is NOT swallowed.
+        let (_root2, home2, dir2) = home_with(&[(COMPANY_DOCUMENT, COMPANY_YAML)]);
+        std::os::unix::fs::symlink(&target, dir2.join(CONFIG_FILE_NAME)).unwrap();
+        assert!(matches!(
+            resolve(&home2, &acme()),
+            Err(ConfigError::LinkedCompanyDocument { .. })
+        ));
+
+        // Escaping symlinked company folder is refused by convert().
+        let root3 = tempfile::tempdir().unwrap();
+        let home3 = Home::at_user_home(root3.path().to_path_buf()).for_writing();
+        std::fs::create_dir_all(home3.companies_dir()).unwrap();
+        let escaped_dir = outside.path().join("escaped-acme");
+        std::fs::create_dir_all(&escaped_dir).unwrap();
+        std::fs::write(escaped_dir.join(CONFIG_FILE_NAME), LEGACY).unwrap();
+        std::os::unix::fs::symlink(&escaped_dir, home3.company_dir(&acme())).unwrap();
+        assert!(matches!(
+            convert(&home3, &acme()),
+            Err(ConfigError::Fs(crate::fsx::FsError::Unconfined { .. }))
+        ));
+        assert!(!escaped_dir.join(COMPANY_DOCUMENT).exists());
     }
 }

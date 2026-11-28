@@ -31,7 +31,9 @@ use super::_render::{PlannedFile, RenderFinding, RenderFindingKind, company_home
 use super::_source::{Committed, EntryIndex};
 use super::_units::{LEGEND, Unit, frame};
 use super::PublicationError;
-use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
+use crate::config::{
+    CONFIG_FILE_NAME, CompanyIdentity, CompanyName, IdentityFinding, RootDocument, classify_root,
+};
 use crate::docs::{
     self, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_paths,
 };
@@ -54,65 +56,6 @@ const SKILL_FILE: &str = "SKILL.md";
 /// The folder of the skill that holds each document carried as a file of
 /// its own, at its path relative to `docs/`.
 const REFERENCES: &str = "references";
-
-/// The name people write a company by: one line of text that is not blank.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompanyName(String);
-
-impl CompanyName {
-    /// `text` as a company's name, or why it is none.
-    pub fn parse(text: &str) -> Result<Self, CompanyNameError> {
-        if text.contains(['\n', '\r']) {
-            Err(CompanyNameError::MoreThanOneLine)
-        } else if text.trim().is_empty() {
-            Err(CompanyNameError::Blank)
-        } else {
-            Ok(Self(text.to_owned()))
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for CompanyName {
-    type Err = CompanyNameError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::parse(text)
-    }
-}
-
-impl std::fmt::Display for CompanyName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl serde::Serialize for CompanyName {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for CompanyName {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
-    }
-}
-
-/// Why a text is no company's name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum CompanyNameError {
-    #[error("a company's name is the one line people write the company by; this one is blank")]
-    Blank,
-    #[error(
-        "a company's name is the one line people write the company by; this one holds a line break"
-    )]
-    MoreThanOneLine,
-}
 
 /// A company document's visibility: the closed set of two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +85,9 @@ impl Visibility {
 pub enum PluginFinding {
     /// A finding of the reading the company's `AGENTS.md` is rendered from.
     Reading(RenderFinding),
+    /// The company's repository declares no company identity: configuration's
+    /// finding, which a rendering, a check and a validation refuse with.
+    Identity(IdentityFinding),
     /// The root `instrukt.yaml` cannot be read, so whether the repository is
     /// a company's is unknown.
     UnreadableRoot { reason: String },
@@ -174,6 +120,7 @@ impl std::fmt::Display for PluginFinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Reading(finding) => write!(f, "{finding}"),
+            Self::Identity(finding) => write!(f, "{CONFIG_FILE_NAME}: {finding}"),
             Self::UnreadableRoot { reason } => write!(
                 f,
                 "{CONFIG_FILE_NAME}: cannot be read ({reason}); correct it, and the company's plugin is rendered once it can be"
@@ -262,31 +209,33 @@ fn skill_description(name: &CompanyName) -> String {
     )
 }
 
-/// Renders the plugin of `key`, named `name`, from `tree`.
-pub(super) fn render(
-    tree: &Committed,
-    key: &ProjectSlug,
-    name: &CompanyName,
-) -> Result<Rendered, PublicationError> {
-    let root = classify_root(tree.file(CONFIG_FILE_NAME));
+/// The company identity the root project layer of `tree` declares, once
+/// `tree` is a company's repository holding a company index; otherwise the
+/// finding that leaves the plugin unrendered. The identity is read from
+/// configuration's operation alone, never from a caller.
+pub(super) fn identity(tree: &Committed) -> Result<CompanyIdentity, PluginFinding> {
+    let document = tree.file(CONFIG_FILE_NAME);
+    let root = classify_root(document);
     let index_absent = tree.entry_index(_company::COMPANY_INDEX) == EntryIndex::Absent;
     match &root {
         RootDocument::Unreadable(reason) => {
-            return Ok(Rendered::Findings(vec![PluginFinding::UnreadableRoot {
+            return Err(PluginFinding::UnreadableRoot {
                 reason: reason.clone(),
-            }]));
+            });
         }
         RootDocument::ProjectLayer {
             company_repository: false,
             ..
-        } => {
-            return Ok(Rendered::Findings(vec![PluginFinding::ProjectRepository]));
-        }
-        root if !company_home(root, index_absent) => {
-            return Ok(Rendered::Findings(vec![PluginFinding::NoIndex]));
-        }
+        } => return Err(PluginFinding::ProjectRepository),
+        root if !company_home(root, index_absent) => return Err(PluginFinding::NoIndex),
         _ => {}
     }
+    crate::config::company_identity(document).map_err(PluginFinding::Identity)
+}
+
+/// Renders the plugin of the company `identity` names from `tree`.
+fn render(tree: &Committed, identity: &CompanyIdentity) -> Result<Rendered, PublicationError> {
+    let CompanyIdentity { key, name } = identity;
     let folder = folder(key);
     let Some(reading) = _company::read(tree, Path::new(&folder)) else {
         return Ok(Rendered::Findings(vec![PluginFinding::NoIndex]));
@@ -372,7 +321,7 @@ fn main_file(
     }
     for path in &selection.held {
         if let (Some(unit), Some(place)) = (units.get(path), carried.file(path)) {
-            let document = docs::company_document(&unit.body);
+            let document = docs::company_body(&unit.body);
             let body = company_paths(&unit.body, &document, CompanyText::Body, |at| {
                 carried.replacement(tree, path, SKILL_FILE, at)
             });
@@ -635,8 +584,9 @@ impl std::fmt::Display for PluginVersion {
 /// and would change. It writes nothing itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginPlan {
-    /// The skill's folder, relative to the repository's root.
-    pub folder: PathBuf,
+    /// The skill's folder, relative to the repository's root; `None` when the
+    /// repository declares no company identity to name it by.
+    pub folder: Option<PathBuf>,
     /// What leaves every file as it is.
     pub findings: Vec<PluginFinding>,
     /// What the rendering changes against what the view holds; `None` when
@@ -685,13 +635,13 @@ struct Assessment<'t> {
     folder_linked: bool,
 }
 
-/// Reads what `tree` says of the plugin of `key`, named `name`, and every
-/// finding, comparing nothing.
+/// Reads what `tree` says of the plugin of the company `identity` names, and
+/// every finding, comparing nothing.
 fn assess<'t>(
     tree: &'t Committed,
-    key: &ProjectSlug,
-    name: &CompanyName,
+    identity: &CompanyIdentity,
 ) -> Result<Assessment<'t>, PublicationError> {
+    let key = &identity.key;
     let folder = folder(key);
     let mut folder_linked = false;
     let mut findings = Vec::new();
@@ -704,7 +654,7 @@ fn assess<'t>(
             });
         }
     }
-    let rendered = render(tree, key, name)?;
+    let rendered = render(tree, identity)?;
     // Nothing behind a link is read: the catalog, and the version its entry
     // holds, are judged unless a link stands at or above it.
     let catalog = if tree.is_link(CATALOG) {
@@ -747,28 +697,39 @@ fn assess<'t>(
     })
 }
 
-/// Every finding of the plugin of `key`, named `name`, in `tree`, a view
-/// holding the skill's folder and the catalog, without comparing any file.
-pub(super) fn findings(
-    tree: &Committed,
-    key: &ProjectSlug,
-    name: &CompanyName,
-) -> Result<Vec<PluginFinding>, PublicationError> {
-    Ok(assess(tree, key, name)?.findings)
+/// Every finding of the company's plugin in `tree`, a view holding the
+/// skill's folder and the catalog, without comparing any file. A tree that
+/// declares no company identity has that finding alone.
+pub(super) fn findings(tree: &Committed) -> Result<Vec<PluginFinding>, PublicationError> {
+    match identity(tree) {
+        Ok(identity) => Ok(assess(tree, &identity)?.findings),
+        Err(finding) => Ok(vec![finding]),
+    }
 }
 
-/// Plans the rendering of the plugin of `key`, named `name`, from `tree`,
-/// a view holding the skill's folder and the catalog
+/// Plans the rendering of the company's plugin from `tree`, under the
+/// company identity its root project layer declares, a view holding the
+/// skill's folder and the catalog
 /// ([`Committed::working_tree_places`]): every finding, and what the
 /// rendering changes wherever that can be known, findings or not. The
 /// drift comes first, because the catalog entry carries the version it
 /// keeps or raises.
-pub(super) fn plan(
-    tree: &Committed,
-    key: &ProjectSlug,
-    name: &CompanyName,
-) -> Result<PluginPlan, PublicationError> {
-    let assessment = assess(tree, key, name)?;
+pub(super) fn plan(tree: &Committed) -> Result<PluginPlan, PublicationError> {
+    match identity(tree) {
+        Ok(identity) => planned(tree, &identity),
+        Err(finding) => Ok(PluginPlan {
+            folder: None,
+            findings: vec![finding],
+            drift: None,
+            catalog: None,
+        }),
+    }
+}
+
+/// [`plan`], under the company identity already read from `tree`.
+fn planned(tree: &Committed, identity: &CompanyIdentity) -> Result<PluginPlan, PublicationError> {
+    let CompanyIdentity { key, name } = identity;
+    let assessment = assess(tree, identity)?;
     let drift = match (assessment.files, assessment.held, assessment.folder_linked) {
         (Some(files), Held::Absent, false) => Some(drift(tree, key, files, None)),
         (Some(files), Held::Version(version), false) => {
@@ -786,7 +747,7 @@ pub(super) fn plan(
         _ => None,
     };
     Ok(PluginPlan {
-        folder: PathBuf::from(folder(key)),
+        folder: Some(PathBuf::from(folder(key))),
         findings: assessment.findings,
         drift,
         catalog,

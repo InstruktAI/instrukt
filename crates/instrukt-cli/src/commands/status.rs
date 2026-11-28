@@ -3,7 +3,7 @@ use crate::context::Ctx;
 use std::process::ExitCode;
 #[derive(Debug, clap::Args)]
 pub struct StatusArgs {
-    /// Print the same seven sections as a JSON object.
+    /// Print the same eight sections as a JSON object.
     #[arg(long)]
     pub json: bool,
 }
@@ -40,6 +40,8 @@ pub fn run(
             caller_error,
             env: &env,
             instructions,
+            backup: &instrukt_runner::backup::Standing,
+            now: ctx.clock.now(),
         });
     if args.json {
         ctx.out.json(&report)?;

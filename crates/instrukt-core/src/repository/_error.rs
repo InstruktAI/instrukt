@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::config::ConfigError;
 use crate::fsx::FsError;
 use crate::git::GitError;
-use crate::ids::IdError;
+use crate::ids::{CommitSha, IdError};
 use crate::interfaces::InterfaceError;
 use crate::publication::PublicationError;
 
@@ -63,6 +63,34 @@ pub enum RepositoryError {
     AgentAuthorMissing { agent: String },
     #[error("`agents.{agent}.git_author` is `{value}`, which is not of the form `Name <email>`")]
     AgentAuthorMalformed { agent: String, value: String },
+    #[error(
+        "nothing was committed: in an adopted project a commit carries its author's review-routing choice; pass `--review` when it goes to the independent review of a head that contains it, or `--exempt <basis>` when it owes none, stating why (`general/policy/commits`)"
+    )]
+    RoutingMissing,
+    #[error(
+        "nothing was committed: `--review` and `--exempt <basis>` are the two sides of one review-routing choice; pass exactly one (`general/policy/commits`)"
+    )]
+    RoutingBoth,
+    #[error(
+        "nothing was committed: `--exempt <basis>` needs a basis stating why the commit owes no independent review; state it, or pass `--review` instead (`general/policy/commits`)"
+    )]
+    RoutingBasisEmpty,
+    #[error(
+        "nothing was committed: review evidence belongs to an adopted project, and this repository is not one, so `--exempt <basis>` has nothing to record; commit with `--review` or without a routing choice (`general/policy/commits`)"
+    )]
+    ExemptOutsideProject,
+    #[error(
+        "nothing was committed: this invocation cannot record an exemption, because work's admission of review evidence is not available; commit with `--review`, or commit and then record the decision with `instrukt review exempt` instead of `--exempt <basis>` (`general/policy/commits`)"
+    )]
+    ExemptionUnavailable,
+    #[error(
+        "committed {commit}, but its exemption was not recorded ({cause}); the commit stands without a routing record — record the decision with `instrukt review exempt --commit {commit} --basis {basis:?}`"
+    )]
+    ExemptionNotRecorded {
+        commit: CommitSha,
+        basis: String,
+        cause: InterfaceError,
+    },
     #[error("`{revision}` names no commit: {source}")]
     UnknownCommit {
         revision: String,

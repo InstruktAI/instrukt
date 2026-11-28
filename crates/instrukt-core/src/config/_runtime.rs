@@ -159,7 +159,7 @@ impl std::fmt::Display for WorkflowCapability {
 /// Agent actions as `(name, contract)`: the contract is the one line the
 /// configuration schema prints for the action; its execution wording lives
 /// only in configuration data.
-pub(crate) const ACTIONS: [(&str, &str); 15] = [
+pub(crate) const ACTIONS: [(&str, &str); 14] = [
     (
         "dispatch",
         "Delegate this agent's worker with shared isolation in the parent's recorded workspace.",
@@ -191,10 +191,6 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     (
         "steer",
         "Deliver current direction at the target's supported safe input boundary.",
-    ),
-    (
-        "discuss",
-        "Open, take part in and close a runner-owned conversation link between two peer threads.",
     ),
     (
         "start_thread",

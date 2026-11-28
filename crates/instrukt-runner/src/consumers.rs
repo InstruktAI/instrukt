@@ -360,25 +360,31 @@ pub(crate) fn status(
             .map_err(crate::state::sql(path))
         })?
         .unwrap_or(0);
-    let transitions = state.read(|conn, path| {
-        let mut statement = conn.prepare(
-            "SELECT worker, failure, since FROM runner_workers WHERE worker LIKE ?1 ORDER BY worker",
-        ).map_err(crate::state::sql(path))?;
-        let rows = statement.query_map([format!("{TRANSITION_PREFIX}%")], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        }).map_err(crate::state::sql(path))?;
-        let now = Timestamp::now();
-        rows.map(|row| {
-            let (worker, cause, since) = row.map_err(crate::state::sql(path))?;
-            let started: Timestamp = since.parse().map_err(|error| crate::state::invalid(path, error))?;
-            Ok(serde_json::json!({
-                "transition": worker.strip_prefix(TRANSITION_PREFIX).unwrap_or(&worker),
-                "cause": cause,
-                "since": since,
-                "age_seconds": now.duration_since(started).as_secs().max(0),
-            }))
-        }).collect::<Result<Vec<_>, crate::state::StateError>>()
-    })?.unwrap_or_default();
+    let now = Timestamp::now();
+    let mut transitions: Vec<_> = crate::state::read_worker_failures(home)?
+        .into_iter()
+        .filter(|entry| entry.worker.starts_with(TRANSITION_PREFIX))
+        .collect();
+    transitions.sort_by(|a, b| a.worker.cmp(&b.worker));
+    let transitions = transitions
+        .into_iter()
+        .map(|entry| {
+            let transition = entry
+                .worker
+                .strip_prefix(TRANSITION_PREFIX)
+                .unwrap_or(&entry.worker)
+                .to_owned();
+            let age_seconds = entry
+                .since
+                .map_or(0, |started| now.duration_since(started).as_secs().max(0));
+            serde_json::json!({
+                "transition": transition,
+                "cause": entry.failure,
+                "since": entry.since.map(|at| at.to_string()),
+                "age_seconds": age_seconds,
+            })
+        })
+        .collect::<Vec<_>>();
     let abandoned = _sources::abandoned(state)?
         .into_iter()
         .map(|(consumer, source)| {
@@ -406,9 +412,14 @@ pub(crate) fn prepare_installation(
 ) -> anyhow::Result<()> {
     let state = RunnerState::new(home);
     let config = instrukt_core::config::Configuration::load_global(home)?;
-    let transport = ScopedTransport::from_config(&config, env, &state)?;
+    let transport = ScopedTransport::from_config_with(
+        &config,
+        env,
+        &state,
+        crate::transport::Reachability::Unrecorded,
+    )?;
     let computer = instrukt_core::machine::machine_id(home)?;
-    let (wakeup, _) = std::sync::mpsc::sync_channel(1);
+    let (wakeup, _) = tokio::sync::mpsc::channel(1);
     let runtime = ConsumerRuntime::new(
         state.clone(),
         transport,

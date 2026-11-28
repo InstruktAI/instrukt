@@ -84,8 +84,14 @@ acquisition_events! {
     WorkflowFinalized, "workflow.finalized", "A finalize-ready todo was handed off to integration.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, revision: CommitSha
     };
+    CandidateHeld, "runner.candidate_held", "The active integration candidate adds commits no review or exemption covers, and every session they name is answered: whose decisions it waits for.", Occurrence, RepositoryRef {
+        project: ProjectSlug, candidate: CommitSha, commits: Vec<HeldCommitFact>
+    };
     ReviewNeeded, "runner.review_needed", "A commit is owed an independent review: the current head of an eligible pull request, or an integration candidate.", State, Any {
         project: ProjectSlug, pull_request: Option<u64>, head_branch: Option<String>, base_branch: Option<String>, head: CommitSha, base: CommitSha, request: u64
+    };
+    ProposalApproved, "runner.proposal_approved", "An approved, admitted knowledge proposal of a company home is ready for its standing integrator: an open pull request's current head with a current approving verdict covering the canonical branch.", State, PullRequest {
+        project: ProjectSlug, pull_request: u64, head_branch: String, base_branch: String, head: CommitSha, base: CommitSha
     };
     AttentionExecutionStalled, "runner.attention.execution_stalled", "The session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or no session could be started from the model order available.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, session: Option<SessionRef>, workflow_state: String, cause: StalledCause, model_order: Vec<String>
@@ -119,6 +125,8 @@ impl Event {
             | Self::DependencyFailing { project, .. }
             | Self::WorkflowFinalized { project, .. }
             | Self::ReviewNeeded { project, .. }
+            | Self::CandidateHeld { project, .. }
+            | Self::ProposalApproved { project, .. }
             | Self::AttentionExecutionStalled { project, .. }
             | Self::AttentionInputWaiting { project, .. }
             | Self::AttentionHoldPlaced { project, .. }
@@ -144,6 +152,8 @@ impl Event {
                 candidate, result, ..
             } => key.extend([candidate.as_str(), result.as_str()]),
             Self::MainFailing { head, .. } => key.push(head.as_str()),
+            // A candidate is reported held once.
+            Self::CandidateHeld { candidate, .. } => key.push(candidate.as_str()),
             Self::DependencyFailing {
                 branch,
                 head,
@@ -166,6 +176,7 @@ impl Event {
             Self::ReviewNeeded { head, request, .. } => {
                 return review_request_id(self.project(), head, *request);
             }
+            Self::ProposalApproved { head, .. } => key.push(head.as_str()),
             Self::AttentionExecutionStalled {
                 todo,
                 session,
@@ -249,6 +260,31 @@ pub fn review_request_id(project: &ProjectSlug, head: &CommitSha, request: u64) 
         head.as_str(),
         &request.to_string(),
     ])
+}
+
+/// One uncovered commit of a held candidate, as `runner.candidate_held`
+/// carries it: each session it names and what follows for it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HeldCommitFact {
+    pub commit: CommitSha,
+    pub sessions: Vec<HeldSessionFact>,
+}
+
+/// A session an uncovered commit names, and whether it was asked.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HeldSessionFact {
+    pub session: String,
+    pub decision: HeldDecision,
+}
+
+/// What follows for a session an uncovered commit names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldDecision {
+    /// The session is asked to decide.
+    Asked,
+    /// No author of ours can decide through it.
+    NotHeld,
 }
 
 /// A completed CI result for one candidate commit. How GitHub's combined

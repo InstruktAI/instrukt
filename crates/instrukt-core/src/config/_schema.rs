@@ -15,7 +15,7 @@ pub(super) use _json::{non_blank_pattern, secret_reference};
 
 /// The schema version of the global layer (`~/.instrukt/instrukt.yaml`)
 /// this instrukt writes. The first is 1.
-pub const GLOBAL_SCHEMA_VERSION: u64 = 7;
+pub const GLOBAL_SCHEMA_VERSION: u64 = 8;
 
 /// The schema version of a project layer (`instrukt.yaml` at a repository
 /// root) this instrukt writes. The first is 1.
@@ -173,6 +173,8 @@ enum Shape {
     OwningOrganisation,
     /// `company_repository`: a [`Shape::Bool`] with that key's contract.
     CompanyRepository,
+    /// `company_name`: the one line people write the company by.
+    CompanyDisplayName,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
     Board,
     Apps,
@@ -191,6 +193,8 @@ enum Shape {
     Regenerable,
     /// `off` or a retention window (`runner.archive_finished_after`).
     RetentionWindow,
+    /// Machine-wide encrypted home backup (`backup`).
+    Backup,
 }
 
 enum Node {
@@ -292,10 +296,15 @@ fn schema() -> Node {
             Leaf(ProjectOnly, Shape::CompanyRepository),
         ),
         (
+            super::_identity::COMPANY_NAME_KEY,
+            Leaf(ProjectOnly, Shape::CompanyDisplayName),
+        ),
+        (
             super::_regenerable::REGENERABLE_KEY,
             Leaf(ProjectOnly, Shape::Regenerable),
         ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
+        (super::_backup::BACKUP_KEY, Leaf(GlobalOnly, Shape::Backup)),
         (
             "blueprint",
             map(vec![("engine", Leaf(ShippedAdapterInProject, Shape::Str))]),
@@ -483,10 +492,13 @@ fn check_shape(
     match shape {
         Shape::Runtimes => match value.as_mapping() {
             Some(entries) => {
-                let fields: Vec<_> = super::_runtime::ACTIONS
+                let mut fields: Vec<_> = super::_runtime::ACTIONS
                     .iter()
                     .map(|(name, _)| (*name, Field::NonEmptyStr))
                     .collect();
+                // Retain compatibility for existing machine overrides that still
+                // carry the retired `discuss` runtime action key.
+                fields.push(("discuss", Field::NonEmptyStr));
                 for (name, entry) in entries {
                     check_record(entry, &join(path, &key_text(name)), &[], &fields, out);
                 }
@@ -568,6 +580,14 @@ fn check_shape(
                 }
             }
             None => out.push(invalid("expected a project slug string")),
+        },
+        Shape::CompanyDisplayName => match value.as_str() {
+            Some(text) => {
+                if let Err(error) = super::_identity::CompanyName::parse(text) {
+                    out.push(invalid(&error.to_string()));
+                }
+            }
+            None => out.push(invalid("expected the company's name as one line of text")),
         },
         Shape::Domain => check_field(Field::Domain, value, path, out),
         Shape::Bool | Shape::CompanyRepository => check_field(Field::Bool, value, path, out),
@@ -654,6 +674,7 @@ fn check_shape(
 
         Shape::Regenerable => super::_regenerable::check(value, path, out),
         Shape::RetentionWindow => super::_thread_retention::check(value, path, out),
+        Shape::Backup => super::_backup::check(value, path, out),
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {

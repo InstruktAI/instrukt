@@ -4,11 +4,51 @@ use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use instrukt_core::config::RedisEndpoint;
-use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
+use instrukt_core::home::Home;
 use redis::{ConnectionAddr, FromRedisValue, IntoConnectionInfo};
 
-use super::TransportError;
-use crate::state::{self, RunnerState, StateError};
+use super::{Reachability, RedisFailure, TransportError};
+use crate::state::RunnerState;
+
+pub(super) fn endpoint_identity_from_url(
+    url: &str,
+    scope: &'static str,
+) -> Result<String, TransportError> {
+    let invalid = || TransportError::Url { scope };
+    let info = url.into_connection_info().map_err(|_| invalid())?;
+    let redis = info.redis_settings();
+    if redis.username().is_some() || redis.password().is_some() {
+        return Err(invalid());
+    }
+    let address = match info.addr() {
+        ConnectionAddr::Unix(path) => {
+            let absolute = if path.is_absolute() {
+                path.clone()
+            } else {
+                return Err(invalid());
+            };
+            let resolved = absolute
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .zip(absolute.file_name())
+                .map_or_else(|| absolute.clone(), |(parent, name)| parent.join(name));
+            format!("unix:{}", resolved.display())
+        }
+        ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
+            let host = if host.eq_ignore_ascii_case("localhost") {
+                "127.0.0.1".into()
+            } else {
+                host.to_ascii_lowercase()
+            };
+            format!("tcp:{host}:{port}")
+        }
+        _ => return Err(invalid()),
+    };
+    Ok(crate::events::occurrence_id(&[
+        &address,
+        &redis.db().to_string(),
+    ]))
+}
 
 pub(crate) struct Endpoint {
     pub identity: String,
@@ -17,8 +57,10 @@ pub(crate) struct Endpoint {
     capacity: u64,
     pool: Mutex<Pool>,
     available: Condvar,
-    state: RunnerState,
+    home: Home,
     reachability: Mutex<()>,
+    /// Whether this endpoint keeps its source's reachability record.
+    records: Reachability,
 }
 
 #[derive(Default)]
@@ -42,46 +84,19 @@ impl Endpoint {
         state: &RunnerState,
     ) -> Result<Self, TransportError> {
         let invalid = || TransportError::Url { scope };
+        let identity = endpoint_identity_from_url(&settings.url, scope)?;
         let mut info = settings
             .url
             .as_str()
             .into_connection_info()
             .map_err(|_| invalid())?;
         let mut redis = info.redis_settings().clone();
-        if redis.username().is_some() || redis.password().is_some() {
-            return Err(invalid());
-        }
         if let Some(username) = &settings.username {
             redis = redis.set_username(username);
         }
         if let Some(password) = &settings.password {
             redis = redis.set_password(password);
         }
-        let address = match info.addr() {
-            ConnectionAddr::Unix(path) => {
-                let absolute = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    return Err(invalid());
-                };
-                let resolved = absolute
-                    .parent()
-                    .and_then(|parent| parent.canonicalize().ok())
-                    .zip(absolute.file_name())
-                    .map_or_else(|| absolute.clone(), |(parent, name)| parent.join(name));
-                format!("unix:{}", resolved.display())
-            }
-            ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
-                let host = if host.eq_ignore_ascii_case("localhost") {
-                    "127.0.0.1".into()
-                } else {
-                    host.to_ascii_lowercase()
-                };
-                format!("tcp:{host}:{port}")
-            }
-            _ => return Err(invalid()),
-        };
-        let identity = crate::events::occurrence_id(&[&address, &redis.db().to_string()]);
         info = info.set_redis_settings(redis);
         let client = redis::Client::open(info).map_err(|_| invalid())?;
         Ok(Self {
@@ -91,9 +106,17 @@ impl Endpoint {
             capacity: settings.max_connections,
             pool: Mutex::new(Pool::default()),
             available: Condvar::new(),
-            state: state.clone(),
+            home: state.home().clone(),
             reachability: Mutex::new(()),
+            records: Reachability::Recorded,
         })
+    }
+
+    /// This endpoint keeping, or not keeping, its source's reachability record
+    /// in [`Home::redis_reachability_db_file`].
+    pub fn with_reachability(mut self, records: Reachability) -> Self {
+        self.records = records;
+        self
     }
 
     pub fn command<T: FromRedisValue>(
@@ -150,7 +173,7 @@ impl Endpoint {
             }
             self.available.notify_one();
         }
-        // Database work begins only after the network operation and pool release.
+        // Reachability recording begins only after the network operation and pool release.
         if result.is_ok()
             || result
                 .as_ref()
@@ -179,9 +202,42 @@ impl Endpoint {
         result.map_err(|error| self.redis_error(error))
     }
 
+    /// One operation that may block for up to `wait`, on a short-lived
+    /// connection of its own whose read timeout is `wait` plus this
+    /// endpoint's socket timeout, so the wait ends before the connection
+    /// times out. Reachability is recorded as for [`Self::run`]; pooled
+    /// connections and their timeouts are untouched.
+    pub fn run_waiting<T>(
+        &self,
+        wait: Duration,
+        operation: impl FnOnce(&mut redis::Connection) -> redis::RedisResult<T>,
+    ) -> Result<T, TransportError> {
+        let result = (|| {
+            let mut conn = self.client.get_connection_with_timeout(self.timeout)?;
+            conn.set_read_timeout(Some(wait.saturating_add(self.timeout)))?;
+            conn.set_write_timeout(Some(self.timeout))?;
+            operation(&mut conn)
+        })();
+        if result.is_ok()
+            || result
+                .as_ref()
+                .err()
+                .is_some_and(redis::RedisError::is_io_error)
+        {
+            self.record_reachability(result.is_ok());
+        }
+        result.map_err(|error| self.redis_error(error))
+    }
+
     fn redis_error(&self, error: redis::RedisError) -> TransportError {
+        let class = if error.is_io_error() || error.is_connection_refusal() {
+            RedisFailure::Connection
+        } else {
+            RedisFailure::Reply
+        };
         TransportError::Redis {
             source_id: self.identity.clone(),
+            class,
             kind: format!(
                 "{}{}",
                 error.category(),
@@ -200,22 +256,10 @@ impl Endpoint {
     }
 
     fn record_reachability(&self, reachable: bool) {
-        let _guard = self
-            .reachability
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let result: Result<(), StateError> = self.state.write(|tx| {
-            let path = state::db_path(tx);
-            let previous: Option<bool> = tx.query_row("SELECT reachable FROM redis_reachability WHERE source = ?1", [&self.identity], |row| row.get(0)).optional().map_err(state::sql(&path))?;
-            if previous == Some(reachable) { return Ok(()); }
-            tx.execute("INSERT INTO redis_reachability (source, reachable) VALUES (?1, ?2) ON CONFLICT(source) DO UPDATE SET reachable = excluded.reachable", params![self.identity, reachable]).map_err(state::sql(&path))?;
-            if reachable { tracing::info!(event = "redis_reachable", source = %self.identity); }
-            else { tracing::warn!(event = "redis_unreachable", source = %self.identity); }
-            Ok(())
-        });
-        if let Err(error) = result {
-            tracing::warn!(event = "redis_reachability_not_recorded", error = %error);
+        if self.records == Reachability::Unrecorded {
+            return;
         }
+        super::_reachability::record(&self.home, &self.identity, reachable, &self.reachability);
     }
 }
 

@@ -1,11 +1,12 @@
 ---
 source: crates/instrukt-cli/tests/cases/approvals.rs
+assertion_line: 77
 expression: "redact(&format!(\"{}---\\n{carried}---\\n{shown}\",\nString::from_utf8_lossy(&unreviewed.get_output().stderr)))"
 ---
 instrukt: carrying an approval needs a standing `prd_review` verdict `approve` of the current prd (<digest 1>): the latest review judged other evidence
 ---
 stamped nested-lists: prd approved by a human — <digest 1>, carried from <digest 2>
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 ---
 nested-lists · feature · active
 identity: <id 1>
@@ -14,8 +15,7 @@ created: <time> by Test Developer
 revision: 9
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: reflected to GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: not held
 hold: none
 artifacts:

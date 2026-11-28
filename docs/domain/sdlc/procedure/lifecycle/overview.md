@@ -98,11 +98,22 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      blast-radius discovery, substrate readiness check, and
      `implementation-plan`, followed by independent `plan-reviewer`
      (`sdlc/procedure/lifecycle/prepare/review-plan`).
-  2. Where the work makes a structural decision, the plan carries its
-     architecture reasoning and `plan-reviewer` judges it
-     (`sdlc/policy/preparation-artifact-quality`, Structural decisions carry
-     architecture review). `architect` and `architecture-reviewer` are
-     dispatched only for a todo that carries an approved `prd`.
+  2. Where the work makes a structural decision, introduces or modifies an
+     external protocol, API client, auth/OAuth flow, or retry/backoff
+     integration, or spans multiple crates, the plan carries its architecture
+     and outward existing-solutions reasoning (`sdlc/policy/preparation-artifact-quality`,
+     `sdlc/policy/substrate-anchoring`) and `plan-reviewer` judges it even when
+     `architecture` is skipped on `change` todos. `architect` and
+     `architecture-reviewer` are dispatched only for a todo that carries an
+     approved `prd`. When `planner` finds a `change` or `bug` fails the
+     scope/size gate and needs a multi-child split the human has not released,
+     `planner` records its proposal, releases the attempt with
+     `instrukt todo stamp {slug} --role-complete`, and returns without drafting
+     `implementation-plan` or filing children
+     (`sdlc/procedure/lifecycle/prepare/plan-draft`). Then
+     present the proposed partition to the human without dispatching
+     `plan-reviewer`, and keep your claim or place `--hold` until human
+     release.
   3. Proceed to `builder` → independent `build-reviewer` and live verification
      (Step 4b, pushing `origin/<slug>/work` first when CI-hosted) →
      `fix-review-findings` remediation on `changes_requested` or `FAIL`, and
@@ -111,19 +122,17 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      `--finalize-ready` + `--unclaim` → `integrate`.
 
 - **Feature (`kind: feature`):**
-  1. Verify `input` intent (`--intent-checked` when authored by another
-     session).
-  2. Dispatch `intaker` (`sdlc/procedure/lifecycle/prepare/intake`) to author
+  1. Dispatch `intaker` (`sdlc/procedure/lifecycle/prepare/intake`) to author
      `prd` (and pending feature-spec scenarios when applicable), then
      independent `prd-reviewer`
      (`sdlc/procedure/lifecycle/prepare/review-prd`).
-  3. Obtain configured PRD approval (`approvals.prd`). When human approval is
+  2. Obtain configured PRD approval (`approvals.prd`). When human approval is
      required, present the reviewed PRD clearly, unclaim
      (`instrukt todo update <slug> --unclaim`), and stop — the runner wakes you
      automatically when the approval arrives.
-  4. Dispatch optional `architect` + `architecture-reviewer` (or skip when
+  3. Dispatch optional `architect` + `architecture-reviewer` (or skip when
      unneeded), then `planner` + `plan-reviewer`.
-  5. Proceed to `builder` → independent `build-reviewer` and live verification
+  4. Proceed to `builder` → independent `build-reviewer` and live verification
      (Step 4b, pushing `origin/<slug>/work` first when CI-hosted) →
      `fix-review-findings` remediation on `changes_requested` or `FAIL`, and
      Step 4b substrate/prerequisite resolution on `BLOCKED` → `deferrer` →
@@ -180,19 +189,33 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
 
 <!-- @config: runtime.message_child -->
 
+<!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.message_peer -->
+
 <!-- @config: runtime.inspect_thread -->
 
 <!-- @config: runtime.finish_thread -->
 
-1. **Read current facts and claim the todo.** Run `instrukt todo work {slug}`
-   (or `instrukt todo show {slug} --json` to inspect). For deliberate entry
-   outside `<slug>/work`, follow the returned native placement instruction and
-   re-enter with `--placement-evidence`. On resumption after interruption,
-   kickback, or human approval, read the factual ledger first so your next move
-   matches ground truth.
-2. **Check prerequisites, holds, published fill currency, and pre-planning
-   substrate readiness.** If prerequisites are undelivered or a hold is active,
-   preserve state and stop without guessing. Resolve the repository's canonical
+1. **Read current facts and claim the todo.** Run
+   `instrukt todo work {slug}` (or `instrukt todo show {slug} --json` to
+   inspect). For deliberate entry outside `<slug>/work`, follow the returned
+   native placement instruction and re-enter with `--placement-evidence`. On
+   resumption after interruption, kickback, or human approval, read the factual
+   ledger first so your next move matches ground truth.
+2. **Check prerequisites and holds, run the preparation-entry audit, and verify
+   pre-planning substrate readiness.** If prerequisites are undelivered or a
+   hold is active, preserve state and stop without guessing. Once prerequisites
+   are satisfied and no hold is active, before deriving or dispatching work on
+   an `input` version that has not yet cleared preparation entry — including
+   initial entry, an unchanged `input` returning after an earlier unresolved
+   entry stop (such as after an operator confirmation), or a materially revised
+   `input` — apply the preparation-entry audit in
+   `sdlc/policy/todo-creation-discipline` — including, for human-lineage work
+   across every kind (`feature`, `change`, `bug`, `task`), the one read-only
+   comparison against the authorizing human conversation via
+   `runtime.read_thread` and origin return via `runtime.message_peer`. For
+   repository work, then resolve the repository's canonical
    default branch `<default-branch>` and `<canonical-ref>`, and handle all Git
    lookups and ancestry exit codes (`0` = ancestor, `1` = confirmed
    non-ancestor, other non-zero = fatal lookup error), using the exact rules in
@@ -218,14 +241,12 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
      confirms detached post-merge publication lags behind `<canonical-ref>` (do
      not run a separate agent sync; canonical publication belongs to the runner
      and git hooks per `sdlc/procedure/lifecycle/integrate`), re-check briefly;
-     if publication still lags behind `<canonical-ref>`, resolve any
-     early-stopped `planner` attempt FIRST on the clean, unheld todo
-     (`instrukt todo attempt {slug} --role planner --attempt <n> --failed ...`,
-     preserving legitimate committed preparation work), record the publication
-     lag in `log`, and release the claim (`instrukt todo update {slug} --unclaim`,
-     without `--hold`) so a subsequent runner tick retries once publication
-     catches up (placing `--hold` only when canonical publication remains
-     obstructed across retries).
+     if publication still lags behind `<canonical-ref>`, confirm that an
+     early-stopped `planner` has released its clean workspace attempt with
+     `--role-complete`. Record the publication lag in `log` and release the
+     claim (`instrukt todo update {slug} --unclaim`) so a subsequent runner tick
+     retries once publication catches up. Place `--hold` only when canonical
+     publication remains obstructed across retries.
    - **Retained-worktree fast-track synchronization (all execution hosts, `ci`
      and `local`):** Before dispatching fast-track `builder` on a retained
      `<slug>/work`, check `git log -1 --format=%H "<canonical-ref>" -- verification/`
@@ -241,16 +262,13 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
      `sdlc/policy/live-verification`):**
      - **Absent on `<canonical-ref>`:** Do not draft `implementation-plan` or
        admit `builder` against an unbootstrapped repository. If an in-flight
-       `planner` stopped early on this condition, resolve its stopped attempt
-       FIRST on the clean, unheld todo
-       (`instrukt todo attempt {slug} --role planner --attempt <n> --failed ...`,
-       preserving any legitimate committed preparation work). Then reuse an
-       already-linked prerequisite bootstrap todo or establish and unfreeze a
-       new standalone prerequisite bootstrap todo `<bootstrap-slug>` (carrying
-       zero mixed application changes, with pre-entry reviewed pending Layer 1
-       and Layer 2 fills pushed to `origin/<bootstrap-slug>/work` and no local
-       `refs/heads/<bootstrap-slug>/work` left behind) following the tracked
-       pre-entry sequence (`sdlc/procedure/verification-bootstrap`).
+       `planner` stopped early on this condition, confirm it released the
+       clean workspace attempt with `--role-complete`. Then reuse an
+       already-linked prerequisite bootstrap todo or establish a new standalone
+       prerequisite bootstrap todo `<bootstrap-slug>` (carrying zero mixed
+       application changes, its reviewed pending Layer 1 and Layer 2 fills
+       written ahead and merged onto main while it is held) following the
+       tracked written-ahead sequence (`sdlc/procedure/verification-bootstrap`).
        Read `{slug}`'s current prerequisites from `instrukt todo show {slug}`,
        append `<bootstrap-slug>` without dropping existing edges
        (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,
@@ -335,8 +353,7 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
          `instrukt todo attempt {slug} --role verifier --procedure sdlc/procedure/lifecycle/work/verify --args {slug} --brief -`,
          start it with `runtime.dispatch` or continue a retained verifier with
          `runtime.message_child`, and bind it. Give it a session distinct from
-         yours and from every writer of the change; a `pass`, `fail` or
-         `blocked` from any other session is refused. The verifier writes
+         yours and from every writer of the change. The verifier writes
          `verification-plan` and `verification-findings` itself and records
          its disposition with `--verification`, which releases its attempt;
          read the outcome from `instrukt todo show {slug}`. When
@@ -353,14 +370,12 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
          `verification-findings` for
          `sdlc/procedure/lifecycle/fix-review-findings`, then re-run static
          `build-reviewer` and a new `verifier` attempt (Step 4b) on the
-         resulting exact HEAD. While a verifier's `fail` stands for a HEAD, your Tier 0 skip or hotfix
-         deferral for that HEAD is refused; a new candidate commit or a new
-         `verifier` attempt on it clears the `fail`.
+         resulting exact HEAD. Keep a verifier's `fail` in force for its
+         candidate until a new commit or a fresh verifier result supersedes it.
        - On `blocked`, resolve the named blocker below, then dispatch a new
-         `verifier` attempt on the resulting HEAD. After a verifier's `blocked`
-         your Tier 0 skip for that HEAD is refused; under the emergency-hotfix
-         exception a hotfix deferral naming its tracked follow-up is admitted
-         and lets that HEAD through:
+         `verifier` attempt on the resulting HEAD. Use a hotfix deferral with
+         its tracked follow-up only under the emergency-hotfix exception.
+         Resolve the blocker according to the recorded findings:
          - If the candidate SHA was not yet published to `origin/<slug>/work`
            for CI verification, push the clean candidate HEAD to
            `origin/<slug>/work` and dispatch a new `verifier` attempt.
@@ -394,11 +409,10 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
            verification workflow exists yet) blocks an application todo, **always**
            route it as a **standalone prerequisite bootstrap todo** (never
            mixing application changes with first-time CI workflow creation,
-           `sdlc/policy/live-verification`): establish and unfreeze
-           `<bootstrap-slug>` with pre-entry reviewed pending Layer 1 and
-           Layer 2 fills pushed to `origin/<bootstrap-slug>/work` (leaving no
-           local `refs/heads/<bootstrap-slug>/work`) following the tracked
-           pre-entry sequence (`sdlc/procedure/verification-bootstrap`), append
+           `sdlc/policy/live-verification`): establish `<bootstrap-slug>` with
+           its reviewed pending Layer 1 and Layer 2 fills written ahead and
+           merged onto main while it is held, following the tracked
+           written-ahead sequence (`sdlc/procedure/verification-bootstrap`), append
            `<bootstrap-slug>` to `{slug}`'s prerequisites without dropping
            existing edges
            (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,

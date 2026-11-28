@@ -3,7 +3,7 @@
 //! it is written, reloaded or withdrawn by that name, under whichever service
 //! manager present holds it. Nothing records what was written, and anything
 //! under another name is never read or touched
-//! (`project/instrukt/policy/checks-and-guards`).
+//! (`project/instrukt/spec/feature/runner/module-installation`).
 use super::{Disposition, Report, Request, ResourceKind};
 use crate::install::{Scheduler, systemd_assignments};
 use crate::process::Invocation;
@@ -28,7 +28,7 @@ pub(super) struct Definition {
     /// Files written with the definition and kept when it is withdrawn: the
     /// private Redis's configuration and ACL.
     pub kept: BTreeMap<PathBuf, String>,
-    probe: Option<(u16, String)>,
+    pub(super) probe: Option<(u16, String)>,
 }
 impl Definition {
     fn port(&self) -> Option<u16> {
@@ -343,6 +343,7 @@ fn unknown_notice(definition: &Definition) -> anyhow::Result<String> {
 pub(super) fn report_unknown(request: &Request<'_>, report: &mut Report) -> anyhow::Result<()> {
     for kind in [
         ResourceKind::WakeUp,
+        ResourceKind::BackupTimer,
         ResourceKind::Runner,
         ResourceKind::Redis,
         ResourceKind::Receiver,
@@ -390,8 +391,10 @@ fn discover_under(
 ) -> anyhow::Result<Vec<Definition>> {
     let mut found = Vec::new();
     for &scheduler in under {
-        // Cron keeps only the wake-up.
-        if scheduler == Scheduler::Crontab && kind != ResourceKind::WakeUp {
+        // Cron keeps only the wake-up and daily backup timer.
+        if scheduler == Scheduler::Crontab
+            && !matches!(kind, ResourceKind::WakeUp | ResourceKind::BackupTimer)
+        {
             continue;
         }
         let request = Request {
@@ -400,6 +403,7 @@ fn discover_under(
         };
         let candidates = match kind {
             ResourceKind::WakeUp => vec![tick(&request)],
+            ResourceKind::BackupTimer => vec![super::_backup::identity(&request)],
             ResourceKind::Runner => vec![runner(&request)],
             ResourceKind::Redis => vec![native(&request, "redis", &[], None)],
             ResourceKind::Receiver => receiver_ports(&request)?
@@ -538,9 +542,27 @@ pub(super) fn reconcile(
     let paths = desired.files.keys().cloned().collect::<Vec<_>>();
     if desired.scheduler == Scheduler::Crontab && desired.locations.crontab_file.is_some() {
         if !request.check {
-            crate::install::register(request.scheduler, &request.wake)?;
+            if desired.name == ResourceKind::WakeUp {
+                crate::install::register(request.scheduler, &request.wake)?;
+            } else {
+                crate::install::register_crontab_line(
+                    desired.locations.crontab_file.as_deref(),
+                    marker(&desired.unit),
+                    &desired.unit,
+                )?;
+            }
         }
-        report.finding(desired.name, "file_only: cron table is materialized but not registered; configure native scheduling for wake-up");
+        let subject = if desired.name == ResourceKind::BackupTimer {
+            "backup timer"
+        } else {
+            "wake-up"
+        };
+        report.finding(
+            desired.name,
+            format!(
+                "file_only: cron table is materialized but not registered; configure native scheduling for {subject}"
+            ),
+        );
         report.resource(
             desired.name,
             Disposition::Unmet,
@@ -589,9 +611,11 @@ pub(super) fn reconcile(
     desired.write(request.home)?;
     if desired.name == ResourceKind::WakeUp {
         crate::install::register(request.scheduler, &request.wake)?;
+    } else if desired.name == ResourceKind::BackupTimer && desired.scheduler == Scheduler::Crontab {
+        crate::install::register_crontab_line(None, marker(&desired.unit), &desired.unit)?;
     } else {
-        // A changed Redis or runner service restarts, so the written
-        // configuration is the one running.
+        // A changed Redis, runner, or backup timer registration reloads so
+        // the written configuration is the one active.
         if active {
             stop(desired)?;
         }
@@ -878,6 +902,7 @@ pub(super) fn withdraw_legacy(
     };
     for kind in [
         ResourceKind::WakeUp,
+        ResourceKind::BackupTimer,
         ResourceKind::Runner,
         ResourceKind::Redis,
         ResourceKind::Receiver,
@@ -972,10 +997,17 @@ fn named_home(text: &str) -> Option<String> {
 }
 
 /// The marker a crontab definition's line ends with: this home's
-/// `# instrukt-tick` marker.
+/// `# instrukt-tick` or `# instrukt-backup` marker.
 fn marker(unit: &str) -> &str {
-    unit.rfind(crate::install::CRON_MARKER)
-        .map_or(unit, |at| &unit[at..])
+    for prefix in [
+        crate::install::BACKUP_CRON_MARKER,
+        crate::install::CRON_MARKER,
+    ] {
+        if let Some(at) = unit.rfind(prefix) {
+            return &unit[at..];
+        }
+    }
+    unit
 }
 /// The line of `table` marked with `marker`.
 fn marked_line(table: &str, marker: &str) -> Option<String> {
@@ -1126,13 +1158,7 @@ fn stop(d: &Definition) -> anyhow::Result<()> {
         }
         Scheduler::Crontab => {
             let current = crate::install::read_crontab(d.locations.crontab_file.as_deref())?;
-            let marker = marker(&d.unit);
-            let text = current
-                .lines()
-                .filter(|line| !line.trim_end().ends_with(marker))
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
+            let text = crate::install::remove_marked_line(&current, marker(&d.unit));
             crate::install::write_crontab(d.locations.crontab_file.as_deref(), &text)?;
         }
     }
