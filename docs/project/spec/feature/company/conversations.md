@@ -538,11 +538,16 @@ about instrukt's internals:
   conversation, turn, and piece count), never the reply text.
 - **Optional curated progress (`instrukt company status`):** Admitted under the
   same active-binding, scope, and capability checks as `instrukt company reply`
-  while an addressed turn is active (refusing idle or direct-operator turns).
-  Records a curated status line for the conversation's active turn in
-  instrukt-owned durable state, which the connector displays in place of the
-  default calm working line while the turn runs. Raw turn output, tool calls,
-  and internal monologue never enter the status line.
+  while an addressed turn is active — failing closed with a refusal or lookup
+  error when no addressed turn is active (including `input-ready`, `failed`,
+  `gone`, direct-operator turns, or live observation/durable-state lookup
+  errors). Under `session_scope: company`, `--conversation <id>` must match
+  both an admitted conversation of that `(company, connector)` and the
+  currently active addressed turn's conversation. Records a curated status line
+  for the conversation's active turn in instrukt-owned durable state, which the
+  connector displays in place of the default calm working line while the turn
+  runs. Raw turn output, tool calls, and internal monologue never enter the
+  status line.
 - **Durable answer posting:** Answers are retained as ordered pieces until a
   post call confirms acceptance. The provider's returned message id, when
   present, is recorded with its posting time or the time the successful response
