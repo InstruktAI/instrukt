@@ -51,10 +51,12 @@ The request omits `tools`, carries no earlier conversation and no data beyond
 the prompt, and bounds the answer's size.
 
 Before a call sends a request, an empty or whitespace-only prompt, an
-unconfigured or incomplete endpoint entry, or a referenced API key secret that
-cannot be resolved under `project/instrukt/spec/feature/configuration/owned-files`
-is `refused` at entry (`project/instrukt/policy/checks-and-guards`), naming the
-refusal and its door without disclosing secret material. A call is also
+unconfigured, incomplete or invalid endpoint entry (including a malformed
+address, an address embedding credentials, or a non-loopback plaintext `http`
+endpoint carrying an API key), or a referenced API key secret that cannot be
+resolved under `project/instrukt/spec/feature/configuration/owned-files` is
+`refused` at entry (`project/instrukt/policy/checks-and-guards`), naming the
+refusal and its door without disclosing secret or embedded credential material. A call is also
 `refused`, and returns no answer, when the model stopped before finishing its
 answer because the size bound ran out, or when the endpoint rejects the request
 as one it cannot serve, such as one too large for the model. An answer is never
