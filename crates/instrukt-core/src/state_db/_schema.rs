@@ -51,7 +51,44 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V38),
     Sql(V39),
     Step(v40),
+    Step(v41),
 ];
+
+/// Drops the retired `runner_workers` table once the runner has moved any
+/// active rows into its worker failure files.
+pub(super) const DROP_RUNNER_WORKERS: &str = "DROP TABLE IF EXISTS runner_workers;";
+
+/// Drops the retired `redis_reachability` table once the runner has moved any
+/// recorded rows into its reachability store.
+pub(super) const DROP_REDIS_REACHABILITY: &str = "DROP TABLE IF EXISTS redis_reachability;";
+
+/// Version 41: retire `runner_workers` and `redis_reachability` once their
+/// rows have left the state database (`state-database`, Version 41). Each
+/// table is dropped immediately when empty and kept while it holds rows until
+/// the runner moves them into its isolated stores and calls the removal hook.
+fn v41(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for (table, drop_sql) in [
+        ("runner_workers", DROP_RUNNER_WORKERS),
+        ("redis_reachability", DROP_REDIS_REACHABILITY),
+    ] {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )?;
+        if present {
+            let held: bool = tx.query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM {table})"),
+                [],
+                |row| row.get(0),
+            )?;
+            if !held {
+                tx.execute_batch(drop_sql)?;
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Version 40: the shared remote record ends (`state-database`, Version
 /// 40). `listing_copies` and the reflection columns that tracked a record

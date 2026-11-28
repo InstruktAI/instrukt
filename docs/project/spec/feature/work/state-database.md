@@ -51,9 +51,18 @@ meaning and the writes of the conversation tables.
   records).
 
 
-- **No file stores:** the work record and the runner's state have no other
-  home. Directories left by earlier builds (`state/work/`, `state/runner/`)
-  are neither read nor migrated.
+- **Runner background worker failures and Redis reachability stay outside it:**
+  per-worker failure files live under `state/runner-workers/` (beside
+  `state/computer-fleet.json`) and per-Redis reachability lives in
+  `state/redis-reachability.db` under `state/redis-reachability.lock`, each
+  isolated from `state/writer.lock` (`project/instrukt/spec/domain/runner`,
+  Runner background state).
+
+
+
+- **No legacy file stores:** directories left by earlier builds
+  (`state/work/`, `state/runner/`) are neither read nor migrated.
+
 
 ### Writing
 
@@ -261,6 +270,18 @@ the todos a computer's worktrees and work branches name, and their records,
 are read without reading the rest of the record
 (`project/instrukt/spec/feature/runner/worktree-reclamation`). It changes no
 table, column or row.
+
+
+Version 41 retires `runner_workers` and `redis_reachability` once their data
+has left the state database (`project/instrukt/spec/domain/runner`, Runner
+background state). Each table is dropped immediately when it holds no rows;
+while either holds active rows, it stays in place until the runner moves those
+rows into `state/runner-workers/` or `state/redis-reachability.db` and drops
+the table. Active failure text, `since` times and last observed reachability
+are therefore preserved across upgrades, and read-only inspection of an older
+database keeps active worker rows visible without modifying the database on
+disk. Every work, runner and conversation row in the remaining tables is kept.
+
 
 ### Work tables
 
@@ -674,11 +695,12 @@ parking coordinates, outcomes, cursors, failures and confirmation booleans. The
 same normalization applies to in-progress parking records before consumption.
 Old open announcements get no final replay. The former recovery cursor is inert.
 
-**`runner_workers`** — current worker failures, deferred consumer source
-transitions and keyed-start findings. A keyed-start finding keeps its first
-observation on the operator clock and is cleared when reconciliation ends it.
-The process remembers which runtime keys it has notified during its lifetime. Each deferred transition retains its first reported time across
-retries. Completing the transition removes the row.
+
+**Worker failures and Redis reachability** — retired from this database in
+version 41 once moved to `state/runner-workers/` and
+`state/redis-reachability.db` outside `state/writer.lock`
+(`project/instrukt/spec/domain/runner`, Runner background state).
+
 
 Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
@@ -1141,17 +1163,7 @@ Seen identities retire after 30 days. Missed records within that period keep
 the written time and provider link. They carry no message text. The active
 page holds text only until intake and the scan checkpoint commit.
 
-**`runner_workers`** — one row per background worker of the runner: the history
-workers (extraction, query responder) and the readiness refresh (`readiness`,
-which keeps the runtime's provider snapshot current,
-`project/instrukt/spec/feature/runner/session-continuity`). `failure` and `since`,
-its current outside failure — for `readiness`, a refresh that failed or ran past
-its limit — written by that worker alone on a change and cleared by its next
-success; current state only. A row lives while its worker exists on this computer:
-the history rows while history is on, `readiness` while the runner runs with a
-runtime that reports provider facts. The computer fleet's evaluation responder
-keeps its failure outside this database, in its own failure file
-(`project/instrukt/spec/domain/runner`).
+
 
 A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again

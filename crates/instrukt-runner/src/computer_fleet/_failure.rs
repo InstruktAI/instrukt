@@ -1,13 +1,14 @@
 //! Where a responder records its current outside failure. The computer
 //! fleet's evaluation responder and the tick's fleet step keep theirs in
-//! `state/computer-fleet.json` (`project/instrukt/spec/domain/runner`,
-//! "Fleet query and membership"), a file of its own outside the state
-//! database, written whole beside its previous version and renamed over
-//! it, so readers take no lock. History's responder keeps its row in
-//! `runner_workers`.
+//! [`Home::computer_fleet_file`] (`project/instrukt/spec/domain/runner`,
+//! "Fleet query and membership"), and other runner workers keep theirs under
+//! [`Home::runner_workers_dir`] (`project/instrukt/spec/domain/runner`,
+//! "Runner background state") — each written whole beside its previous
+//! version and renamed over it, isolated from the state database and its
+//! writer lock ([`Home::writer_lock_file`]), so readers take no lock.
 
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -29,21 +30,7 @@ pub(crate) trait FailureRecorder: Send + 'static {
     fn record(&mut self, failure: Option<&str>) -> bool;
 }
 
-/// A worker's row in `runner_workers`. The row's own write failure is
-/// logged where it is written, and the responder goes on as if recorded.
-pub(crate) struct WorkerRow {
-    pub home: Home,
-    pub worker: &'static str,
-}
-
-impl FailureRecorder for WorkerRow {
-    fn record(&mut self, failure: Option<&str>) -> bool {
-        crate::state::worker_state(&self.home, self.worker, failure);
-        true
-    }
-}
-
-/// The file's document.
+/// The file's document for [`Home::computer_fleet_file`].
 #[derive(Serialize, Deserialize)]
 struct Recorded {
     failure: String,
@@ -58,11 +45,16 @@ enum Note {
     Failing(String),
 }
 
-/// The computer fleet's failure file. Its note changes only when a write or
+enum Target {
+    ComputerFleet(PathBuf),
+    Worker { home: Home, worker: &'static str },
+}
+
+/// An isolated failure file recorder. Its note changes only when a write or
 /// removal succeeded, so a failed one is tried again with the next outcome
 /// and never taken as recorded health.
 pub(crate) struct FailureFile {
-    path: PathBuf,
+    target: Target,
     clock: Clock,
     note: Note,
 }
@@ -70,27 +62,40 @@ pub(crate) struct FailureFile {
 impl FailureFile {
     pub(crate) fn new(home: &Home, clock: Clock) -> Self {
         Self {
-            path: path(home),
+            target: Target::ComputerFleet(path(home)),
             clock,
             note: Note::Unknown,
         }
     }
 
-    /// When the failure already in the file began; `None` when there is
-    /// none, or it cannot be read.
-    fn since(&self) -> Option<Timestamp> {
-        match std::fs::read(&self.path) {
+    /// A failure file for a runner worker under [`Home::runner_workers_dir`].
+    pub(crate) fn worker(home: &Home, worker: &'static str, clock: Clock) -> Self {
+        Self {
+            target: Target::Worker {
+                home: home.clone(),
+                worker,
+            },
+            clock,
+            note: Note::Unknown,
+        }
+    }
+
+    /// When the failure already in `path` began; `None` when there is none,
+    /// or it cannot be read.
+    fn since(path: &Path) -> Result<Option<Timestamp>, String> {
+        crate::state::refuse_symlink(path).map_err(|error| error.to_string())?;
+        match std::fs::read(path) {
             Ok(bytes) => match serde_json::from_slice::<Recorded>(&bytes) {
-                Ok(recorded) => Some(recorded.since),
+                Ok(recorded) => Ok(Some(recorded.since)),
                 Err(error) => {
-                    tracing::debug!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
-                    None
+                    tracing::warn!(event = "computer_fleet_failure_unread", path = %path.display(), %error);
+                    Ok(None)
                 }
             },
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => {
-                tracing::debug!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
-                None
+                tracing::warn!(event = "computer_fleet_failure_unread", path = %path.display(), %error);
+                Ok(None)
             }
         }
     }
@@ -98,25 +103,43 @@ impl FailureFile {
 
 impl FailureRecorder for FailureFile {
     fn record(&mut self, failure: Option<&str>) -> bool {
-        let written = match failure {
+        match failure {
             None if self.note == Note::Healthy => return true,
             Some(failure) if self.note == Note::Failing(failure.to_owned()) => return true,
-            None => match instrukt_core::fsx::remove_file(&self.path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error.to_string()),
-            },
-            Some(failure) => {
-                let recorded = Recorded {
-                    failure: failure.to_owned(),
-                    since: self.since().unwrap_or_else(|| (self.clock)()),
-                };
-                serde_json::to_vec(&recorded)
+            _ => {}
+        }
+        let now = (self.clock)();
+        let written = match &self.target {
+            Target::ComputerFleet(path) => match failure {
+                None => crate::state::refuse_symlink(path)
                     .map_err(|error| error.to_string())
-                    .and_then(|bytes| {
-                        instrukt_core::fsx::atomic_write(&self.path, &bytes)
-                            .map_err(|error| error.to_string())
-                    })
+                    .and_then(|()| match instrukt_core::fsx::remove_file(path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(error.to_string()),
+                    }),
+                Some(failure) => Self::since(path).and_then(|existing| {
+                    let recorded = Recorded {
+                        failure: failure.to_owned(),
+                        since: existing.unwrap_or(now),
+                    };
+                    serde_json::to_vec(&recorded)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| {
+                            crate::state::write_bytes(path, &bytes)
+                                .map_err(|error| error.to_string())
+                        })
+                }),
+            }
+            .map_err(|error| {
+                tracing::warn!(event = "computer_fleet_failure_unrecorded", path = %path.display(), %error);
+            }),
+            Target::Worker { home, worker } => {
+                crate::state::record_worker_failure_at(home, worker, failure, now).map_err(
+                    |error| {
+                        tracing::error!(event = "runner_worker_state_unrecorded", worker = %worker, error = %error);
+                    },
+                )
             }
         };
         match written {
@@ -125,16 +148,13 @@ impl FailureRecorder for FailureFile {
                     failure.map_or(Note::Healthy, |failure| Note::Failing(failure.to_owned()));
                 true
             }
-            Err(error) => {
-                tracing::warn!(event = "computer_fleet_failure_unrecorded", path = %self.path.display(), %error);
-                false
-            }
+            Err(()) => false,
         }
     }
 }
 
 fn path(home: &Home) -> PathBuf {
-    home.state_dir().join("computer-fleet.json")
+    home.computer_fleet_file()
 }
 
 /// The computer fleet's failure as a row of the runner's workers, for
@@ -155,6 +175,9 @@ pub(crate) fn status(home: &Home) -> Option<serde_json::Value> {
             "since": since,
         })
     };
+    if let Err(error) = crate::state::refuse_symlink(&path) {
+        return Some(unreadable(error.to_string()));
+    }
     match std::fs::read(&path) {
         Ok(bytes) => Some(match serde_json::from_slice::<Recorded>(&bytes) {
             Ok(recorded) => serde_json::json!({
