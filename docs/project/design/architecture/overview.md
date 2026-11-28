@@ -135,6 +135,7 @@ work record's only copy, and GitHub shows it to people without holding it.
 Deleting the home is not a lossless reset.
 
 
+
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
@@ -157,12 +158,16 @@ Deleting the home is not a lossless reset.
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
 | `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
 | `state/computer-fleet.json` | the computer fleet's current failure on this computer, `{failure, since}`, written whole beside its previous version and renamed over it by `instrukt run`'s evaluation responder or `instrukt tick`'s fleet step while a failure lasts, removed on the next success or when no cluster connection is configured; readers take no lock; shown by `instrukt events status` as the worker `computer-fleet` (`project/instrukt/spec/domain/runner`) | nothing: the next attempt records the failure again |
+| `state/runner-workers/<id>.json` | per-worker current failure records shown by `instrukt events status` (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next failing pass records the failure again |
+| `state/redis-reachability.db` | per-Redis last observed reachability store (SQLite, WAL; `-wal` and `-shm` beside it) for background writers (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next background Redis command observes reachability again (at most one repeated transition log) |
+| `state/redis-reachability.lock` | write-isolation lock of `state/redis-reachability.db` (`project/instrukt/spec/domain/runner`, Runner background state) | taken again by the next background reachability transition |
 | `state/eval-fingerprint/current.yaml` | the current eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`) | the next `sync` |
 | `state/eval-fingerprint/<commit>.yaml` | one record per published commit: the fingerprint it was published under and its prose and units digests; history that stamps' evaluation windows are attributed against, kept as written, a record that holds no digests holding its fingerprint alone | nothing: a lost record loses that commit's attribution; must be preserved |
 | `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+
 
 
 `state/requested-review.db` holds the requested reviews
@@ -182,20 +187,21 @@ plus one serialization lock for backup runs:
 | `state/backup.lock` | Lock file; taken exclusively by `instrukt backup run` (and non-blocking by live-home `instrukt backup restore`) | Taken again by the next backup run | Advisory lock file serializing concurrent `instrukt backup run` invocations and writes to `state/backup-state.json`; never shared with `state/writer.lock` or `state/runner.lock`. Scope: per-home |
 | `state/backup-staleness-notified.json` | External bookkeeping; single writer `instrukt tick` / `instrukt run` (`runner` context). Holds `schema_version`, `episode_anchor` (`last_success_at`, or `first_attempt_at` when no backup has succeeded yet), and `notified_at` so staleness invokes `runner.notify` once per episode | At most one duplicate staleness notification on the next runner wake if lost while still stale; no data loss or network transfer | Bounded single-record JSON file (`< 1 KiB`), written whole and atomically (`0600`) before invoking `runner.notify` for a stale episode and removed when a newer `last_success_at` is observed. Write-isolation unit: `state/runner.lock` (never shared with `state/backup.lock` or `state/writer.lock`). Scope: per-home; overwritten/removed in place, never grows, excluded from backup archives |
 
+
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
 a link at the database file itself is refused
 (`project/instrukt/spec/feature/work/state-database`). The state database also holds
-the read-back cursor of each connector (`connector_read_back`), each conversation
-message's no-work interval and the current state of the runner's background
-workers — the history workers and the readiness refresh (`runner_workers`). The
-computer fleet's evaluation responder keeps its current failure in
-`state/computer-fleet.json`, not in the state database, and its uses of cluster
-Redis record no reachability in the state database; outside a one-time schema
-upgrade of an older database, it takes no writer lock
-(`project/instrukt/spec/domain/runner`). Installation keeps no record of the units it wrote and the runner
+the read-back cursor of each connector (`connector_read_back`) and each conversation
+message's no-work interval. Runner background worker failures live under
+`state/runner-workers/` beside `state/computer-fleet.json`, and per-Redis
+reachability lives in `state/redis-reachability.db` under
+`state/redis-reachability.lock`, outside the state database and
+`state/writer.lock` (`project/instrukt/spec/domain/runner`, Runner background
+state). Installation keeps no record of the units it wrote and the runner
 service publishes no identity: both converge by name
 (`project/instrukt/spec/feature/runner/module-installation`).
+
 
 A project carries `instrukt.yaml` (the project layer) and documentation in
 three positions:

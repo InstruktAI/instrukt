@@ -163,13 +163,15 @@ pub fn init_company_issuer(
         .unwrap_or_else(|| DEFAULT_ISSUER_SIGNING_KEY_NAME.to_owned());
 
     // Verify cluster Redis is reachable before writing any private key or SQLite row.
-    let transport =
-        ScopedTransport::cluster_only(&global_cfg, &RunnerState::new(home)).map_err(|error| {
-            McpError::Server {
-                server: company.to_string(),
-                cause: format!("cluster Redis unavailable for issuer publication: {error}"),
-            }
-        })?;
+    let transport = ScopedTransport::cluster_with(
+        &global_cfg,
+        &RunnerState::new(home),
+        crate::transport::Reachability::Unrecorded,
+    )
+    .map_err(|error| McpError::Server {
+        server: company.to_string(),
+        cause: format!("cluster Redis unavailable for issuer publication: {error}"),
+    })?;
     super::_redis_mcp::ping_cluster(&transport).map_err(|error| McpError::Server {
         server: company.to_string(),
         cause: format!("cluster Redis unreachable for issuer publication: {error}"),
@@ -312,11 +314,15 @@ pub fn republish_company_issuers(
     if rows.is_empty() {
         return Ok(Vec::new());
     }
-    let transport = ScopedTransport::cluster_only(&global_cfg, &RunnerState::new(&inspection))
-        .map_err(|error| McpError::Server {
-            server: "issuer".into(),
-            cause: format!("cluster Redis unavailable for issuer publication: {error}"),
-        })?;
+    let transport = ScopedTransport::cluster_with(
+        &global_cfg,
+        &RunnerState::new(&inspection),
+        crate::transport::Reachability::Unrecorded,
+    )
+    .map_err(|error| McpError::Server {
+        server: "issuer".into(),
+        cause: format!("cluster Redis unavailable for issuer publication: {error}"),
+    })?;
     let mut published = Vec::new();
     for (company_name, issuer_id, public_jwks_json, updated_at) in rows {
         let Ok(slug) = ProjectSlug::parse(&company_name) else {

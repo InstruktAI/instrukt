@@ -229,6 +229,7 @@ pub fn tick(
     let current = Current::new(candidate.generation);
     instrukt_core::config::serve(cx.home, &current);
     let admitted = current.get();
+    reconcile_background_state(cx.home, &admitted);
     // The computer fleet's step runs before the dispatch gate is tried, so a
     // tick that finds it taken still keeps its membership entry and answers
     // waiting evaluation requests within their life.
@@ -264,8 +265,8 @@ pub fn tick(
             &invocation,
         )
     });
-    // The tick's readiness ends with it: its token is revoked and its row,
-    // if a failed refresh left one, removed.
+    // The tick's readiness ends with it: its token is revoked and its failure
+    // file, if a failed refresh left one, removed.
     if readiness.take().is_some() {
         _readiness::ended(cx.home);
     }
@@ -479,6 +480,7 @@ pub fn run(
         // Evaluate local home backup staleness under the runner lock on every
         // wake independently of RuntimeInvocation::acquire.
         crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, woke_at);
+        reconcile_background_state(cx.home, &admitted);
         if let Some(readiness) = &readiness {
             readiness.wake();
         }
@@ -735,6 +737,29 @@ struct EventPlatform {
     transport: ScopedTransport,
     runtime: ConsumerRuntime,
     wakeups: tokio::sync::mpsc::Receiver<()>,
+}
+
+/// Reconciles isolated runner background state for the current admitted
+/// generation: completes any pending legacy table transfers out of the state
+/// database and prunes unconfigured Redis reachability rows.
+fn reconcile_background_state(home: &Home, admitted: &Admitted) {
+    if let Err(error) = crate::state::ensure_workers_migrated(home) {
+        tracing::warn!(event = "runner_workers_migration_failed", %error);
+    }
+    if let Err(error) = crate::transport::ensure_reachability_migrated(home) {
+        tracing::warn!(event = "redis_reachability_migration_failed", %error);
+    }
+    match crate::transport::configured_source_identities(admitted.global()) {
+        Ok(active) => {
+            let refs: Vec<&str> = active.iter().map(String::as_str).collect();
+            if let Err(error) = crate::transport::retire_unconfigured_reachability(home, &refs) {
+                tracing::warn!(event = "redis_reachability_retirement_failed", %error);
+            }
+        }
+        Err(error) => {
+            tracing::warn!(event = "redis_reachability_retirement_skipped", %error);
+        }
+    }
 }
 
 /// The event platform of an admitted generation: none while no event
