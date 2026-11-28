@@ -5,6 +5,7 @@
 //! on a commit.
 
 mod _admission;
+mod _head_verdicts;
 mod _moment;
 mod _publication;
 mod _published;
@@ -20,6 +21,7 @@ use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef};
 use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 
+pub use _head_verdicts::HeadVerdictWork;
 pub use _moment::Moment;
 #[cfg(test)]
 pub(crate) use _publication::BODY_LIMIT;
@@ -354,6 +356,9 @@ pub struct Recorded {
     pub version: u64,
     pub name: ContentDigest,
     pub moment: Moment,
+    pub base: CommitSha,
+    pub reviewer: SessionRef,
+    pub recorded_at: Timestamp,
 }
 
 /// Admits and records a head verdict (`instrukt review record`). Every read
@@ -464,6 +469,9 @@ pub fn record(
             version: number,
             name: version.name,
             moment: version.moment,
+            base: version.base,
+            reviewer: version.reviewer,
+            recorded_at: version.recorded_at,
         })
     })?;
     tracing::info!(event = "review_verdict_admitted", project = %project.slug, head = %recorded.head, version = recorded.version, verdict = request.verdict.as_str(), request = ?answers);
@@ -801,66 +809,6 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
             clock,
         )
         .map_err(|error| error.to_string())
-    }
-}
-
-/// Work's answers a requested review is admitted on
-/// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask):
-/// a head's verdict standing, its pinned base and the review history
-/// retention cutoff, read from this home alone, without a lock.
-pub struct HeadVerdictWork {
-    home: Home,
-}
-
-impl HeadVerdictWork {
-    pub fn new(home: Home) -> Self {
-        Self { home }
-    }
-
-    fn answer(
-        &self,
-        project: &instrukt_runner::interfaces::ProjectRef,
-        head: &CommitSha,
-    ) -> Result<instrukt_runner::interfaces::HeadVerdict, ReviewError> {
-        use instrukt_runner::interfaces::{HeadVerdict, HeadVerdictValue, VerdictStanding};
-        let state = RunnerState::new(&self.home);
-        let requests = instrukt_runner::review::requests(&state, &project.slug, head)?;
-        let held = held_here(&self.home, &project.slug, head)?;
-        let review_project = ReviewProject {
-            slug: project.slug.clone(),
-            root: project.root.clone(),
-        };
-        let (_, pinned_base) = pinned_base(&review_project, head, &held, &requests)?;
-        let standing = match held {
-            Held::Nothing => VerdictStanding::Nothing,
-            Held::Stands { current, .. } => VerdictStanding::Stands {
-                verdict: match current.verdict {
-                    Verdict::Approve => HeadVerdictValue::Approve,
-                    Verdict::NeedsWork => HeadVerdictValue::NeedsWork,
-                },
-                recorder: current.reviewer.clone(),
-            },
-            Held::HandedOff { export } => VerdictStanding::HandedOff { export },
-        };
-        Ok(HeadVerdict {
-            standing,
-            pinned_base,
-        })
-    }
-}
-
-impl instrukt_runner::interfaces::HeadVerdicts for HeadVerdictWork {
-    fn head_verdict(
-        &self,
-        project: &instrukt_runner::interfaces::ProjectRef,
-        head: &CommitSha,
-    ) -> Result<instrukt_runner::interfaces::HeadVerdict, String> {
-        self.answer(project, head)
-            .map_err(|error| error.to_string())
-    }
-
-    fn history_cutoff(&self, now: Timestamp) -> Timestamp {
-        retention_cutoff(now)
     }
 }
 

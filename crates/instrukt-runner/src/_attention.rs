@@ -58,7 +58,8 @@ pub(crate) fn approvals(
                 }
                 inputs::InputOutcome::Pending
                 | inputs::InputOutcome::Unconfirmed
-                | inputs::InputOutcome::SetAside => {}
+                | inputs::InputOutcome::SetAside
+                | inputs::InputOutcome::Failed => {}
             }
             Ok(())
         })();

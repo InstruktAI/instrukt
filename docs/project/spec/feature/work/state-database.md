@@ -784,7 +784,8 @@ session or initiates a competing generation. These record-only reservations
 are distinct from instrukt-owned `runtime_starts`.
 
 **`runtime_inputs`** — durable inputs to a native target session, shared across
-procedure events, approvals and runner-owned recovery inputs. Key:
+procedure events, approvals, requested-review verdict notices and runner-owned
+recovery inputs. Key:
 `(runtime, session, input_id)`. Retains intent (`asap` or `entry`), entry kind, source and arrival timestamps, ordered item
 references and immutable selected content, pending/selected/accepted/entered/
 failed outcome, native message identity when available, acceptance and entry
@@ -803,8 +804,14 @@ for seven days (`SET_ASIDE_RETENTION`) from the input's arrival or the
 activation's acceptance. On a wake after the bound, the runner settles any
 dependent standing or approval record before retiring the input and its
 set-aside mirrors in the same transaction. An input with an unsettled
-reference is retained. Status reports the retained count and up to
-`SET_ASIDE_STATUS_LIMIT` recent findings. Wake requests coalesce per target.
+reference is retained. A pending verdict notice closed `failed` because its
+session was archived, deleted or succeeded before sending is retired after
+`SET_ASIDE_RETENTION` from its arrival; a verdict notice already `selected` or
+`accepted` when its session is archived, deleted or succeeded becomes
+`unconfirmed` with its slot released and is retained. Status reports the
+retained count and up to `SET_ASIDE_STATUS_LIMIT` recent findings, for
+set-aside inputs and for closed verdict notices alike. Wake requests coalesce
+per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run
 outside transactions; the fixed target and selected input commit before send.
 A lost acknowledgement can repeat input and remains distinguishable from

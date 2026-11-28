@@ -50,6 +50,29 @@ pub(crate) fn overlay(base: &mut Value, upper: &Value) {
     }
 }
 
+/// Removes from `upper` every entry whose value equals `base`, keeping
+/// `overlay(base, upper)` identical: mappings recurse key by key and drop when
+/// emptied; any other value drops when equal to `base` whole; keys absent from
+/// `base` stay intact.
+pub(crate) fn prune(upper: &mut Value, base: &Value) {
+    let (Value::Mapping(upper_map), Value::Mapping(base_map)) = (upper, base) else {
+        return;
+    };
+    upper_map.retain(|key, upper_val| {
+        let Some(base_val) = base_map.get(key) else {
+            return true;
+        };
+        if upper_val.is_mapping() && base_val.is_mapping() {
+            prune(upper_val, base_val);
+            !upper_val
+                .as_mapping()
+                .is_some_and(serde_yaml_ng::Mapping::is_empty)
+        } else {
+            *upper_val != *base_val
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +99,23 @@ mod tests {
         assert_eq!(
             base,
             yaml("modules: {todos: true, blueprint: true}\nticks: off\n")
+        );
+    }
+
+    #[test]
+    fn prune_recurses_into_mappings_drops_equal_values_and_keeps_unknown_keys() {
+        let base = yaml(
+            "nested: {same: 1, diff: 2}\nemptied: {x: 1, y: 2}\nsame_list: [a, b]\ndiff_list: [a, b]\n",
+        );
+        let mut upper = yaml(
+            "nested: {same: 1, diff: 9, extra: 3}\nemptied: {x: 1, y: 2}\nsame_list: [a, b]\ndiff_list: [a, c]\nunknown: {k: v}\nunknown_empty: {}\n",
+        );
+        prune(&mut upper, &base);
+        assert_eq!(
+            upper,
+            yaml(
+                "nested: {diff: 9, extra: 3}\ndiff_list: [a, c]\nunknown: {k: v}\nunknown_empty: {}\n"
+            )
         );
     }
 
@@ -121,6 +161,26 @@ mod tests {
             let mut doc = target;
             merge_patch(&mut doc, &patch);
             prop_assert!(!has_null(&doc));
+        }
+
+        #[test]
+        fn overlaying_the_pruned_upper_equals_overlaying_the_upper(base in value(), upper in value()) {
+            let mut direct = base.clone();
+            overlay(&mut direct, &upper);
+            let mut pruned = upper;
+            prune(&mut pruned, &base);
+            let mut via_pruned = base;
+            overlay(&mut via_pruned, &pruned);
+            prop_assert_eq!(via_pruned, direct);
+        }
+
+        #[test]
+        fn pruning_twice_equals_pruning_once(base in value(), upper in value()) {
+            let mut once = upper;
+            prune(&mut once, &base);
+            let mut twice = once.clone();
+            prune(&mut twice, &base);
+            prop_assert_eq!(once, twice);
         }
     }
 }

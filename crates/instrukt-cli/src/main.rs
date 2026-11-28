@@ -192,6 +192,12 @@ fn run() -> ExitCode {
     let deferred_patch = matches
         .subcommand()
         .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
+    let agents_patch = matches.subcommand().is_some_and(|(name, args)| {
+        name == "config"
+            && args
+                .subcommand_matches("patch")
+                .is_some_and(|patch| patch.get_flag("agents"))
+    });
     // Adding a company reads no working directory and converges nothing
     // before its caller is admitted (`project-initialization`, Adding a
     // company).
@@ -238,7 +244,12 @@ fn run() -> ExitCode {
                 layers.push(instrukt_core::config::Layer::Project(root));
             }
             if matches.subcommand().is_some_and(|(name, args)| {
-                name == "agents" || (name == "config" && args.subcommand_name() == Some("show"))
+                name == "agents"
+                    || (name == "config"
+                        && (args.subcommand_name() == Some("show")
+                            || args
+                                .subcommand_matches("get")
+                                .is_some_and(|get| get.get_flag("agents"))))
             }) && let Some(notice) = instrukt_core::config::Agents::inspection_notice(&ctx.home)?
             {
                 eprintln!("instrukt: {notice}");
@@ -276,7 +287,8 @@ fn run() -> ExitCode {
     }
     if deferred_patch || company_init {
         ctx.home = ctx.home.for_writing();
-        if let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home) {
+        if !agents_patch && let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home)
+        {
             return report(&error.into());
         }
     }

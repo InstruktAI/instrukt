@@ -248,8 +248,8 @@ And no other company on the host changed
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
-- [project/instrukt/spec/feature/company/conversations](../company/conversations.md)
-- [project/instrukt/spec/feature/runner/mcp-access](mcp-access.md)
-- [project/instrukt/spec/feature/runner/module-installation](module-installation.md)
-- [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
-- [project/instrukt/spec/feature/runner/t3-contract](t3-contract.md)
+- [project/instrukt/spec/feature/company/conversations](conversations.md)
+- [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)
+- [project/instrukt/spec/feature/runner/module-installation](../runner/module-installation.md)
+- [project/instrukt/spec/feature/runner/anomaly-notification](../runner/anomaly-notification.md)
+- [project/instrukt/spec/feature/runner/t3-contract](../runner/t3-contract.md)

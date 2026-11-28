@@ -43,6 +43,11 @@ creates no replacement session identity.
 | `finished_threads` | Registered project checkout; returns each thread the runtime lists for that project and reports finished, with its finishing time, its latest activity (a person reading or writing to it included), whether it is quiet (not running, queued, snoozed or waiting on a person's input or approval) and whether a person pinned it. A time the runtime does not report is unknown, never substituted. Optional capability: thread archiving. | Thread retention (`project/instrukt/spec/feature/runner/thread-retention`). |
 | `archive` | Native session id and the finished-thread observation it was chosen from; archives the thread only while that observation still holds: present, finished, quiet, not pinned and without activity after the observed latest activity. Returns archived, already archived (which is done) or changed (not archived). Optional capability: thread archiving. | Thread retention. |
 
+The `send` primitive also delivers the runner's requested-review verdict
+notices to the session that asked, and `caller_identity` names that session
+when the review is asked for
+(`project/instrukt/spec/feature/runner/requested-review`).
+
 `execution_root` takes an execution root and a mode, check or ensure. It
 returns whether the selected runtime holds a live project rooted exactly at
 that root, creating one in ensure mode, together with the runtime's own door
@@ -88,20 +93,20 @@ or entry-only realization, as specified in
 `project/instrukt/spec/feature/runner/procedure-event-delivery`. T3 uses queued
 input rather than a required hook. Missing steering creates no finding.
 Runtime acceptance is transport evidence, not entry consumption or completion.
-One session-wide waiting slot combines instrukt event, approval and runner-owned recovery deliveries
-while preserving their separate identities. Native agent messages and child
-reports belong to the runtime and do not occupy this instrukt-owned slot.
-Recovery here concerns only instrukt-started orchestrators/tasks, never their
-natively delegated workers.
+All instrukt-owned delivery kinds — event, approval, requested-review verdict
+and runner-owned recovery — share the one session-wide waiting slot defined in
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. Native agent
+messages and child reports belong to the runtime and do not occupy this
+instrukt-owned slot. Recovery here concerns only instrukt-started
+orchestrators/tasks, never their natively delegated workers.
 
 ### The waiting message is a delivery log
 
-The composer places the message composition time at the top. Each delivery is
-one entry, ordered by arrival from oldest at the top to newest at the bottom.
-Every entry retains its source identity, kind (`event`, `approval` or `recovery`), source occurrence time and arrival time. An unavailable
-source time is explicitly unknown; the arrival time never substitutes for it.
-Event entries mark their envelopes as untrusted data. Combining preserves every
-entry and its timestamps; a retry retains the exact composed log and time.
+The delivery-log composer — its composition timestamp, arrival-ordered entries,
+source identity and kind vocabulary (`event`, `approval`, `verdict` or
+`recovery`), explicit unknown source times, untrusted-data framing and
+immutable retry batches — is owned by
+`project/instrukt/spec/feature/runner/procedure-event-delivery`.
 
 ### Runtime evidence capabilities
 
@@ -175,6 +180,11 @@ adapter verb templates.
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 | Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
 
+Requested review also uses `caller_identity` when available, to record the
+session that asks (without refusing a caller that resolves to none), and native
+input delivery (`send`), to return each verdict recorded for the head to that
+session (`project/instrukt/spec/feature/runner/requested-review`).
+
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -220,6 +230,11 @@ Retries retain both IDs, the native project ID and the entire captured request.
 | Requested reviewer | `instrukt:review:<encoded-project>:<head>`, the full id of the head commit asked for |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 | Conversation session | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
+
+
+A requested reviewer keeps the key of the head it was started for when an ask
+for a later head wakes it (Keyed wake).
+
 
 
 For standing keys, the canonical home token is `project:<slug>`,
@@ -292,6 +307,31 @@ together. Company harvests available completed answers before adoption, preserve
 answer posting identities/state, and transfers unanswered questions in order.
 A released or ineligible assignment receives no successor.
 
+### Keyed wake
+
+A keyed wake sends input to a session an instrukt start key binds, addressed by
+the session. The caller names the session and the object it wakes it for; the
+runner finds the key whose current generation is that session, holds that
+key's lock from recording to the runtime's acceptance, and sends under a
+command identity derived from the key, the generation and the waking object.
+The caller records that identity with its object before anything reaches the
+runtime, and a replay sends the same identity again, which the runtime accepts
+once.
+
+A wake never starts a session and never moves a generation. A session no
+instrukt key binds, or one whose key's current generation is another session,
+is not woken. Neither is a session whose thread was archived or deleted, or one
+with a turn in progress. Each answer names the session and why, and the caller
+decides what follows.
+
+A reviewer wake is addressed by a reviewed head. The runner asks work for the
+head's reviewer of record (`project/instrukt/spec/feature/work/github-apps`)
+and keyed-wakes that session with coordinates only. A head with no reviewer of
+record has no reviewer to wake. The requested-review caller wakes only a reviewer of record under a
+requested-reviewer key of the asking project
+(`project/instrukt/spec/feature/runner/requested-review`).
+
+
 ### T3 realization of keyed dispatch
 
 The adapter calls authenticated `orchestration.launchThread` over the existing
@@ -345,7 +385,8 @@ opening brief just because placement is preparing.
 
 Every placement runs in the checkout's own project. Whenever instrukt adopts,
 wakes or succeeds an instrukt-owned thread, and before every input it delivers
-to one — event, approval, recovery and conversation input alike, for every
+to one — event, approval, recovery, verdict-notice and conversation input
+alike, for every
 binding kind — it looks up the checkout's project in T3's project snapshot by
 exact root, read-only, and compares it with the thread's native project. The
 comparison never registers a project. The binding's recorded project is not

@@ -109,6 +109,26 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     );
     assert!(labels(&project.github.issue(REPOSITORY, 1).unwrap()).contains("on-hold"));
     let shown = project.ok(["show", "nested-lists"]);
+    // Writing the refused content again records nothing: nothing changed.
+    let rewritten = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    // Once its grounding moves, the same content is a new version; it repeats
+    // the refused one, so it is not sent either and the refusal still holds.
+    let moved = |project: &Project| {
+        let args = ["commit", "--allow-empty", "--quiet", "-m", "moved"];
+        project.env.git(project.repo.path(), args);
+    };
+    moved(&project);
+    let regrounded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    project.tick();
+    assert_eq!(
+        project
+            .github
+            .requests_to("POST", "/issues/1/artifacts")
+            .len(),
+        attempts,
+        "the refused content was sent again as a later version"
+    );
+    let reshown = project.ok(["show", "nested-lists"]);
 
     // The door is the artifact's next version: once GitHub accepts it, the
     // refused version no longer holds the todo's reflection back.
@@ -144,6 +164,21 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     const LATER: &str = "Lists keep their depth through parse, render and export.";
     project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
     project.tick();
+    // Accepted content written again on a moved grounding is not sent again.
+    let patches = project
+        .github
+        .requests_to("PATCH", &format!("/issues/1/artifacts/{prd}"));
+    moved(&project);
+    project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
+    project.tick();
+    assert_eq!(
+        project
+            .github
+            .requests_to("PATCH", &format!("/issues/1/artifacts/{prd}"))
+            .len(),
+        patches.len(),
+        "unchanged content was sent to GitHub again"
+    );
     let settled = project.ok(["show", "nested-lists"]);
     // Neither refused version was sent again.
     let sent = |content: &str| {
@@ -163,7 +198,7 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     insta::assert_snapshot!(
         "refused-by-github",
         redact(&format!(
-            "{recorded}---\n{read}---\n{shown}---\n{next}---\n{refused_again}---\n{settled}"
+            "{recorded}---\n{read}---\n{shown}---\n{rewritten}---\n{regrounded}---\n{reshown}---\n{next}---\n{refused_again}---\n{settled}"
         ))
     );
 }

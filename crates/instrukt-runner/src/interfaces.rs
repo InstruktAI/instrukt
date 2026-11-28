@@ -1144,7 +1144,9 @@ pub struct HeadVerdict {
 
 /// Work's answers a requested review is admitted on
 /// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask,
-/// Coordinates, Requested review records). Read-only: no lock is taken.
+/// Coordinates, Requested review records). Reads are read-only and unlocked
+/// once the review evidence store is at its current schema (taking a one-time
+/// upgrade lock on first read of an older store on a writable home).
 pub trait HeadVerdicts: Send + Sync {
     /// `head`'s verdict standing on this computer and its pinned base.
     fn head_verdict(
@@ -1152,6 +1154,14 @@ pub trait HeadVerdicts: Send + Sync {
         project: &ProjectRef,
         head: &instrukt_core::ids::CommitSha,
     ) -> Result<HeadVerdict, String>;
+    /// The commit of `project` whose standing verdict has a version whose
+    /// report has the SHA-256 digest of `report`, when one stands on this
+    /// computer.
+    fn commit_with_report(
+        &self,
+        project: &ProjectRef,
+        report: &str,
+    ) -> Result<Option<instrukt_core::ids::CommitSha>, String>;
     /// The moment before which review evidence history retires at `now`.
     fn history_cutoff(&self, now: Timestamp) -> Timestamp;
 }

@@ -10,6 +10,7 @@
 
 mod _admitted;
 mod _agents;
+mod _agents_file;
 mod _agents_migrate;
 mod _company;
 mod _company_document;
@@ -46,6 +47,7 @@ pub use _agents::{
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
     current_role,
 };
+pub use _agents_file::{agents_revision, agents_value, patch_agents};
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,

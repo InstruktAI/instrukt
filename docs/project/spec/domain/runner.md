@@ -106,8 +106,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
 **Requested review**
 : An independent review of an exact committed worktree head that an authoring
   session asks for with `instrukt review start`, naming coordinates only; the
-  runner renders the reviewer's assignment and starts the requested reviewer
-  on it. It is no review request and emits no event
+  runner renders the reviewer's assignment, starts a requested reviewer on it
+  or wakes the existing reviewer of record (for a re-review, a dispute or an
+  idle head reviewer), and returns each verdict recorded for the head to the
+  session that asked. It is no review request and emits no event
   (`project/instrukt/spec/feature/runner/requested-review`).
 
 **Proposal handoff**
@@ -150,8 +152,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
 
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the admission, rendering and start of requested
-  reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  activation from events; the admission, rendering, start and wake of
+  requested reviews and the return of their verdicts to the sessions that
+  asked; the runtime-adapter trait, operational session inspection and session reuse behavior;
   runtime capability translation;
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
@@ -873,7 +876,7 @@ related references.
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
-- **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
+- **Company containers** — [project/instrukt/spec/feature/company/company-containers](../feature/company/company-containers.md)
   — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
 
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
@@ -965,11 +968,14 @@ conversation
 
 For a requested review the runner asks work whether the head's verdict stands
 here, with the session that recorded its current version, or was handed off,
-with the export that handed it off, and for the pinned base work admits its
-verdict against; it reads the commit's review requests from its own delivery
-records.
+with the export that handed it off, for the pinned base work admits its
+verdict against and, for a re-review, for the commit of that project whose
+standing verdict has a version with the prior report's digest; it reads the
+commit's review requests from its own delivery records.
 It starts the requested reviewer through the runtime adapter under its own
-start key; work admits that reviewer's verdict like any other
+start key, or wakes the existing reviewer of record under its start key; work
+admits that reviewer's verdict like any other and hands each version it records
+to the runner, which queues a verdict notice for each session that asked
 (`project/instrukt/spec/feature/runner/requested-review`).
 
 

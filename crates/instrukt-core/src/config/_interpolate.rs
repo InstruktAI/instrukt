@@ -216,34 +216,42 @@ impl<'a> Interpolator<'a> {
     }
 
     fn walk(&self, segments: &[&str], asked: &str) -> Result<Located<'a>, ConfigError> {
-        let mut value = self.root;
-        let mut walked = String::new();
-        for segment in segments {
-            let next = match value {
-                Value::Mapping(map) => map.get(*segment),
-                Value::Sequence(seq) => segment.parse::<usize>().ok().and_then(|i| seq.get(i)),
-                _ => None,
-            };
-            let Some(next) = next else {
-                let parent = if walked.is_empty() {
-                    "the configuration".to_owned()
-                } else {
-                    format!("`{walked}`")
-                };
-                return Err(ConfigError::MissingKey {
-                    path: asked.to_owned(),
-                    segment: (*segment).to_owned(),
-                    parent,
-                });
-            };
-            walked = join(&walked, segment);
-            value = next;
-        }
-        Ok(Located::Value {
-            path: walked,
-            value,
-        })
+        let (path, value) = at_path(self.root, segments, asked)?;
+        Ok(Located::Value { path, value })
     }
+}
+
+/// Traverses dotted path `segments` under `root` without interpolation,
+/// returning the walked path and literal value, or `ConfigError::MissingKey`.
+pub(crate) fn at_path<'a>(
+    root: &'a Value,
+    segments: &[&str],
+    asked: &str,
+) -> Result<(String, &'a Value), ConfigError> {
+    let mut value = root;
+    let mut walked = String::new();
+    for segment in segments {
+        let next = match value {
+            Value::Mapping(map) => map.get(*segment),
+            Value::Sequence(seq) => segment.parse::<usize>().ok().and_then(|i| seq.get(i)),
+            _ => None,
+        };
+        let Some(next) = next else {
+            let parent = if walked.is_empty() {
+                "the configuration".to_owned()
+            } else {
+                format!("`{walked}`")
+            };
+            return Err(ConfigError::MissingKey {
+                path: asked.to_owned(),
+                segment: (*segment).to_owned(),
+                parent,
+            });
+        };
+        walked = join(&walked, segment);
+        value = next;
+    }
+    Ok((walked, value))
 }
 
 /// One reference found in a text.

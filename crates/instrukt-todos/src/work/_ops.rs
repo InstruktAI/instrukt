@@ -905,7 +905,8 @@ impl Work {
         })
     }
 
-    /// `instrukt todo artifacts write`: appends a version.
+    /// `instrukt todo artifacts write`: appends a version, unless the write
+    /// changes nothing about the current one.
     pub fn write_artifact(
         &self,
         project: &ProjectRef,
@@ -949,6 +950,19 @@ impl Work {
             remote: None,
             content: Some(content.to_owned()),
         };
+        // A write matching the current version's content, provenance and writer records nothing.
+        if let Some(current) = s.items[index].record.current_version(name)
+            && current.repeats(&version)
+        {
+            let value = current.clone();
+            let docs_changed = std::mem::take(&mut s.docs_changed);
+            let reflection = s.status(index);
+            return Ok(Outcome {
+                value,
+                reflection,
+                docs_changed,
+            });
+        }
         s.commit("artifact written", |s| {
             let record = &mut s.items[index].record;
             let mut version = version;
