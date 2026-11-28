@@ -27,6 +27,10 @@ citation rules, severity schema, verdict arithmetic, and reviewer separation.
 - The invoking procedure has named the applicable intent or governing contract.
 - The target's complete changed-file surface is available.
 
+For commits, the author's decision that independent review is owed belongs to
+`general/policy/commits`. Lane applicability below governs an admitted review,
+not whether a commit needs one.
+
 ## Steps
 
 ### Configured runtime operations
@@ -86,6 +90,15 @@ or its affected dependencies give it a concrete subject, within the catalog's
 own triggers; it is `N/A` when its trigger finds none. A subject need not look
 defective: finding defects is the lane's work.
 
+Inspect the target, its intent and affected boundaries before dispatch, applying
+the invoking phase's grounding requirements. For each lane, record the concrete
+subject that warrants investigation, or the inspected evidence supporting
+`N/A`. Resolve uncertain applicability against the sources before omitting an
+investigation. The catalog's mandatory lanes and the invoking route's review
+depth still govern. This orientation informs assignments and the whole-change
+questions you assess during reconciliation; each assigned investigator supplies
+its own review evidence.
+
 - The general lanes of `sdlc/policy/definition-of-done-lanes`. The catalog owns
   each lane's focus, severity guidance, trigger conditions, and the Definition
   of Done gate or requirement contract it answers to. Scope and ownership
@@ -100,22 +113,39 @@ defective: finding defects is the lane's work.
   when no general lane covers it. An entry point the project lacks is recorded
   as a gap, never as nothing found.
 
-**Run each applicable lane in its own native subagent.** Dispatch the lanes to
-the harness's own subagents, in parallel (`general/principle/parallel-work`).
-Each starts fresh, with the brief as its only context from you: use the
-harness's fresh-subagent form, never a fork of your own conversation, so your
-reasoning and conclusions do not frame its investigation. A lane's brief carries
-one lane question and the address of the lane's catalog section; the exact read
+**Assign focused investigations.** Use a separate native subagent for each
+applicable lane by default. Errors and logging are a natural shared assignment
+when both apply; retain the full logging mandate, including observability of
+ordinary operations. Other lanes may share an investigator when the inspected target
+gives their questions one coherent, bounded investigation with substantially
+shared evidence and reasoning. Record that connection; touching the same files
+alone does not establish it. Grouping is an available judgment, not an
+additional optimization task. Each lane retains its own applicability,
+complete mandate, evidence and conclusion
+(`sdlc/policy/definition-of-done-lanes`).
+
+Choose the model and reasoning effort for each assignment from the supported
+dispatch controls under `general/principle/parallel-work`, within the configured
+and user-directed constraints. Ground the choice in the inspected work and the
+investigation's demands; deliberate inheritance is a valid choice. Where the
+harness fixes or hides settings, record that constraint and preserve the
+required quality. Dispatch independent assignments in parallel under the same
+principle, respecting the catalog's sequencing requirements.
+
+Each investigator starts fresh, with the brief as its only context from you: use
+the harness's fresh-subagent form, never a fork of your own conversation, so your
+reasoning and conclusions do not frame its investigation. Each brief carries
+every assigned lane's question and catalog-section address; the exact read
 addresses of the frozen target; the intent basis this review established, with
-its source addresses; the project focus points that bear on the lane, with
+its source addresses; the project focus points that bear on the assigned lanes, with
 theirs; the source facts you have already established, with their addresses and
 qualifications, and verbatim excerpts of the owner rules the lane needs; the
 finding rules of step 4; and the result it returns: findings in the step 4
 format, or clean-pass evidence, plus any gap it could not close. On a disputed
 point the brief gives the evidence and the question, never the finding to reach
 or avoid, and it states no preferred verdict. You hold the domain's rendering and cut
-each brief from it. The brief is the lane subagent's complete mandate: it reads
-only the sources its question requires, follows only the Required reads those
+each brief from it. The brief is the investigator's complete mandate: it reads
+only the sources its questions require, follows only the Required reads those
 sources need, and reports missing context as a gap. It investigates and returns
 evidence; recording the review artifact and verdict, sending messages and
 performing session acts stay with the invoking reviewer. Where the harness
@@ -142,8 +172,20 @@ under step 4.
 
 Each executed lane produces a findings section, even when it has no findings.
 A missing section means the review is incomplete: execute the missing lane
-before producing a verdict. The report states every lane's disposition and, for
-each executed lane, the question its brief asked.
+before producing a verdict. The report states every lane's disposition and
+applicability evidence, including changes to the initial lane set, and, for each
+executed lane, the question its brief asked. A grouping retains separate lane
+sections. Applicability and dispatch reasoning are distinct from evidence that
+the lane's obligation was satisfied.
+
+In the same report, identify the lanes each investigator covered, the requested
+model and effort (or inheritance or fixed-setting constraint), and the brief
+reason for that selection and any subsequent change. One reason may cover
+several assignments when it applies to all of them. Record actual execution
+settings separately when the runtime reports them, identifying that evidence;
+otherwise mark them unknown. An inherited display label alone does not verify
+execution. Unknown execution settings are a reporting limitation, not by
+themselves a defect in the reviewed target.
 
 ### 2. Apply the quality gates
 

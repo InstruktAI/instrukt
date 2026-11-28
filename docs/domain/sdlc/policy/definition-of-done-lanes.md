@@ -36,7 +36,10 @@ approved intent enlarges the horizon and is invalid
 not reallocate ownership); a genuine intent gap is reported as an investigation
 lead, never encoded as a blocking demand.
 
-Lanes run in parallel, each in its own native subagent, under `sdlc/procedure/lifecycle/review`. Each lane produces findings with severity levels.
+Investigator assignment, grouping and dispatch follow
+`sdlc/procedure/lifecycle/review`. Each lane retains its own applicability,
+proof obligations and reported findings or clean-pass evidence when it shares
+an investigator.
 
 A project-scope testing ruling (for example a test moratorium) supersedes the
 tests lane and every per-criterion named-test demand in Scope verification for
@@ -917,6 +920,13 @@ exception for when delivery is already correct and only the trailing record is
 wrong about it, not a general softening of root-cause rigor.
 
 ## Rationale
+
+Separate investigators protect focused attention. Related questions can share
+an investigation without repeating its source discovery: error handling and
+logging overlap in failure propagation and diagnostic evidence, while logging
+also covers ordinary operations. Grouping gives up a separate investigator for
+each constituent lane; bounded shared reasoning and distinct lane evidence
+preserve inspectable coverage without claiming the same independent attention.
 
 The lanes were embedded in the build-review procedure and re-described in the
 plan reviewer, so two reviewers shared one copy and a third forked it — the lane
