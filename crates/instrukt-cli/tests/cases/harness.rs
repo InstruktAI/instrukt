@@ -524,6 +524,107 @@ fn a_refusal_the_record_cannot_keep_fails_the_test_and_is_rolled_back() {
     std::fs::write(&record, "").unwrap();
 }
 
+#[test]
+fn development_build_refuses_live_home_and_allows_version() {
+    assert!(
+        !instrukt_core::is_release_build(),
+        "local test binaries must compile as development builds"
+    );
+    let live = Live::new();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.set_env("HOME", &live.path().display().to_string());
+    env.remove_env("INSTRUKT_HOME");
+    env.remove_env(instrukt_core::fsx::FENCE_VARIABLE);
+
+    // `--version` runs before `Home::from_env()` and succeeds.
+    env.run(env.home(), ["--version"]).success();
+
+    // Unset `INSTRUKT_HOME` refuses before touching the live home (including `--help`).
+    for args in [
+        vec!["status"],
+        vec!["config", "init", "--global"],
+        vec!["--help"],
+        vec!["config", "--help"],
+    ] {
+        let output = env.instrukt(env.home()).args(&args).output().unwrap();
+        assert!(
+            !output.status.success(),
+            "expected dev build to refuse {args:?}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("development builds refuse to run against the live home"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("scripts/dev-instrukt") && stderr.contains("INSTRUKT_HOME"),
+            "{args:?}: {stderr}"
+        );
+    }
+
+    // A symlinked `INSTRUKT_HOME` pointing into `$HOME/.instrukt` is refused too.
+    let alias = env.path("live-alias");
+    std::os::unix::fs::symlink(live.path().join(".instrukt"), &alias).unwrap();
+    env.set_env("INSTRUKT_HOME", &alias.display().to_string());
+    let output = env.instrukt(env.home()).args(["status"]).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("development builds refuse to run against the live home"),
+        "{stderr}"
+    );
+
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+}
+
+#[test]
+fn development_build_auto_fences_live_home_and_installed_binary_without_env_fence() {
+    let live = Live::new();
+    let installed_bin = live.path().join(".local/bin/instrukt");
+    std::fs::create_dir_all(installed_bin.parent().unwrap()).unwrap();
+    std::fs::write(&installed_bin, b"installed-binary").unwrap();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+
+    let mut env = TestEnv::new();
+    env.set_env("HOME", &live.path().display().to_string());
+    env.remove_env(instrukt_core::fsx::FENCE_VARIABLE);
+
+    // Log directory pointing into `$HOME/.instrukt` is stopped by the automatic dev fence.
+    let logs = env.path("logs-to-live");
+    std::os::unix::fs::symlink(live.path().join(".instrukt"), &logs).unwrap();
+    env.set_env("INSTRUKT_LOG_DIR", &logs.display().to_string());
+    let output = env
+        .instrukt(env.home())
+        .args(["config", "init", "--global"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("which development builds keep off limits"),
+        "{stderr}"
+    );
+
+    // Log directory pointing to `$HOME/.local/bin/instrukt` is stopped by the automatic dev fence.
+    let bin_logs = env.path("logs-to-bin");
+    std::os::unix::fs::symlink(&installed_bin, &bin_logs).unwrap();
+    env.set_env("INSTRUKT_LOG_DIR", &bin_logs.display().to_string());
+    let output = env
+        .instrukt(env.home())
+        .args(["config", "init", "--global"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(i32::from(FENCE_EXIT)));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("which development builds keep off limits"),
+        "{stderr}"
+    );
+
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+}
+
 /// Every file under `roots`, with its content.
 fn published_files(roots: &[std::path::PathBuf]) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     roots

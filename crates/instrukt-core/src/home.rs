@@ -19,6 +19,11 @@ pub enum HomeError {
     HomeUnset,
     #[error("development execution requires a distinct INSTRUKT_HOME")]
     DevelopmentNeedsIsolation,
+    #[error(
+        "development builds refuse to run against the live home {}; use `scripts/dev-instrukt` or set INSTRUKT_HOME to an isolated directory",
+        live.display()
+    )]
+    DevelopmentLiveHome { live: PathBuf },
 }
 
 /// Paths into one home. Holds no open resources; creating one touches
@@ -49,17 +54,33 @@ fn canonical_location(path: &Path) -> PathBuf {
 impl Home {
     /// The home of the user whose `HOME` the process runs with.
     pub fn from_env() -> Result<Self, HomeError> {
-        match std::env::var_os("HOME") {
-            Some(home) if !home.is_empty() => {
-                let mut selected = Self::at_user_home(PathBuf::from(home));
-                if let Some(root) = std::env::var_os("INSTRUKT_HOME").filter(|s| !s.is_empty()) {
-                    selected.root = PathBuf::from(root);
+        Self::from_env_with(
+            crate::is_release_build(),
+            std::env::var_os("HOME").map(PathBuf::from),
+            std::env::var_os("INSTRUKT_HOME").map(PathBuf::from),
+            std::env::var_os("INSTRUKT_DEVELOPMENT").as_deref() == Some(std::ffi::OsStr::new("1")),
+        )
+    }
+
+    pub(crate) fn from_env_with(
+        release_build: bool,
+        home: Option<PathBuf>,
+        instrukt_home: Option<PathBuf>,
+        development: bool,
+    ) -> Result<Self, HomeError> {
+        match home {
+            Some(home) if !home.as_os_str().is_empty() => {
+                let mut selected = Self::at_user_home(home);
+                if let Some(root) = instrukt_home.filter(|s| !s.as_os_str().is_empty()) {
+                    selected.root = root;
                     selected.state_dir = canonical_location(&selected.root.join("state"));
                 }
-                if std::env::var_os("INSTRUKT_DEVELOPMENT").as_deref()
-                    == Some(std::ffi::OsStr::new("1"))
-                {
-                    if selected.root == selected.machine_user_home.join(HOME_DIR_NAME) {
+                let live = selected.machine_user_home.join(HOME_DIR_NAME);
+                if !release_build && crate::fsx::path_under(&selected.root, &live) {
+                    return Err(HomeError::DevelopmentLiveHome { live });
+                }
+                if development {
+                    if crate::fsx::path_under(&selected.root, &live) {
                         return Err(HomeError::DevelopmentNeedsIsolation);
                     }
                     selected.user_home = selected.root.join("user");
@@ -523,5 +544,73 @@ mod tests {
         ] {
             assert!(path.starts_with("/u/.instrukt"), "{}", path.display());
         }
+    }
+
+    #[test]
+    fn development_builds_refuse_live_home_and_symlinks_into_it() {
+        let scratch = tempfile::tempdir().unwrap();
+        let user_home = scratch.path().canonicalize().unwrap().join("user");
+        let live = user_home.join(".instrukt");
+        std::fs::create_dir_all(&live).unwrap();
+
+        // Unset INSTRUKT_HOME targets $HOME/.instrukt -> refused in dev build.
+        let err = Home::from_env_with(false, Some(user_home.clone()), None, false).unwrap_err();
+        assert!(
+            matches!(err, HomeError::DevelopmentLiveHome { .. }),
+            "{err}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("scripts/dev-instrukt"), "{msg}");
+        assert!(msg.contains("INSTRUKT_HOME"), "{msg}");
+
+        // Explicit $HOME/.instrukt and child path inside it -> refused in dev build.
+        assert!(matches!(
+            Home::from_env_with(false, Some(user_home.clone()), Some(live.clone()), false),
+            Err(HomeError::DevelopmentLiveHome { .. })
+        ));
+        assert!(matches!(
+            Home::from_env_with(
+                false,
+                Some(user_home.clone()),
+                Some(live.join("nested")),
+                false
+            ),
+            Err(HomeError::DevelopmentLiveHome { .. })
+        ));
+
+        // Symlink pointing to $HOME/.instrukt -> refused in dev build.
+        let alias = scratch.path().join("alias-to-live");
+        std::os::unix::fs::symlink(&live, &alias).unwrap();
+        assert!(matches!(
+            Home::from_env_with(false, Some(user_home.clone()), Some(alias), false),
+            Err(HomeError::DevelopmentLiveHome { .. })
+        ));
+
+        // Isolated INSTRUKT_HOME (including sibling `.instrukt-dev`) -> allowed.
+        let isolated = user_home.join(".instrukt-dev");
+        let ok = Home::from_env_with(
+            false,
+            Some(user_home.clone()),
+            Some(isolated.clone()),
+            false,
+        )
+        .unwrap();
+        assert_eq!(ok.root(), isolated.as_path());
+        assert!(!ok.is_development());
+
+        // INSTRUKT_DEVELOPMENT=1 with isolated INSTRUKT_HOME keeps dev user_home semantics.
+        let dev = Home::from_env_with(false, Some(user_home.clone()), Some(isolated.clone()), true)
+            .unwrap();
+        assert!(dev.is_development());
+        assert_eq!(dev.user_home(), isolated.join("user").as_path());
+
+        // Release builds allow live home when INSTRUKT_DEVELOPMENT is unset,
+        // and refuse it when INSTRUKT_DEVELOPMENT=1.
+        let release = Home::from_env_with(true, Some(user_home.clone()), None, false).unwrap();
+        assert_eq!(release.root(), live.as_path());
+        assert!(matches!(
+            Home::from_env_with(true, Some(user_home), None, true),
+            Err(HomeError::DevelopmentNeedsIsolation)
+        ));
     }
 }
