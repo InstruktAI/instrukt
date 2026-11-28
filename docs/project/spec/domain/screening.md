@@ -52,18 +52,17 @@ comes from or what its caller does with an unsafe verdict.
 
 **Unavailable**
 : Transient endpoint or transport unavailability as judged by the outside gate's
-  standard HTTP adapter (`project/instrukt/design/architecture/outside-gate`) —
-  no custom screening service rules turn rejected credentials (`401`/`403`),
-  spend/quota refusals (`402`) or unknown models (`404`) into waits.
+  standard HTTP adapter with `Settings::default()`
+  (`project/instrukt/design/architecture/outside-gate`).
 
 **Endpoint rejection**
 : The endpoint answers `400`, `413` or `422`, rejecting a request as one it
   cannot serve (such as one too large for the model). Not transient
   unavailability and not retried: an internal call returns `refused` and
-  `is-safe` returns `unsafe` with a fixed short reason. Any other non-temporary
-  `4xx` (including `401`, `402`, `403`, `404`), any `3xx` or non-`200` `2xx`,
-  or any non-temporary client/TLS/protocol failure is a defect that fails
-  without retrying.
+  `is-safe` returns `unsafe` with a fixed short reason. Any other non-`200`
+  status outside `outside-gate`'s transient unavailability table, or any
+  non-temporary client/TLS/protocol failure, is a defect that fails without
+  retrying.
 
 **Waiting**
 : The state of a call or screening while the outside gate paces retries against
@@ -129,8 +128,7 @@ comes from or what its caller does with an unsafe verdict.
     - `call(&LlmAdmission, prompt, max_tokens, &Gate, CallerWait, stop)` ->
       `Result<CallOutcome, CallDefect>` (internal reusable client; no CLI).
     - `is_safe(&LlmAdmission, text, &Gate, CallerWait, stop)` ->
-      `Result<SafeOutcome, CallDefect>` (in-memory safety check; neither
-      function takes a `caller` parameter).
+      `Result<SafeOutcome, CallDefect>` (in-memory safety check).
 - **Allowed dependencies:** `instrukt-core` (global `llm.screening` admission
   with resolved `SecretValue`, `admitted_address` URL boundary) and
   `instrukt-outside` (`Gate::call_async`, `CallerWait`, `Key`, `Settings`,
@@ -189,24 +187,27 @@ stamped on header receipt) is judged BEFORE reading any response body:
    `CallOutcome::Refused(MalformedAnswer)` without retrying.
    `choices[0].finish_reason == Some("stop")` is checked before accepting
    `choices[0].message.content`; any other or missing `finish_reason` produces
-   `CallOutcome::Refused(CutOff)` without retrying.
+   `CallOutcome::Refused(CutOff)` without retrying, and missing or empty
+   `choices[0].message.content` produces `CallOutcome::Refused(MalformedAnswer)`.
 2. **`400`, `413`, `422`:** body is unread; produces
    `CallOutcome::Refused(EndpointRejected { status })` without retrying.
 3. **`3xx` or non-`200` `2xx`:** body is unread; produces `CallDefect` without
    retrying.
-4. **Any other `>= 400` status** (including `401`, `402`, `403`, `404`, `408`,
-   `425`, `429`, `5xx`): body is unread; judged via
+4. **Any other `>= 400` status:** body is unread; delegated directly to
+   `project/instrukt/design/architecture/outside-gate` via
    `instrukt_outside::http::judge_response` with `Settings::default()`.
-   Transient statuses (`408`, `425`, `429`, `5xx`) return `Tried::Unavailable`
-   to the gate; non-temporary `4xx` (`401`, `402`, `403`, `404`, etc.) return
-   `Tried::Defect` immediately without retrying.
+   Outcomes judged unavailable return `Tried::Unavailable` to the gate;
+   outcomes judged defects return `Tried::Defect` immediately without retrying.
 5. **Pre-response transport error:** judged via
    `instrukt_outside::http::judge_reqwest_error` with `Settings::default()`.
 
 ### Two-check screening rule
 
 Each screening runs two independent checks over one shuffle sequentially
-through the same `&Gate`. If check 1 returns `Waiting`, `Stopped`, `Defect` or
+through the same `&Gate`. When an in-process caller supplies a bounded
+`CallerWait::Within(duration)` (`duration > 0`), one shared deadline bounds
+both sequential checks together so the combined operation stays within
+`duration`. If check 1 returns `Waiting`, `Stopped`, `Defect` or
 `EndpointRejected`, screening stops at once with that outcome; otherwise it
 checks `stop()` and runs check 2. Text is `Safe` only when both checks return
 `Verdict::Benign`. If either check returns `Verdict::Flagged`, checks disagree,
@@ -276,6 +277,10 @@ this context and belongs to the future domain event ledger.
 - `project/instrukt/design/architecture/outside-gate` — the outside gate
   through which screening judges transient endpoint unavailability, paces
   retries and reports waits to the operator.
+- `project/instrukt/adr/0002-openai-compatible-direct-http-client` — why
+  `instrukt-screening` uses `instrukt_outside::http::build_client` directly
+  with minimal local `serde` structs rather than `async-openai`, `genai`, or
+  `openai-api-rs`.
 
 ## Context map position
 
@@ -304,3 +309,9 @@ this context and belongs to the future domain event ledger.
   must treat it as untrusted data, never as instructions.
 - An endpoint that silently truncates prompts exceeding its context window
   instead of returning `400`/`413`/`422` judges only what it saw.
+
+## See Also
+
+- [project/instrukt/adr/0002-openai-compatible-direct-http-client](../../adr/0002-openai-compatible-direct-http-client.md)
+- [project/instrukt/design/architecture/outside-gate](../../design/architecture/outside-gate.md)
+- [project/instrukt/design/architecture/overview](../../design/architecture/overview.md)

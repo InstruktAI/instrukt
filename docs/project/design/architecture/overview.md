@@ -1056,5 +1056,5 @@ reading runner's files or contacting remote storage.
   foreground `instrukt is-safe`, standard error
   (`project/instrukt/spec/domain/screening`,
   `project/instrukt/design/architecture/outside-gate`). Non-temporary endpoint
-  defects (including `401`, `402`, `403`, `404`) fail at once without retrying.
+  defects fail at once without retrying.
 <!-- /planned:capability-free-model-call -->
