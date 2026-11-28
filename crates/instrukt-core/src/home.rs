@@ -321,6 +321,22 @@ impl Home {
         self.state_dir().join("computer-fleet.json")
     }
 
+    /// Atomic state file holding the run loop's last skipped wake until the
+    /// next unblocked wake removes it, isolated from the state database's
+    /// writer lock (`project/instrukt/spec/domain/runner`, Runner background
+    /// state).
+    pub fn runner_skipped_wake_file(&self) -> PathBuf {
+        self.state_dir().join("runner-skipped-wake.json")
+    }
+
+    /// Atomic state file holding what the running runner last did with the
+    /// configuration it admitted (`replaced` or `kept`), isolated from the
+    /// state database's writer lock (`project/instrukt/spec/domain/runner`,
+    /// Runner background state).
+    pub fn runner_admission_file(&self) -> PathBuf {
+        self.state_dir().join("runner-admission.json")
+    }
+
     /// Dedicated SQLite database storing per-Redis last observed reachability
     /// for background writers, isolated from the state database's writer lock
     /// (`project/instrukt/spec/domain/runner`, Runner background state).
@@ -490,6 +506,8 @@ mod tests {
             home.runner_lock_file(),
             home.runner_workers_dir(),
             home.computer_fleet_file(),
+            home.runner_skipped_wake_file(),
+            home.runner_admission_file(),
             home.redis_reachability_db_file(),
             home.redis_reachability_lock_file(),
             home.requested_review_db_file(),
