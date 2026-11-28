@@ -179,14 +179,9 @@ recorded by publication.
   definition and reserved names, taxonomy, frontmatter fields and where each
   is allowed, sections, the reference form, third-party doc shape);
   the position index model, its keys per position, findings and notices; the
-  root rules, the position schema chain and the effective schema;
-<!-- planned-change:doctrine-commands-and-scan -->
-  structural validation, its findings and notices, including the required-reads hygiene
+  root rules, the position schema chain and the effective schema; structural
+  validation, its findings and notices, including the required-reads hygiene
   finding and the unreferenced-snippet notice; the pending-documentation model
-<!-- change:doctrine-commands-and-scan -->
-  structural validation, its findings and notices, including the required-reads hygiene
-  finding, the unreferenced-snippet notice and the shared-doctrine command notice; the pending-documentation model
-<!-- /planned-change:doctrine-commands-and-scan -->
   and the lens; listing, reading, closures, the domain read, the listing-line
   shape, the read pipeline and configured values; the publication-behind
   warning on read.
@@ -214,15 +209,8 @@ recorded by publication.
   publication); configuration (the `project` slug, and the in-process
   resolution of `@config` paths); work (todo-slug existence through an
   interface core declares and the CLI wires only when `todos` is enabled);
-<!-- planned-change:doctrine-commands-and-scan -->
   workflow (declared flavor roles through a core-declared lookup interface
   wired by the CLI when `todos` is enabled).
-<!-- change:doctrine-commands-and-scan -->
-  workflow (declared flavor roles through a core-declared lookup interface
-  wired by the CLI when `todos` is enabled); CLI composition root (the
-  binary's subcommand names supplied through a core-declared wiring slot for
-  shared-doctrine command validation).
-<!-- /planned-change:doctrine-commands-and-scan -->
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
 

@@ -115,18 +115,6 @@ one, and never fails the run.
   is published on the computer.
 - **Domain without `index.yaml`** — as
   `project/instrukt/spec/feature/docs/position-index` states.
-<!-- planned:doctrine-commands-and-scan -->
-- **Command in shared doctrine** — an `instrukt <subcommand>` invocation inside
-  an inline code span (backticks, including spans wrapped across lines within a
-  paragraph) or a fenced code block of a `general` or domain snippet (current
-  version or non-empty companion), where `<subcommand>` matches a subcommand
-  (or alias) of this binary derived from its CLI definition. Reports the
-  matched `instrukt <subcommand>` as its value and never fails validation. The
-  bare word `instrukt` naming the repository or binary without a known
-  subcommand, prose outside backticks and code fences, `project` snippets,
-  `third-party` docs and skipped `_`-prefixed directories (such as
-  `docs/_compressed/`) produce no notice.
-<!-- /planned:doctrine-commands-and-scan -->
 
 ### Reporting
 
@@ -213,29 +201,10 @@ Then validation succeeds without taking the writer lock or modifying the state d
 
 ### UC-SV8: A developer learns where a reference points away from the generic (retired)
 
-<!-- planned:doctrine-commands-and-scan -->
-### UC-SV9: A developer is warned when shared doctrine invokes an instrukt command in code
-
-```gherkin
-Given a developer has `general` and domain snippets (including a non-empty companion) containing `instrukt` subcommand invocations inside inline code spans and fenced code blocks
-And the repository also has `general` or domain snippets naming bare `instrukt` in code or naming commands only in plain prose outside backticks and fences
-And the repository also has `project` snippets, `third-party` docs and files under `docs/_compressed/` containing `instrukt` subcommand invocations in code
-When they validate the project's documentation
-Then each `general` and domain snippet or companion with an `instrukt` subcommand invocation inside an inline code span or fenced code block is reported as a warning notice naming its file, notice code and matched invocation
-And bare `instrukt`, prose outside backticks and fences, `project` snippets, `third-party` docs and `docs/_compressed/` produce no command notice
-And validation exits successfully when no finding is present
-```
-<!-- /planned:doctrine-commands-and-scan -->
-
 ## Known caveats
 
 - Validation does not judge prose: a citation that no longer holds, a restated
   rule or a misleading description passes.
-<!-- planned:doctrine-commands-and-scan -->
-- Commands written in plain prose outside backticks and fenced code blocks are
-  not scanned by validation; review catches them
-  (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene).
-<!-- /planned:doctrine-commands-and-scan -->
 - A present `## Required reads` that is not the first H2 is a validation finding.
 - A same-repository reference written as a plain id is valid; authoring uses the clickable form.
 - A prose citation is neither resolved nor checked for direction: only Required reads and See Also entries are.

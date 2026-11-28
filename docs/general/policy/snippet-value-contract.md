@@ -301,18 +301,10 @@ Applies to all snippet authoring contexts and company home knowledge:
   without taxonomy IDs or external doctrine references.
 - Future authoring flows (scaffolding, manual updates).
 
-<!-- planned-change:doctrine-commands-and-scan -->
 The contract is procedural, not structural. It is enforced by the author
 applying it before drafting and by reviewers applying it during review.
 There is no automated grader — code that judges free-text snippet quality
 would violate `general/principle/intelligence-boundaries`.
-<!-- change:doctrine-commands-and-scan -->
-Value judgment under this contract is procedural, enforced by the author
-before drafting and by reviewers during review; there is no automated grader
-for free-text snippet quality (`general/principle/intelligence-boundaries`).
-Only the code-container convention for shared-doctrine command invocations
-carries a non-failing structural validation notice (`## Enforcement`).
-<!-- /planned-change:doctrine-commands-and-scan -->
 
 ## Enforcement
 
@@ -327,11 +319,9 @@ carries a non-failing structural validation notice (`## Enforcement`).
   `init-scaffolding` describe shapes worth considering, not slots to fill.
   Each row is conditional on the value test.
 <!-- planned:doctrine-commands-and-scan -->
-- Documentation validation emits a non-failing structural notice when an inline
-  code span or fenced code block in shared doctrine invokes a subcommand of the
-  binary; review (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene)
-  catches commands written outside backticks and `instrukt` command syntax in
-  shared doctrine.
+- Review (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene) catches
+  commands written outside backticks and `instrukt` command syntax in shared
+  doctrine.
 <!-- /planned:doctrine-commands-and-scan -->
 
 ## Exceptions
