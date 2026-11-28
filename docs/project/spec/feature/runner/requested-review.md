@@ -102,7 +102,11 @@ asked for.
 | Review state | The head's verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`). | The verdict that stands, the session that recorded its current version and `instrukt review show`; for a verdict handed off, the export and its door (`project/instrukt/spec/feature/work/github-apps`). |
 | Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
 | Outstanding | No ask of the head is outstanding, and the requested reviewer the ask reaches has no turn in progress (Reaching the reviewer). The same ask repeated while it is outstanding is not refused: it returns that ask. | The outstanding ask or the turn in progress, and its reviewer session. |
+<!-- planned-change:thin-live-runtime-boundary -->
 | Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
+<!-- change:thin-live-runtime-boundary -->
+| Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runtime/adapter`, `project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 | Delivery | When the caller resolves to a session, a runner wake-up serves this computer: the shared minute wake-up is registered or scheduled by the operator, or the owned runner service is running `instrukt run` (`project/instrukt/spec/feature/runner/module-installation`). A caller that resolves to no session is owed no notice and needs none. | What wake-up inspection reports instead, and its door: `instrukt install` when the shared minute wake-up registration is missing or broken or a demanded runner service is unmet; when neither the shared minute wake-up nor the runner service has demand, enabling the todos or events module of a project on this computer and then `instrukt install` (`project/instrukt/spec/feature/runner/module-installation`). |
 | Procedure | `sdlc/procedure/lifecycle/work/review-commits` is active in the project's published set and declares the `commit-reviewer` role. | The procedure and what the published set shows instead. |
 
@@ -220,6 +224,7 @@ resolves to none, and states when the runner's wake-up is stale
 shared minute wake-up or the owned runner service serves it. The reply does
 not wait for the review.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 When the runtime does not accept the start or the wake within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
 It replays the ask with the identities the first one recorded
@@ -233,6 +238,22 @@ succeeded meanwhile, that unaccepted ask is closed as no longer outstanding; a
 re-review then falls back to the head's own requested reviewer (Reaching the
 reviewer), and a dispute is refused under Review state. Only that command
 replays an ask's start or wake; nothing in the background delivers it.
+<!-- change:thin-live-runtime-boundary -->
+When the runtime does not accept the start or the wake within the command's
+wait, the ask is refused, naming the runtime and its door: the same command.
+It replays the ask with the identities the first one recorded
+(`project/instrukt/spec/feature/runner/session-continuity`). A wake is sent again under its
+command identity, which the runtime accepts once: a wake it already accepted
+opens no second turn and is reported accepted
+(`project/instrukt/spec/feature/runtime/adapter`,
+`project/instrukt/spec/feature/runtime/t3-contract`). Nothing recognises a wake
+by its text, because the same coordinates always render the same text. If, on
+replay of an unaccepted wake, its target session was archived, deleted or
+succeeded meanwhile, that unaccepted ask is closed as no longer outstanding; a
+re-review then falls back to the head's own requested reviewer (Reaching the
+reviewer), and a dispute is refused under Review state. Only that command
+replays an ask's start or wake; nothing in the background delivers it.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### Returning the outcome
 
@@ -383,6 +404,10 @@ And when the reviewer later records a revised verdict for that head, the agent r
 ## See Also
 
 - [project/instrukt/spec/feature/runner/pull-request-review](pull-request-review.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runtime/t3-contract](../runtime/t3-contract.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/runner/procedure-event-delivery](procedure-event-delivery.md)
 - [project/instrukt/spec/feature/runner/thread-retention](thread-retention.md)

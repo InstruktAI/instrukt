@@ -489,3 +489,6 @@ And the developer is told why the todo's commits are not on GitHub
 
 ## See Also
 - [project/instrukt/spec/domain/work](../../domain/work.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->

@@ -351,6 +351,9 @@ Examples:
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)
 - [project/instrukt/spec/feature/runner/procedure-subscription-routing](procedure-subscription-routing.md)
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)

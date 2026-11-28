@@ -19,10 +19,18 @@ target evidence, model identity, model version and eval fingerprint. A stamp's
 actor and its model provenance are distinct. A GitHub approval retains the
 identity GitHub reports; a human approval stated in a session is attributed
 to that session’s runtime and id and recorded by its agent. No identity is
+<!-- planned-change:thin-live-runtime-boundary -->
 guessed. An agent session's model and version come from the active runtime adapter's
 read of that session's state (on T3, the provider and model `t3 thread show`
 reports for the caller's thread); when the adapter reports none, or the read
 fails, the stamp records the model as explicitly unknown, never a guess. Outside an agent session, model
+<!-- change:thin-live-runtime-boundary -->
+guessed. An agent session's model and version come from the active runtime adapter's
+live `read_state` observation (`project/instrukt/spec/feature/runtime/adapter`;
+on T3 via `project/instrukt/spec/feature/runtime/t3`); when the adapter reports
+none, or the read fails, the stamp records the model as explicitly unknown,
+never a guess. Outside an agent session, model
+<!-- /planned-change:thin-live-runtime-boundary -->
 and version are explicitly absent and the actor is named. Every stamp copies the current published eval
 fingerprint at write time.
 
@@ -132,6 +140,9 @@ UC-DC7 and UC-DC10 in `project/instrukt/spec/feature/workflow/delivery-cycle`.
 ## See Also
 
 - [project/instrukt/spec/domain/work](../../domain/work.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)
 - [project/instrukt/spec/feature/work/state-database](state-database.md)
 - [project/instrukt/spec/feature/work/todos](todos.md)

@@ -39,6 +39,7 @@ This repository authors new tests under the opt-in doctrine in
 
 ### Checks and release
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The T3 release-contract suite is a bounded external-system check under
 `project/instrukt/spec/feature/runner/t3-contract`. Its dedicated CI jobs run
 the real headless release and verify the existing T3 fake on the exercised
@@ -47,6 +48,17 @@ checks use the real binaries; adapter-only checks use existing public interfaces
 without implementation visibility changes. The `t3-contract` feature selects
 this suite; missing prerequisites fail a selected run. The pre-commit hook and the
 default test commands run without a T3 release or provider.
+<!-- change:thin-live-runtime-boundary -->
+The T3 release-contract suite is a bounded external-system check under
+`project/instrukt/spec/feature/runtime/t3-contract` (pinned at
+`crates/instrukt-runtime-t3/t3.version`). Its dedicated CI jobs run
+the real headless release and verify the existing T3 fake on the exercised
+surfaces, with provider-dependent exclusions reported explicitly. CLI-facing
+checks use the real binaries; adapter-only checks use existing public interfaces
+without implementation visibility changes. The `t3-contract` feature selects
+this suite; missing prerequisites fail a selected run. The pre-commit hook and the
+default test commands run without a T3 release or provider.
+<!-- /planned-change:thin-live-runtime-boundary -->
 Each feature use case is realized by exactly one named test checking its
 complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 

@@ -64,9 +64,15 @@ intact: deliberate todo pickup still has reflection and timing responsibilities.
 
 ### Runtime projects of execution roots
 
+<!-- planned-change:thin-live-runtime-boundary -->
 A session starts in its execution root only where the selected runtime holds a
 project rooted exactly at that root
 (`project/instrukt/spec/feature/runner/session-continuity`, `execution_root`).
+<!-- change:thin-live-runtime-boundary -->
+A session starts in its execution root only where the selected runtime holds a
+project rooted exactly at that root
+(`project/instrukt/spec/feature/runtime/adapter`, `execution_root`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 Every execution root whose sessions start on this computer demands one, under
 one rule whatever the root is:
 
@@ -86,9 +92,15 @@ one rule whatever the root is:
   holds stay with it.
 - Unfiltered installation and its check cover every row; a module filter
   converges or checks only the rows of its module.
+<!-- planned-change:thin-live-runtime-boundary -->
 - Installing ahead is not a precondition for work: a launch that finds its root
   without a runtime project adds it itself
   (`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- change:thin-live-runtime-boundary -->
+- Installing ahead is not a precondition for work: a launch that finds its root
+  without a runtime project adds it itself
+  (`project/instrukt/spec/feature/runtime/adapter`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### Installation and inspection commands
 
@@ -653,6 +665,9 @@ Then the owned backup timer is withdrawn while local state, credentials and remo
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/task-timing](task-timing.md)
 - [project/instrukt/spec/feature/runner/work-dispatch](work-dispatch.md)
 - [project/instrukt/spec/feature/runner/event-transport](event-transport.md)

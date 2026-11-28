@@ -227,6 +227,7 @@ its own review — is workflow's decision
 a candidate). The runner supplies one fact to that decision and carries out
 the acts it calls for.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **The fact: whether the runtime holds a named session.** For each session an
 uncovered commit names, as work reads the commit's authoring sessions
 (`project/instrukt/spec/feature/work/github-apps`, Admission of review
@@ -240,6 +241,20 @@ primitives).
 | Held | The selected runtime reports the session present, busy or waiting on a person included, and it is a thread instrukt sends input to. |
 | Not held | The value is no session reference; or it names another runtime than the selected one; or the selected runtime reports it gone, unknown to it, archived or deleted; or it is an instrukt-owned thread, of any binding kind, whose native project is not its checkout's, which instrukt sends nothing (`project/instrukt/spec/feature/runner/session-continuity`, T3 realization of keyed dispatch). |
 | Cannot say | The runtime cannot be reached or its answer is an observation error; or delivery holds an instrukt-owned thread's input until its changed or unverified native project is restored. |
+<!-- change:thin-live-runtime-boundary -->
+**The fact: whether the runtime holds a named session.** For each session an
+uncovered commit names, as work reads the commit's authoring sessions
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence), the runner answers from one bounded read of the selected runtime
+per distinct session and derivation
+(`project/instrukt/spec/feature/runtime/adapter`, Universal live spine).
+
+| Named session | The runner's answer |
+| --- | --- |
+| Held | The selected runtime reports the session present, busy or waiting on a person included, and it is a thread instrukt sends input to. |
+| Not held | The value is no session reference; or it names another runtime than the selected one; or the selected runtime reports it gone, archived, or deleted; or it is an instrukt-owned thread, of any binding kind, whose native project is not its checkout's, which instrukt sends nothing (`project/instrukt/spec/feature/runner/session-continuity`, Keyed dispatch and generation succession). |
+| Cannot say | The runtime cannot be reached or its answer is an observation error; or delivery holds an instrukt-owned thread's input until its changed or unverified native project is restored. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Nothing is asked of a session the runtime cannot say about, and no review of
 the candidate is asked for while any uncovered commit's session is unanswered;
@@ -464,5 +479,8 @@ Then no review is started for it
 ## See Also
 
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/work/github-apps](../work/github-apps.md)
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)

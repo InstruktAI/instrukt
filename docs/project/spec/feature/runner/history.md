@@ -10,6 +10,7 @@ When off, every history command reports the module is off before accessing its
 data or source; `instrukt run` starts neither history extraction nor the history
 query responder. Existing stored history and source positions survive disable.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 instrukt makes past conversations searchable through a store on each computer.
 History is a text-only mirror of what people and agents said: for each
 conversation it retains the conversation's identity, title, parent, archive
@@ -23,6 +24,23 @@ stay with the runtime that produced them. An extract-and-load step reads T3's
 local state into instrukt's own history. A search across computers merges
 results from their local stores. History needs no central service or
 Postgres deployment and does not replace the runtime's live conversations.
+<!-- change:thin-live-runtime-boundary -->
+instrukt makes past conversations searchable through a store on each computer.
+History is a text-only mirror of what people and agents said: for each
+conversation it retains the conversation's identity, title, parent, archive
+aliases and the source's own record of the conversation, and the conversation's
+messages with their roles, times and text. It retains no tool call, command
+output, file change, reasoning trace, run or subagent record, no report a
+runtime writes of a background command it ran, and none of the terminal lines,
+diff lines or page HTML a message's attached context captured
+(`project/instrukt/spec/feature/runtime/adapter` and
+`project/instrukt/spec/feature/runtime/t3` define both); those stay with the
+runtime that produced them. An extract-and-load step reads the selected
+runtime's optional non-live cold text source into instrukt's own history. A
+search across computers merges results from their local stores. History needs
+no central service or Postgres deployment and does not replace the runtime's
+live conversations.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ## Canonical fields
 
@@ -50,6 +68,7 @@ as `text`. An imported conversation, one an earlier build imported from
 another archive, has the document that import retained, with every text back
 in its place.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 History consumes the text read of the runtime adapter's optional durable
 conversation-source capability, and no other read of it; the text read and
 what each of its items carries are defined by
@@ -59,6 +78,17 @@ one, and each of the item's messages as the item gives it. It stores the
 adapter's source position opaquely. A runtime without the
 capability reports extraction as unsupported. History does not implement
 conversation relay or runtime lifecycle.
+<!-- change:thin-live-runtime-boundary -->
+History consumes the runtime adapter's optional non-live `ColdTextSource`
+capability, and no other read of runtime storage; its contract and what each
+item carries are defined by `project/instrukt/spec/feature/runtime/adapter`
+(realized for T3 in `project/instrukt/spec/feature/runtime/t3`). History retains
+each item's conversation from that conversation's own record when the item
+carries one, and each of the item's messages as the item gives it. It stores
+the adapter's source position opaquely. A runtime without `ColdTextSource`
+reports extraction as unsupported. History does not implement conversation
+relay or runtime lifecycle.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 The T3 adapter reads the durable projection database located by
 `T3Home::database`, discovered from the machine user home through the shared T3
@@ -73,6 +103,7 @@ recognizes newly durable identities and in-place changes independently of native
 timestamps, including later hydration of older records and equal-time updates.
 The text read discovers its inventory of every conversation in one finite
 read-only SQLite transaction, then reads each selected conversation in a fresh
+<!-- planned-change:thin-live-runtime-boundary -->
 transaction. Its loaded fingerprint covers every row the conversation has in
 the source's conversation and message tables, the finished rows it leaves out
 of what it returns included
@@ -82,6 +113,17 @@ told of, while a new or changed row it leaves out, such as a report of a
 background command, has the conversation read again without changing what
 history retains of it. A stored position whose fingerprint of a conversation
 differs from the text read's has that conversation read again.
+<!-- change:thin-live-runtime-boundary -->
+transaction. Its loaded fingerprint covers every row the conversation has in
+the source's conversation and message tables, the finished rows it leaves out
+of what it returns included (`project/instrukt/spec/feature/runtime/adapter`,
+`project/instrukt/spec/feature/runtime/t3`), so a change to anything else the
+source holds of a conversation is not a change history is told of, while a new
+or changed row it leaves out, such as a report of a background command, has the
+conversation read again without changing what history retains of it. A stored
+position whose fingerprint of a conversation differs from the text read's has
+that conversation read again.
+<!-- /planned-change:thin-live-runtime-boundary -->
 Streaming content remains deferred until complete. A conversation's loaded-source
 fingerprint and its retained conversation, messages and index entry commit
 atomically;
@@ -125,10 +167,15 @@ An adopted project whose configuration does not validate is not admitted when
 deciding whether history is on (`project/instrukt/spec/feature/runner/work-dispatch`:
 the runner works from its admitted configuration).
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The conversation source can read a scoped thread from no position for an initial
 read. Company bindings refuse a changed source identity under
 `project/instrukt/spec/feature/company/conversations`. History extraction remains
 independently keyed by source identity and keeps its retained archives.
+<!-- change:thin-live-runtime-boundary -->
+History extraction remains independently keyed by source identity and keeps its
+retained archives; company conversations do not consume `ColdTextSource`.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Local extraction, lookup and search require no Redis. Installation
 counts enabled history independently as demand for cluster Redis for merged
@@ -229,10 +276,18 @@ store held of it, by the kind of its source:
   records but a report of a background command, which the text read leaves
   out too, placed in the document's `messages`. A message takes its record's
   native id and role, the times its record holds in the fixed form, and the
+<!-- planned-change:thin-live-runtime-boundary -->
   text of the native record where the native record has one, otherwise the
   record's own text; its record is the native record without that text and
   without the members of its attached context the text read leaves out
   (`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- change:thin-live-runtime-boundary -->
+  text of the native record where the native record has one, otherwise the
+  record's own text; its record is the native record without that text and
+  without the members of its attached context the text read leaves out
+  (`project/instrukt/spec/feature/runtime/adapter`,
+  `project/instrukt/spec/feature/runtime/t3`).
+<!-- /planned-change:thin-live-runtime-boundary -->
   Everything else the earlier store held of the conversation is removed: its
   run, subagent and turn-item records, its earlier document and its earlier
   searchable text. A runtime conversation without a retained conversation
@@ -444,6 +499,11 @@ Then that conversation is in the developer's instrukt history without a search o
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/domain/runtime](../../domain/runtime.md)
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runtime/t3](../runtime/t3.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/work/github-record](../work/github-record.md)
 - https://github.com/pingdotgg/t3code/blob/6417151c093e54dbba0e6c824c69d03983793b9a/apps/server/src/orchestration-v2/ProjectionStore.ts — T3's projection writer, the vendor contract the T3 adapter's source reads are verified against.

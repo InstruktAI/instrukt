@@ -429,6 +429,7 @@ frontmatter of Cursor's rule file does, the generated line follows it.
 - **A domain without `index.yaml`** is absent from every global file; the
   sync reports a notice naming it, and it is found through
   `instrukt docs index --domain <x>`.
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Targets come from the selected runtime.** The sync asks the runtime that
   `runner.runtime` selects
   (`project/instrukt/spec/feature/configuration/layered-configuration`),
@@ -438,6 +439,18 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   instance receives an explicit non-delivery outcome. For T3 the adapter
   reports its enabled
   provider instances (`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- change:thin-live-runtime-boundary -->
+- **Targets come from the selected runtime.** The sync asks the runtime that
+  `runner.runtime` selects
+  (`project/instrukt/spec/feature/configuration/layered-configuration`),
+  through its adapter, which enabled instances of which agent runtimes are
+  configured and which home each reports, and writes a file for each of
+  those runtimes with an established native loader; every other enabled
+  instance receives an explicit non-delivery outcome. For T3 the adapter
+  reports its enabled provider instances
+  (`project/instrukt/spec/feature/runtime/adapter`,
+  `project/instrukt/spec/feature/runtime/t3`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Each instance's own home.** A destination is taken only from what the
   runtime reports. A runtime's file is written in the home an enabled
   instance reports. An enabled instance that reports no home receives its
@@ -458,6 +471,7 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   (`project/instrukt/spec/feature/publication/instrukt-status`), and
   `instrukt init` reports the ones a first sync will write
   (`project/instrukt/spec/feature/repository/project-initialization`).
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Links where an instance reads through another folder.** Besides the home
   that receives the file, the runtime reports, per instance, each folder in
   which a link to that file must exist for the instance to read it
@@ -468,6 +482,19 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   is recorded (`general/policy/agent-artifact-governance`: a runtime's
   folders are deployment targets, never a source). The adapter
   reports the folders; publication knows nothing else of the runtime.
+<!-- change:thin-live-runtime-boundary -->
+- **Links where an instance reads through another folder.** Besides the home
+  that receives the file, the runtime reports, per instance, each folder in
+  which a link to that file must exist for the instance to read it
+  (`project/instrukt/spec/feature/runtime/adapter`,
+  `project/instrukt/spec/feature/runtime/t3`). Publication
+  ensures there the link the runtime itself makes: the file's name, pointing
+  at the file in the home. A file there under that name, or a link pointing
+  elsewhere, is replaced by that link; no link is ever removed, and nothing
+  is recorded (`general/policy/agent-artifact-governance`: a runtime's
+  folders are deployment targets, never a source). The adapter
+  reports the folders; publication knows nothing else of the runtime.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Nothing is removed.** A global file stays where it is when its runtime is
   no longer configured, when an instance moves to another home, and when the
   project stops publishing `docs/general/`. Nothing records which files
@@ -777,6 +804,10 @@ And no agent runtime loads it
 ## See Also
 
 - [project/instrukt/spec/domain/publication](../../domain/publication.md) — the publication context.
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runtime/t3](../runtime/t3.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/publication/project-publication](project-publication.md) — the sync the global files are part of.
 - [project/instrukt/spec/feature/repository/hook-sections](../repository/hook-sections.md) — the `pre-commit` section that stages the renderings.
 - [project/instrukt/spec/domain/docs](../../domain/docs.md) — the `index.yaml` model these renderings follow.

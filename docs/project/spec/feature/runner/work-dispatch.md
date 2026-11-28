@@ -56,6 +56,7 @@ renews its connection, and withdrawing it ends that connection. The
 connector checks its provider permissions before taking member questions.
 
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Parts that depend on a service outside instrukt.** The conversation relay (on
 T3's conversation source), the connectors (on the provider), the event readers (on
 Redis) and history's extraction (on T3's database) and query responder (on cluster
@@ -64,6 +65,16 @@ state in `instrukt events status`; a part never ends the runner because its
 service is away. A wake that cannot take the runtime-dispatch lock within its wait
 is skipped and the next wake tries again; `instrukt events status` shows the last
 skipped wake with its time and cause until a wake that is not skipped. The run
+<!-- change:thin-live-runtime-boundary -->
+**Parts that depend on a service outside instrukt.** The conversation relay (on
+the selected runtime adapter), the connectors (on the provider), the event readers (on
+Redis) and history's extraction (on the selected runtime's non-live cold text source) and query responder (on cluster
+Redis) each retry inside themselves until their service returns, and report their
+state in `instrukt events status`; a part never ends the runner because its
+service is away. A wake that cannot take the runtime-dispatch lock within its wait
+is skipped and the next wake tries again; `instrukt events status` shows the last
+skipped wake with its time and cause until a wake that is not skipped. The run
+<!-- /planned-change:thin-live-runtime-boundary -->
 loop records its last configuration admission outcome and last skipped wake
 outside the state database (`project/instrukt/spec/domain/runner`, Runner
 background state), so wake-loop updates never wait on `state/writer.lock`. Lock
@@ -166,6 +177,7 @@ the todo pickup policy. Task timing belongs to
 
 Dispatch resolves the procedure's role through `agents.yaml`, with per-task
 overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
+<!-- planned-change:thin-live-runtime-boundary -->
 Walk each ready profile's tier chain before moving to the next profile. Report
 skipped profiles/models and reasons; skip unavailable/degraded marks until
 expiry. instrukt's own starts use the last known local T3 provider snapshot, kept
@@ -180,6 +192,24 @@ options the selected model does not accept is refused before creation with the
 reason (`project/instrukt/spec/feature/runner/session-continuity`). An
 agent-driven `t3 thread start` passes `--provider` and `--model`; effort/options
 have no flag there and remain explicit start evidence.
+<!-- change:thin-live-runtime-boundary -->
+Walk each ready profile's tier chain before moving to the next profile. Report
+skipped profiles/models and reasons; skip unavailable/degraded marks until
+expiry. instrukt's own starts use the selected runtime's local readiness snapshot, kept
+current in the background (`project/instrukt/spec/feature/runtime/adapter`,
+`project/instrukt/spec/feature/runtime/t3`),
+to check installation, enablement, login, reported models and quota windows; a
+failed or slow refresh never refuses a start, and the runtime's own refusal at
+the start is the signal. Runner
+starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options.
+A runner start hands them to the selected runtime's native launch with its effort translated to
+the provider's native option, exactly as native delegation does; a start whose
+options the selected model does not accept is refused before creation with the
+reason (`project/instrukt/spec/feature/runtime/adapter`,
+`project/instrukt/spec/feature/runtime/t3`). An
+agent-driven `t3 thread start` passes `--provider` and `--model`; effort/options
+have no flag there and remain explicit start evidence.
+<!-- /planned-change:thin-live-runtime-boundary -->
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
@@ -301,6 +331,10 @@ And the developer inspecting runner status sees the updated admission outcome, t
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runtime/t3](../runtime/t3.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/runner/task-timing](task-timing.md)
 - [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)

@@ -394,5 +394,8 @@ None.
 
 - [project/instrukt/spec/domain/work](../../domain/work.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/work/state-database](state-database.md)
 - [project/instrukt/spec/feature/workflow/delivery-cycle](../workflow/delivery-cycle.md)
