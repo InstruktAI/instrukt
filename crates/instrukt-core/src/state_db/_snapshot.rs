@@ -370,319 +370,202 @@ fn fold(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::home::Home;
-    use crate::state_db::{Migration, Read, Store, StoreDb, StoreLock, inspect_file};
-    use std::io::{BufRead, BufReader, Write};
-    use std::process::{Command, Stdio};
-    use std::sync::{Arc, Barrier, mpsc};
-    use std::time::{Duration, Instant};
+    use super::{
+        INVALID_SNAPSHOT_MESSAGE, LockProbe, LockTarget, ROLLBACK_PENDING_MESSAGE, SnapshotFile,
+        SnapshotImage, acquire_image, snapshot_backoff,
+    };
+    use crate::fsx::FsError;
+    use crate::state_db::StoreError;
+    use std::collections::VecDeque;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
-    const ROLLBACK_WRITER_ENV: &str = "INSTRUKT_SNAPSHOT_ROLLBACK_WRITER_DB";
-    const INIT_WRITER_ENV: &str = "INSTRUKT_SNAPSHOT_INIT_WRITER_HOME";
-    const ITEMS_MIGRATIONS: &[Migration] = &[Migration::Sql(
-        "CREATE TABLE items(id INTEGER PRIMARY KEY, label TEXT NOT NULL);",
-    )];
+    fn sqlite_header(journal_version: u8, marker: u8) -> Vec<u8> {
+        let mut bytes = vec![0u8; 100];
+        bytes[..16].copy_from_slice(b"SQLite format 3\0");
+        bytes[18] = journal_version;
+        bytes[19] = journal_version;
+        bytes[60] = marker;
+        bytes
+    }
 
-    fn items_store(dir: &Path) -> Store {
-        Store {
-            name: "test store",
-            file: dir.join("items.db"),
-            lock: StoreLock::Exclusive(dir.join("items.lock"), Duration::from_secs(5)),
-            migrations: ITEMS_MIGRATIONS,
+    fn wal_header(marker: u8) -> Vec<u8> {
+        sqlite_header(2, marker)
+    }
+
+    fn folded_header(marker: u8) -> Vec<u8> {
+        sqlite_header(1, marker)
+    }
+
+    fn nonzero_journal() -> Vec<u8> {
+        let mut bytes = vec![0u8; 512];
+        bytes[..8].copy_from_slice(&[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]);
+        bytes
+    }
+
+    fn run_script(
+        mut reads: VecDeque<(SnapshotFile, Result<Vec<u8>, StoreError>)>,
+        mut probes: VecDeque<(LockTarget, Result<LockProbe, StoreError>)>,
+    ) -> (Result<SnapshotImage, StoreError>, Vec<Duration>) {
+        let sleeps = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&sleeps);
+        let result = acquire_image(
+            "test store",
+            Path::new("test.db"),
+            snapshot_backoff(),
+            move |delay| recorded.lock().unwrap().push(delay),
+            |file| {
+                let (expected, outcome) = reads
+                    .pop_front()
+                    .unwrap_or_else(|| panic!("unexpected read of {file:?}"));
+                assert_eq!(file, expected);
+                outcome
+            },
+            |target| {
+                let (expected, outcome) = probes
+                    .pop_front()
+                    .unwrap_or_else(|| panic!("unexpected lock probe of {target:?}"));
+                assert_eq!(target, expected);
+                outcome
+            },
+        );
+        assert!(reads.is_empty(), "unconsumed reads: {}", reads.len());
+        assert!(probes.is_empty(), "unconsumed probes: {}", probes.len());
+        let delays = sleeps.lock().unwrap().clone();
+        (result, delays)
+    }
+
+    fn push_stable_reads(
+        reads: &mut VecDeque<(SnapshotFile, Result<Vec<u8>, StoreError>)>,
+        main: &[u8],
+        wal: &[u8],
+        journal: &[u8],
+    ) {
+        for _ in 0..2 {
+            reads.push_back((SnapshotFile::Main, Ok(main.to_vec())));
+            reads.push_back((SnapshotFile::Wal, Ok(wal.to_vec())));
+            reads.push_back((SnapshotFile::Journal, Ok(journal.to_vec())));
         }
     }
 
-    fn run_rollback_writer_child(db_path: &Path) {
-        let conn = Connection::open(db_path).unwrap();
-        conn.execute_batch(
-            "PRAGMA journal_mode = DELETE;
-             PRAGMA synchronous = FULL;
-             CREATE TABLE items(id INTEGER PRIMARY KEY, label TEXT NOT NULL);
-             INSERT INTO items(id, label) VALUES (1, 'before');
-             PRAGMA user_version = 1;",
-        )
-        .unwrap();
-        conn.execute_batch(
-            "BEGIN IMMEDIATE;
-             UPDATE items SET label = 'committed' WHERE id = 1;",
-        )
-        .unwrap();
-        let journal = sidecar(db_path, "-journal");
-        let journal_bytes = std::fs::read(&journal).unwrap();
-        assert!(
-            journal_bytes.iter().any(|b| *b != 0),
-            "active rollback writer must have a non-zero journal on disk"
-        );
-        let mut stdout = std::io::stdout().lock();
-        writeln!(stdout, "LOCKED").unwrap();
-        stdout.flush().unwrap();
-        let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
-        conn.execute_batch("COMMIT;").unwrap();
+    #[test]
+    fn active_rollback_writer_retries_with_backoff_until_committed_image_appears() {
+        let mut reads = VecDeque::new();
+        push_stable_reads(&mut reads, &wal_header(1), &[], &nonzero_journal());
+        push_stable_reads(&mut reads, &wal_header(2), &[], &[]);
+        let probes = VecDeque::from([(LockTarget::Main, Ok(LockProbe::ActiveWriter))]);
+
+        let (result, sleeps) = run_script(reads, probes);
+        assert_eq!(result.unwrap(), SnapshotImage::Bytes(folded_header(2)));
+        assert_eq!(sleeps, vec![Duration::from_millis(2)]);
     }
 
-    fn spawn_rollback_writer(
-        test_name: &str,
-        db_path: &Path,
-    ) -> (std::process::Child, BufReader<std::process::ChildStdout>) {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", test_name, "--nocapture"])
-            .env(ROLLBACK_WRITER_ENV, db_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut reader = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line).unwrap();
-            assert!(n > 0, "rollback writer exited before signaling LOCKED");
-            if line.trim() == "LOCKED" {
-                break;
+    #[test]
+    fn ticket_3883_vanished_journal_retries_immediately_without_sleeping() {
+        let mut reads = VecDeque::new();
+        push_stable_reads(&mut reads, &wal_header(1), &[], &nonzero_journal());
+        // Ticket #3883 re-check sees the journal gone after F_GETLK returned F_UNLCK.
+        reads.push_back((SnapshotFile::Journal, Ok(vec![])));
+        push_stable_reads(&mut reads, &wal_header(2), &[], &[]);
+        let probes = VecDeque::from([(LockTarget::Main, Ok(LockProbe::Unlocked))]);
+
+        let (result, sleeps) = run_script(reads, probes);
+        assert_eq!(result.unwrap(), SnapshotImage::Bytes(folded_header(2)));
+        assert!(sleeps.is_empty());
+    }
+
+    #[test]
+    fn orphaned_hot_journal_fails_immediately_without_retrying() {
+        let journal = nonzero_journal();
+        let mut reads = VecDeque::new();
+        push_stable_reads(&mut reads, &wal_header(1), &[], &journal);
+        reads.push_back((SnapshotFile::Journal, Ok(journal)));
+        let probes = VecDeque::from([(LockTarget::Main, Ok(LockProbe::Unlocked))]);
+
+        let (result, sleeps) = run_script(reads, probes);
+        match result {
+            Err(StoreError::Invalid { message, .. }) => {
+                assert_eq!(message, ROLLBACK_PENDING_MESSAGE)
             }
-        }
-        (child, reader)
-    }
-
-    #[test]
-    fn snapshot_read_waits_for_active_external_rollback_writer_without_creating_sidecars() {
-        if let Some(db_path) = std::env::var_os(ROLLBACK_WRITER_ENV) {
-            run_rollback_writer_child(Path::new(&db_path));
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let store = items_store(dir.path());
-        let (mut child, _stdout) = spawn_rollback_writer(
-            "state_db::_snapshot::tests::snapshot_read_waits_for_active_external_rollback_writer_without_creating_sidecars",
-            &store.file,
-        );
-        let mut child_stdin = child.stdin.take().unwrap();
-
-        let barrier = Arc::new(Barrier::new(2));
-        let reader_barrier = Arc::clone(&barrier);
-        let reader_store = store.clone();
-        let (tx, rx) = mpsc::channel();
-        let handle = std::thread::spawn(move || {
-            reader_barrier.wait();
-            let label = reader_store.read(true).map(|read| match read {
-                Some(Read::Current(conn)) => conn
-                    .query_row("SELECT label FROM items WHERE id = 1", [], |row| {
-                        row.get::<_, String>(0)
-                    })
-                    .unwrap(),
-                _ => panic!("expected current snapshot after active writer commits"),
-            });
-            let _ = tx.send(label);
-        });
-
-        barrier.wait();
-        // While the active writer holds the rollback lock and non-zero -journal,
-        // snapshot inspection must wait instead of failing immediately.
-        if let Ok(early) = rx.recv_timeout(Duration::from_millis(120)) {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!(
-                "snapshot read returned early while an active external writer held a rollback journal: {early:?}"
-            );
-        }
-
-        writeln!(child_stdin, "COMMIT").unwrap();
-        drop(child_stdin);
-        let status = child.wait().unwrap();
-        assert!(status.success(), "rollback writer exited with {status}");
-
-        let label = rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("snapshot read should finish once the writer commits")
-            .expect("snapshot read should succeed once the writer commits");
-        handle.join().unwrap();
-        assert_eq!(label, "committed");
-
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(
-                !sidecar(&store.file, suffix).exists(),
-                "snapshot read must leave no {suffix} sidecar on disk"
-            );
-        }
-        assert!(
-            !dir.path().join("items.lock").exists(),
-            "snapshot read must not create the store lock file"
-        );
-    }
-
-    #[test]
-    fn snapshot_read_fails_promptly_on_orphaned_hot_journal() {
-        if let Some(db_path) = std::env::var_os(ROLLBACK_WRITER_ENV) {
-            run_rollback_writer_child(Path::new(&db_path));
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let store = items_store(dir.path());
-        let (mut child, _stdout) = spawn_rollback_writer(
-            "state_db::_snapshot::tests::snapshot_read_fails_promptly_on_orphaned_hot_journal",
-            &store.file,
-        );
-        child.kill().unwrap();
-        let _ = child.wait().unwrap();
-
-        let journal_path = sidecar(&store.file, "-journal");
-        let journal_before = std::fs::read(&journal_path).unwrap();
-        assert!(journal_before.iter().any(|b| *b != 0));
-
-        let started = Instant::now();
-        let err = match store.read(true) {
-            Err(err) => err,
-            Ok(_) => panic!("orphaned hot journal must be rejected"),
-        };
-        let elapsed = started.elapsed();
-
-        match err {
-            StoreError::Invalid { message, .. } => assert_eq!(message, ROLLBACK_PENDING_MESSAGE),
             other => panic!("expected StoreError::Invalid, got {other:?}"),
         }
-        assert!(
-            elapsed < super::super::BUSY_TIMEOUT / 2,
-            "orphaned hot journal should fail promptly without waiting out BUSY_TIMEOUT (took {elapsed:?})"
-        );
-        assert_eq!(std::fs::read(&journal_path).unwrap(), journal_before);
-        for suffix in ["-wal", "-shm"] {
-            assert!(!sidecar(&store.file, suffix).exists());
-        }
-        assert!(!dir.path().join("items.lock").exists());
+        assert!(sleeps.is_empty());
     }
 
     #[test]
-    fn zero_byte_database_matches_live_sqlite_across_all_snapshot_entry_paths() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = items_store(dir.path());
-        std::fs::write(&store.file, []).unwrap();
+    fn lock_probe_error_propagates_without_falling_back_to_unlocked() {
+        let mut reads = VecDeque::new();
+        push_stable_reads(&mut reads, &wal_header(1), &[], &nonzero_journal());
+        let probes = VecDeque::from([(
+            LockTarget::Main,
+            Err(StoreError::Lock(FsError::NoParent {
+                path: PathBuf::from("test.db"),
+            })),
+        )]);
 
-        assert!(store.read(true).unwrap().is_none());
-        assert_eq!(store.stored_schema().unwrap(), Some(0));
-        let inspected = inspect_file(&store.file)
-            .unwrap()
-            .expect("inspect_file should return an empty in-memory connection for a 0-byte file");
-        let version: u32 = inspected
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        let query_only: u32 = inspected
-            .pragma_query_value(None, "query_only", |row| row.get(0))
-            .unwrap();
-        let tables: u32 = inspected
-            .query_row("SELECT count(*) FROM sqlite_master", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!((version, query_only, tables), (0, 1, 0));
-
-        assert!(std::fs::read(&store.file).unwrap().is_empty());
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(!sidecar(&store.file, suffix).exists());
-        }
-        assert!(!dir.path().join("items.lock").exists());
+        let (result, sleeps) = run_script(reads, probes);
+        assert!(matches!(
+            result,
+            Err(StoreError::Lock(FsError::NoParent { .. }))
+        ));
+        assert!(sleeps.is_empty());
     }
 
     #[test]
-    fn corrupt_non_empty_file_fails_promptly_without_mutating_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = items_store(dir.path());
+    fn zero_byte_image_with_no_sidecars_returns_empty_snapshot() {
+        let mut reads = VecDeque::new();
+        push_stable_reads(&mut reads, &[], &[], &[]);
+
+        let (result, sleeps) = run_script(reads, VecDeque::new());
+        assert_eq!(result.unwrap(), SnapshotImage::Empty);
+        assert!(sleeps.is_empty());
+    }
+
+    #[test]
+    fn corrupt_non_empty_image_with_no_active_writer_fails_after_one_confirmation_retry() {
         let corrupt = b"not a sqlite database";
-        std::fs::write(&store.file, corrupt).unwrap();
+        let mut reads = VecDeque::new();
+        push_stable_reads(&mut reads, corrupt, &[], &[]);
+        push_stable_reads(&mut reads, corrupt, &[], &[]);
+        let probes = VecDeque::from([
+            (LockTarget::Main, Ok(LockProbe::Unlocked)),
+            (LockTarget::Shm, Ok(LockProbe::Missing)),
+            (LockTarget::Main, Ok(LockProbe::Unlocked)),
+            (LockTarget::Shm, Ok(LockProbe::Missing)),
+        ]);
 
-        let started = Instant::now();
-        let err = match store.read(true) {
-            Err(err) => err,
-            Ok(_) => panic!("corrupt non-empty file must be rejected"),
-        };
-        let elapsed = started.elapsed();
-
-        match err {
-            StoreError::Invalid { message, .. } => assert_eq!(message, INVALID_SNAPSHOT_MESSAGE),
+        let (result, sleeps) = run_script(reads, probes);
+        match result {
+            Err(StoreError::Invalid { message, .. }) => {
+                assert_eq!(message, INVALID_SNAPSHOT_MESSAGE)
+            }
             other => panic!("expected StoreError::Invalid, got {other:?}"),
         }
-        assert!(
-            elapsed < super::super::BUSY_TIMEOUT / 2,
-            "corrupt static file should fail promptly without waiting out BUSY_TIMEOUT (took {elapsed:?})"
-        );
-        assert_eq!(std::fs::read(&store.file).unwrap(), corrupt);
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(!sidecar(&store.file, suffix).exists());
-        }
-        assert!(!dir.path().join("items.lock").exists());
+        assert_eq!(sleeps, vec![Duration::from_millis(2)]);
     }
 
     #[test]
-    fn snapshot_read_succeeds_during_concurrent_store_initialization_and_wal_writes() {
-        if let Some(home_dir) = std::env::var_os(INIT_WRITER_ENV) {
-            let home = Home::at_user_home(PathBuf::from(home_dir));
-            let mut db = StoreDb::open(&Store::state(&home)).unwrap();
-            for seq in 1..=10 {
-                db.write::<_, StoreError>(|tx| {
-                    tx.execute(
-                        "INSERT INTO events(seq, id, name, payload, envelope, logged_at)
-                         VALUES (?1, ?2, 'snapshot.test', '{}', '{}', '2026-11-28T00:00:00Z')",
-                        super::super::rusqlite::params![seq, format!("ev-{seq}")],
-                    )
-                    .map_err(StoreError::sqlite(
-                        "the state database",
-                        &home.state_db_file(),
-                    ))?;
-                    Ok(())
-                })
-                .unwrap();
-            }
-            return;
-        }
+    fn concurrent_file_change_retries_through_exponential_backoff_until_stable() {
+        let mut reads = VecDeque::new();
+        // Attempt 1: main mutates between first and second read.
+        reads.push_back((SnapshotFile::Main, Ok(wal_header(1))));
+        reads.push_back((SnapshotFile::Wal, Ok(vec![])));
+        reads.push_back((SnapshotFile::Journal, Ok(vec![])));
+        reads.push_back((SnapshotFile::Main, Ok(wal_header(2))));
+        // Attempt 2: main mutates again.
+        reads.push_back((SnapshotFile::Main, Ok(wal_header(2))));
+        reads.push_back((SnapshotFile::Wal, Ok(vec![])));
+        reads.push_back((SnapshotFile::Journal, Ok(vec![])));
+        reads.push_back((SnapshotFile::Main, Ok(wal_header(3))));
+        // Attempt 3: stable.
+        push_stable_reads(&mut reads, &wal_header(3), &[], &[]);
 
-        for trial in 0..5 {
-            let dir = tempfile::tempdir().unwrap();
-            let home = Home::at_user_home(dir.path().to_path_buf());
-            let store = Store::state(&home);
-
-            let mut child = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "state_db::_snapshot::tests::snapshot_read_succeeds_during_concurrent_store_initialization_and_wal_writes",
-                    "--nocapture",
-                ])
-                .env(INIT_WRITER_ENV, dir.path())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-
-            while child.try_wait().unwrap().is_none() {
-                let _ = store.read(true).unwrap_or_else(|err| {
-                    panic!("trial {trial} read(true) failed during init: {err}")
-                });
-                let _ = store.stored_schema().unwrap_or_else(|err| {
-                    panic!("trial {trial} stored_schema() failed during init: {err}")
-                });
-            }
-            let status = child.wait().unwrap();
-            assert!(
-                status.success(),
-                "trial {trial} writer exited with {status}"
-            );
-
-            let Some(Read::Current(conn)) = store.read(true).unwrap() else {
-                panic!("trial {trial} expected initialized state database after writer exit");
-            };
-            let count: i64 = conn
-                .query_row("SELECT count(*) FROM events", [], |row| row.get(0))
-                .unwrap();
-            assert_eq!(count, 10);
-            assert_eq!(
-                store.stored_schema().unwrap(),
-                Some(crate::state_db::schema_version())
-            );
-            for suffix in ["-wal", "-shm", "-journal"] {
-                assert!(
-                    !sidecar(&store.file, suffix).exists(),
-                    "trial {trial}: snapshot read must leave no {suffix} sidecar after writer exit"
-                );
-            }
-        }
+        let (result, sleeps) = run_script(reads, VecDeque::new());
+        assert_eq!(result.unwrap(), SnapshotImage::Bytes(folded_header(3)));
+        assert_eq!(
+            sleeps,
+            vec![Duration::from_millis(2), Duration::from_millis(4)]
+        );
     }
 }
