@@ -103,7 +103,8 @@ once, deduplicated, while preserving the existing restoration obligation.
   claimant at preparation entry, through the workers it dispatches in the
   todo's worktree. A creating session
   writes them as pending carriers naming the todo, in a one-off worktree under
-  `general/policy/commits`, commits with `instrukt repo commit --todo <slug>`,
+  `general/policy/commits`, commits with `instrukt repo commit --todo <slug>
+  --review` (they owe that independent review),
   has the head independently reviewed and merged by the integrator, and
   removes the worktree; it files the todo held, its reason naming that
   branch's merge onto main. The todo's worktree exists only once its

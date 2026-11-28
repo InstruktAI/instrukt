@@ -306,6 +306,35 @@ impl Home {
         self.state_dir().join("runner-service.json")
     }
 
+    /// Directory holding per-worker atomic failure state files for failing
+    /// runner workers, keyed-start findings, and deferred consumer source
+    /// transitions, isolated from the state database's writer lock
+    /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn runner_workers_dir(&self) -> PathBuf {
+        self.state_dir().join("runner-workers")
+    }
+
+    /// Atomic failure state file for the computer fleet evaluation responder
+    /// and tick fleet step, isolated from the state database's writer lock
+    /// (`project/instrukt/spec/domain/runner`, Fleet query and membership).
+    pub fn computer_fleet_file(&self) -> PathBuf {
+        self.state_dir().join("computer-fleet.json")
+    }
+
+    /// Dedicated SQLite database storing per-Redis last observed reachability
+    /// for background writers, isolated from the state database's writer lock
+    /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn redis_reachability_db_file(&self) -> PathBuf {
+        self.state_dir().join("redis-reachability.db")
+    }
+
+    /// Write-isolation lock for [`Home::redis_reachability_db_file`], taken
+    /// only by background reachability transitions and retirement
+    /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn redis_reachability_lock_file(&self) -> PathBuf {
+        self.state_dir().join("redis-reachability.lock")
+    }
+
     /// `~/.instrukt/state/history.lock` — the history store's
     /// write-isolation unit: every history write runs under it, and once the
     /// one-time move of earlier history out of the state database is
@@ -395,6 +424,24 @@ impl Home {
         self.state_dir().join("machine-id")
     }
 
+    /// `~/.instrukt/state/backup-state.json` — local bookkeeping for the most
+    /// recent home backup attempt and last validated generation.
+    pub fn backup_state_file(&self) -> PathBuf {
+        self.state_dir().join("backup-state.json")
+    }
+
+    /// `~/.instrukt/state/backup.lock` — serializes home backup runs on this
+    /// computer and guards `state/backup-state.json`.
+    pub fn backup_lock_file(&self) -> PathBuf {
+        self.state_dir().join("backup.lock")
+    }
+
+    /// `~/.instrukt/state/backup-staleness-notified.json` — deduplication mark
+    /// for wake-time backup staleness notifications, guarded by `runner.lock`.
+    pub fn backup_staleness_notified_file(&self) -> PathBuf {
+        self.state_dir().join("backup-staleness-notified.json")
+    }
+
     /// `~/.instrukt/git/` — ingested external repositories.
     pub fn git_dir(&self) -> PathBuf {
         self.root.join("git")
@@ -441,11 +488,18 @@ mod tests {
             home.withdrawal_lock_file(),
             home.delivered_release_lock_file(),
             home.runner_lock_file(),
+            home.runner_workers_dir(),
+            home.computer_fleet_file(),
+            home.redis_reachability_db_file(),
+            home.redis_reachability_lock_file(),
             home.requested_review_db_file(),
             home.requested_review_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
             home.machine_id_file(),
+            home.backup_state_file(),
+            home.backup_lock_file(),
+            home.backup_staleness_notified_file(),
             home.git_dir(),
             home.locks_dir(),
         ] {

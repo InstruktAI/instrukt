@@ -159,9 +159,22 @@ fn identical_scope_endpoints_are_read_once_per_consumer() {
 // spec: project/instrukt/spec/feature/runner/event-transport UC-ET6
 #[test]
 fn cluster_outage_leaves_local_source_acceptance_responsive() {
+    let unix_source_id = |url: &str| {
+        let socket = std::path::Path::new(url.strip_prefix("unix://").unwrap());
+        let resolved = socket
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .join(socket.file_name().unwrap());
+        instrukt_runner::events::occurrence_id(&[&format!("unix:{}", resolved.display()), "0"])
+    };
+
     let computer = Computer::new();
     let mut cluster = RedisServer::new(&computer.env);
     let local = RedisServer::new(&computer.env);
+    let cluster_id = unix_source_id(&cluster.url);
+    let local_id = unix_source_id(&local.url);
     computer.config(&cluster, Some(&local));
     computer.subscribe("runner.upstream_changed");
     computer.tick();
@@ -188,6 +201,7 @@ fn cluster_outage_leaves_local_source_acceptance_responsive() {
         .query::<String>(&mut local.connection())
         .unwrap();
     computer.tick();
+    computer.tick();
     assert_eq!(computer.accepted(), 1);
     cluster.restart();
     computer.tick();
@@ -203,6 +217,39 @@ fn cluster_outage_leaves_local_source_acceptance_responsive() {
         "the restored source resumed its original pending group"
     );
     assert_eq!(computer.accepted(), 1);
+    // Dropping local Redis retires its reachability row while preserving
+    // cluster's state; re-adding local Redis records its reachability again
+    // without re-logging cluster.
+    computer.config(&cluster, None);
+    computer.tick();
+    computer.config(&cluster, Some(&local));
+    computer.tick();
+
+    let log = std::fs::read_to_string(computer.env.log_dir().join("tick.log")).unwrap();
+    let reachability_lines = |id: &str, label: &str| {
+        log.lines()
+            .filter(|line| {
+                line.contains(" logger=instrukt_runner::transport::_reachability ")
+                    && line.contains(id)
+            })
+            .map(|line| line.split_once(' ').unwrap().1.replace(id, label))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let summary = format!(
+        "=== cluster ===\n{}\n=== local ===\n{}",
+        reachability_lines(&cluster_id, "[CLUSTER]"),
+        reachability_lines(&local_id, "[LOCAL]")
+    );
+    insta::assert_snapshot!(summary, @r#"
+    === cluster ===
+    level=INFO logger=instrukt_runner::transport::_reachability msg="" event=redis_reachable source=[CLUSTER]
+    level=WARNING logger=instrukt_runner::transport::_reachability msg="" event=redis_unreachable source=[CLUSTER]
+    level=INFO logger=instrukt_runner::transport::_reachability msg="" event=redis_reachable source=[CLUSTER]
+    === local ===
+    level=INFO logger=instrukt_runner::transport::_reachability msg="" event=redis_reachable source=[LOCAL]
+    level=INFO logger=instrukt_runner::transport::_reachability msg="" event=redis_reachable source=[LOCAL]
+    "#);
 }
 
 // spec: project/instrukt/spec/feature/runner/event-transport UC-ET7
@@ -524,6 +571,7 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
     let gate = common::redis_proxy::DeliveryGate::new(&local);
     let home = Home::at_user_home(computer.env.home().to_path_buf());
     let state = RunnerState::new(&home);
+    instrukt_core::machine::machine_id(&home).unwrap();
     let consumer = Consumer {
         name: "blocked-handover".into(),
         interest: Interest {
@@ -558,11 +606,23 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
         threads.spawn(|| old.drain(now));
         transport_support::until(|| gate.intercepted());
         computer.config(&cluster, None);
+        // Deferred consumer source transition recording and reporting never
+        // wait on the state database's writer lock.
+        let writer = instrukt_core::fsx::LockGuard::acquire(
+            &home.writer_lock_file(),
+            Duration::from_secs(1),
+        )
+        .unwrap();
         let (send, result) = mpsc::channel();
         let runtime = &runtime;
         let binder =
             threads.spawn(move || send.send(runtime().err().map(|error| error.to_string())));
         let deferred = result.recv_timeout(Duration::from_secs(4));
+        let pending = computer.consumers_status()["pending_source_transitions"].clone();
+        assert_eq!(pending.as_array().unwrap().len(), 1);
+        assert!(!pending[0]["transition"].as_str().unwrap().is_empty());
+        assert!(!pending[0]["cause"].as_str().unwrap().is_empty());
+        assert!(!pending[0]["since"].as_str().unwrap().is_empty());
         let abandoned: usize = computer
             .db()
             .query_row(
@@ -571,6 +631,7 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
                 |row| row.get(0),
             )
             .unwrap();
+        drop(writer);
         gate.release();
         binder.join().unwrap().unwrap();
         assert_eq!(abandoned, 0);
@@ -580,6 +641,13 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
         );
     });
     assert!(runtime().is_ok());
+    assert_eq!(
+        computer.consumers_status()["pending_source_transitions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
     let abandoned: usize = computer
         .db()
         .query_row(

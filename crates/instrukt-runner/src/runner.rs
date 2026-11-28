@@ -229,10 +229,14 @@ pub fn tick(
     let current = Current::new(candidate.generation);
     instrukt_core::config::serve(cx.home, &current);
     let admitted = current.get();
+    reconcile_background_state(cx.home, &admitted);
     // The computer fleet's step runs before the dispatch gate is tried, so a
     // tick that finds it taken still keeps its membership entry and answers
     // waiting evaluation requests within their life.
     crate::computer_fleet::tick_step(cx.home, admitted.global(), cx.wiring, clock());
+    // Evaluate local home backup staleness under the runner lock independently
+    // of event-platform or wake failures.
+    crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, now);
     let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
         tracing::info!(event = "tick_runner_busy");
         return Ok(TickOutcome::Busy);
@@ -261,8 +265,8 @@ pub fn tick(
             &invocation,
         )
     });
-    // The tick's readiness ends with it: its token is revoked and its row,
-    // if a failed refresh left one, removed.
+    // The tick's readiness ends with it: its token is revoked and its failure
+    // file, if a failed refresh left one, removed.
     if readiness.take().is_some() {
         _readiness::ended(cx.home);
     }
@@ -473,6 +477,10 @@ pub fn run(
             connections.check();
         }
         let admitted = current.get();
+        // Evaluate local home backup staleness under the runner lock on every
+        // wake independently of RuntimeInvocation::acquire.
+        crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, woke_at);
+        reconcile_background_state(cx.home, &admitted);
         if let Some(readiness) = &readiness {
             readiness.wake();
         }
@@ -729,6 +737,29 @@ struct EventPlatform {
     transport: ScopedTransport,
     runtime: ConsumerRuntime,
     wakeups: tokio::sync::mpsc::Receiver<()>,
+}
+
+/// Reconciles isolated runner background state for the current admitted
+/// generation: completes any pending legacy table transfers out of the state
+/// database and prunes unconfigured Redis reachability rows.
+fn reconcile_background_state(home: &Home, admitted: &Admitted) {
+    if let Err(error) = crate::state::ensure_workers_migrated(home) {
+        tracing::warn!(event = "runner_workers_migration_failed", %error);
+    }
+    if let Err(error) = crate::transport::ensure_reachability_migrated(home) {
+        tracing::warn!(event = "redis_reachability_migration_failed", %error);
+    }
+    match crate::transport::configured_source_identities(admitted.global()) {
+        Ok(active) => {
+            let refs: Vec<&str> = active.iter().map(String::as_str).collect();
+            if let Err(error) = crate::transport::retire_unconfigured_reachability(home, &refs) {
+                tracing::warn!(event = "redis_reachability_retirement_failed", %error);
+            }
+        }
+        Err(error) => {
+            tracing::warn!(event = "redis_reachability_retirement_skipped", %error);
+        }
+    }
 }
 
 /// The event platform of an admitted generation: none while no event
@@ -1031,18 +1062,20 @@ fn github_pass(
         now,
     );
     match readiness {
-        Some(instrukt_core::interfaces::ReviewReadiness::Met { observation }) => review_pass(
-            cx,
-            state,
-            log,
-            considered,
-            observed.candidate.as_ref(),
-            observation.token(),
-            &api_url,
-            &repository,
-            clock,
-            now,
-        ),
+        Some(instrukt_core::interfaces::ReviewReadiness::Met { observation }) => {
+            crate::review::pass(
+                cx,
+                state,
+                log,
+                considered,
+                observed.candidate.as_ref(),
+                observation.token(),
+                &api_url,
+                &repository,
+                clock,
+                now,
+            )
+        }
         Some(instrukt_core::interfaces::ReviewReadiness::Unmet(finding)) => {
             tracing::warn!(event = "review_readiness_unmet", project = %project.slug, finding = %finding);
         }
@@ -1215,52 +1248,6 @@ fn ci_read(
             tracing::debug!(event = "ci_poll_deferred", project = %project.slug, until = %until);
         }
         Err(err) => tracing::warn!(event = "ci_unreadable", project = %project.slug, error = %err),
-    }
-}
-
-/// Automatic review's part of the GitHub pass, on a project this pass
-/// admitted: its pull requests are observed with the observation
-/// credential readiness issued, and publication issues its own credential
-/// on `clock`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one pass over the project's resolved GitHub source"
-)]
-fn review_pass(
-    cx: &RunnerContext<'_>,
-    state: &RunnerState,
-    log: &DbEventLog,
-    considered: &Considered,
-    candidate: Option<&CommitSha>,
-    token: &str,
-    api_url: &str,
-    repository: &str,
-    clock: &dyn Fn() -> Timestamp,
-    now: Timestamp,
-) {
-    let project = &considered.project;
-    let Some(port) = &cx.wiring.review else {
-        return;
-    };
-    let pass = crate::review::ReviewPass {
-        home: cx.home,
-        candidate,
-        state,
-        log,
-        project,
-        api_url,
-        repository,
-        token,
-        port: port.as_ref(),
-        now,
-        clock,
-        company: cx.wiring.company.as_deref(),
-        reports: cx.reports,
-        config: &considered.config,
-        env: cx.env,
-    };
-    if let Err(error) = crate::review::observe(&pass) {
-        tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
     }
 }
 

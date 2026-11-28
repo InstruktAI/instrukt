@@ -198,10 +198,13 @@ which of them is current for a commit, their publication as the reviewer
 bot's pull-request review and review status, and their transfer to another
 computer. `instrukt review record`, `exempt`, `show`, `export` and `import`
 are their published contract
-(`project/instrukt/spec/feature/work/github-apps`). Which commits are owed a
-review and which review requests exist is the runner's decision, whether a
-candidate's content is covered is workflow's, and how a head is reviewed is its
-review procedure's.
+(`project/instrukt/spec/feature/work/github-apps`); the exemption an author
+chooses when committing reaches the same admission from `instrukt repo commit`,
+through the core-declared interface the CLI wires
+(`project/instrukt/spec/domain/repository`). Which pull-request heads are
+owed a review and which review requests exist is the runner's decision,
+whether a candidate's content is covered and what follows an uncovered commit
+is workflow's, and how a head is reviewed is its review procedure's.
 
 ## Canonical fields
 
@@ -410,10 +413,15 @@ owning design snippet or decision record is declared.
 - **Work → runner (requested review)** — customer-supplier. Work answers
   whether a commit's head verdict stands here, with the session that recorded
   its current version, or was handed off, with the export that handed it off,
-  and which pinned base it admits the commit's verdict against; the runner
-  consults this when it admits a requested review
+  which pinned base it admits the commit's verdict against, and, for that
+  project, which commit's standing verdict has a version with a given report
+  digest; the runner consults this when it admits a requested review
   (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
   requested reviewer's verdict under its own rules.
+- **Runner → work (requested review)** — customer-supplier. Once
+  `instrukt review record` has recorded a version, work hands that version to
+  the runner's verdict-notice queuing
+  (`project/instrukt/spec/feature/runner/requested-review`).
 - **Work → runner (knowledge proposals)** — customer-supplier. Through its
   GitHub boundary work answers the readiness of the proposal pull-request
   credential and whether any pull request has a commit as its head, and opens

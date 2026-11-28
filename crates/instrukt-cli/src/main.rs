@@ -26,8 +26,8 @@ use std::sync::OnceLock;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, bugs, company, config, docs, eval, events, history, mcp, repository, review,
-    runner, secrets, specs, sync, todo, webhooks,
+    agents, backup, blueprint, bugs, company, config, docs, eval, events, history, mcp, repository,
+    review, runner, secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -92,8 +92,10 @@ enum Command {
     Ticks(runner::TicksArgs),
     /// Inspect active and settled native runtime threads.
     Sessions(runner::SessionsArgs),
-    /// Converge/check module infrastructure across adopted projects; repair with the same command.
+    /// Converge/check machine backup timer and module infrastructure across adopted projects; repair with the same command.
     Install(runner::InstallArgs),
+    /// Encrypted offsite backup, generation listing and guarded restore of this instrukt home.
+    Backup(backup::BackupArgs),
 }
 
 /// The log source of this run, once tracing writes to it: the panic hook
@@ -206,6 +208,7 @@ fn run() -> ExitCode {
         Ok(ctx)
     } else if deferred_patch
         || company_init
+        || matches!(&cli.command, Command::Backup(_))
         || authorization::strict_inspection(&matches)
         || authorization::untraced(&matches)
     {
@@ -226,7 +229,7 @@ fn run() -> ExitCode {
     };
     if authorization::read_only(&matches)
         && !authorization::repository_local(&matches)
-        && !matches!(&cli.command, Command::Install(_))
+        && !matches!(&cli.command, Command::Install(_) | Command::Backup(_))
     {
         let notice_result = (|| -> anyhow::Result<()> {
             let mut layers = vec![instrukt_core::config::Layer::Global];
@@ -325,6 +328,7 @@ fn run() -> ExitCode {
         Command::Ticks(args) => runner::run_ticks(args, &mut ctx),
         Command::Sessions(args) => runner::run_sessions(args, &mut ctx),
         Command::Install(args) => runner::run_install(args, &mut ctx),
+        Command::Backup(args) => backup::run(args, &mut ctx),
     };
     match outcome.and_then(|code| ctx.out.flush().map(|()| code)) {
         Ok(code) => code,
@@ -456,6 +460,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Ticks(_) => "ticks",
         Command::Sessions(_) => "sessions",
         Command::Install(_) => "install",
+        Command::Backup(_) => "backup",
     };
     // The logger creates its directory and file itself: under a fence, both
     // are admitted where the library names them, before it does.
@@ -478,6 +483,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         "instrukt_connector_slack",
         "instrukt_outside",
     ];
+    let suppress_third_party = matches!(command, Command::Mcp(_) | Command::Backup(_));
     let builder = || {
         APP_TARGETS.iter().fold(
             instrukt_ai_logging::Builder::new("instrukt").source(source),
@@ -485,10 +491,11 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         )
     };
     let mut file = builder();
-    if matches!(command, Command::Mcp(_)) {
-        // Third-party HTTP and MCP SDK loggers can emit raw server payloads or
+    if suppress_third_party {
+        // Third-party HTTP, MCP, and S3 SDK loggers can emit raw payloads or
         // unexpected pre-initialization messages at WARN/ERROR before instrukt
-        // scrubs credentials: suppress all third-party targets for `mcp`.
+        // scrubs credentials: suppress all third-party targets for `mcp` and
+        // `backup`.
         file = file.env_lookup(|name| match name {
             "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("CRITICAL".into()),
             "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
@@ -498,11 +505,17 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
     let destination = match file.init() {
         Ok(_) => LogDestination::File(source),
         Err(error) => {
-            if builder()
-                .env_lookup(|_| None)
-                .init_writer(std::io::stderr())
-                .is_ok()
-            {
+            let mut fallback = builder();
+            if suppress_third_party {
+                fallback = fallback.env_lookup(|name| match name {
+                    "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("CRITICAL".into()),
+                    "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
+                    _ => None,
+                });
+            } else {
+                fallback = fallback.env_lookup(|_| None);
+            }
+            if fallback.init_writer(std::io::stderr()).is_ok() {
                 tracing::warn!(event = "file_logging_unavailable", %error, "logging to stderr");
             } else {
                 let _ = writeln!(

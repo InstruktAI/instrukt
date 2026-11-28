@@ -99,8 +99,8 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",
         ]
         | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
-        ["ticks", "status"] => InstallationRead,
-        ["install"] => InstallationWrite,
+        ["ticks", "status"] | ["backup", "list"] => InstallationRead,
+        ["install"] | ["backup", "run" | "restore"] => InstallationWrite,
         ["run"] | ["tick"] | ["hooks", "worker"] | ["blueprint", "worker"] | ["webhooks", ..] => {
             RunnerExecute
         }
@@ -231,6 +231,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["agents", "list" | "availability"]
             | ["hooks", "status"]
             | ["ticks", "status"]
+            | ["backup", "list"]
             | ["sessions", "list"]
             | ["history", "search" | "show"]
             | ["todo", "list" | "show"]
@@ -281,6 +282,22 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         if grants.class == RoleClass::Focused && !grants.admits(action, false) {
             return Err(PermissionRefused(grants.refusal(action, "init --company")).into());
+        }
+        return Ok(());
+    }
+    if path.first() == Some(&"backup") {
+        // Home backup is machine-wide and operator-owned: a session bound to a
+        // company is refused every `instrukt backup` subcommand regardless of
+        // its role class (`roles-and-capabilities`).
+        if let Some(company) = &assignment.company {
+            return Err(PermissionRefused(format!(
+                "home backup is the operator's: this session's recorded assignment is company `{company}`'s, so `instrukt {}` is refused whatever its role, and nothing was changed; ask the operator to run home backup",
+                path.join(" ")
+            ))
+            .into());
+        }
+        if grants.class == RoleClass::Focused && !grants.admits(action, false) {
+            return Err(PermissionRefused(grants.refusal(action, &path.join(" "))).into());
         }
         return Ok(());
     }

@@ -185,7 +185,7 @@ an exemption is not.
 | Evidence | Records | Recorded by |
 | --- | --- | --- |
 | Head verdict | An independent review's outcome for one commit: the commit, the pinned base the review started from and whether that base lies on the canonical branch, the verdict, the complete report, the reviewing session, the review request it answers when it answers one, and which of the reviewed commits name no authoring session. | The reviewing session, with `instrukt review record`. |
-| Exemption | The decision that a commit owes no independent review under `general/policy/commits`, with its stated basis, the session that declared it when one resolves, and whether the commit names an authoring session. | The commit's author, with `instrukt review exempt`. |
+| Exemption | The decision that a commit owes no independent review under `general/policy/commits`, with its stated basis, the session that declared it when one resolves, and whether the commit names an authoring session. | The commit's author: when committing, with `instrukt repo commit --exempt` (`project/instrukt/spec/feature/repository/attributed-commit`, Review routing), or afterwards with `instrukt review exempt`. |
 | Derived approval | Workflow's finding that an integration candidate's content is covered (`project/instrukt/spec/feature/workflow/integration-gate`), with the canonical head it was derived against and every covering item. | The runner's tick, through work's command contract. No agent command records one. |
 
 | Command | Contract |
@@ -201,6 +201,30 @@ exists only as a revision: the session that recorded the current version
 judges its own findings again, as when the author disputes them with evidence
 and no new commit. The latest version is current and earlier ones are kept as
 history.
+
+A head verdict's versions are numbered from one in the order they are
+recorded, and `instrukt review show` names each by its number.
+
+The session that recorded the current version of a commit's verdict that
+stands here is that commit's reviewer of record. Work answers it with the
+commit's verdict, and `instrukt review show` names it. Work also answers, for a
+project, which commit's verdict standing here has a version whose report has a
+given digest (Verdict publication names a version by that digest). A verdict this computer
+handed off or set aside has no reviewer of record here. The runner wakes a
+reviewer of record to review later work
+(`project/instrukt/spec/feature/runner/requested-review`). A wake records
+nothing of the commit's evidence and changes nothing of who may record a
+version (Admission of review evidence, Settlement): a verdict the woken session
+records for another commit is that commit's own and admitted as that commit's.
+Once `instrukt review record` has recorded a version, it hands the version to
+the runner, which queues the verdict notices of that head's requested reviews
+and delivers them on its own wake-ups
+(`project/instrukt/spec/feature/runner/requested-review`). The recording waits
+only for that queuing, never for a delivery, and is not undone when it fails. A
+revision whose verdict equals the current one is admitted on the same terms as
+one that changes it (Admission of review evidence, Settlement). A reviewer
+records each dispute it judges as a revision
+(`sdlc/procedure/lifecycle/work/review-commits`).
 
 A verdict and an exemption are separate facts of a commit. Recording, importing
 or publishing one never replaces, hides or retires the other, and work's answer
@@ -246,7 +270,11 @@ names that session. When the commit names none, the exemption is admitted as
 the caller's declaration and recorded with the declaring session, when one
 resolves, and with the fact that the commit names no session; work neither
 refuses it for that nor supplies an author. An exemption counts in candidate
-coverage alone and never gives a commit a review status.
+coverage alone and never gives a commit a review status. The commit command
+hands an author's no-review choice to this same admission once the commit
+exists, as that caller's exemption; it is admitted, refused and recorded
+exactly as `instrukt review exempt` would be, in the same store under the same
+lock.
 
 A derived approval is admitted only for the fetched integration head while the
 canonical branch does not contain it, and only with the coverage finding it
@@ -428,7 +456,7 @@ and a head with none that counts is owed its review.
 
 | Store | Holds | Written by | Write-isolation unit |
 | --- | --- | --- | --- |
-| `state/review.db` | The head verdicts recorded on or imported to this computer, each with its versions, their reports and their moments, and with whether it stands here, was handed off by an export or was set aside by an import; exemptions; and imported derived approvals. | `instrukt review record`, `exempt`, `export` and `import` only: commands their caller waits on. | `state/review.lock` |
+| `state/review.db` | The head verdicts recorded on or imported to this computer, each with its versions, their reports and their moments, and with whether it stands here, was handed off by an export or was set aside by an import; exemptions; and imported derived approvals. | `instrukt review record`, `exempt`, `export` and `import`, and `instrukt repo commit` for the exemption its author's no-review choice records, only: commands their caller waits on. | `state/review.lock` |
 | `state/review-publication.db` | The derived approvals the tick recorded, with their coverage; each withdrawal of a derived approval, of one an import brought as well, with the commit found uncovered and when it was withdrawn; per current verdict and destination what GitHub shows of it, with the cause of an outstanding or refused one; and the verdicts recognised as already published, each with its state, name, moment and review body. | The tick only. | `state/review-publication.lock` |
 
 No background work writes the evidence store and no command a caller waits on

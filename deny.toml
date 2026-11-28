@@ -11,6 +11,13 @@ ignore = [
   # and octocrab 0.54.9; instrukt itself uses jiff. Removal once upstream SDKs
   # migrate off chrono is tracked in todo `retire-chrono-advisory-ignore`.
   "RUSTSEC-2026-0543",
+  # Unmaintained basic-toml 0.1.10 (not a vulnerability, no safe upgrade available)
+  # and proc-macro-error2 2.0.1 (build-time proc-macro only; age 0.12.1 introduces
+  # vulnerable crypto-bigint 0.5.5 / RUSTSEC-2026-0387). Required unconditionally
+  # by upstream age 0.11.5 via i18n-embed-fl / i18n-config.
+  # Removal tracked in `instrukt-home-backup` deferrals.
+  "RUSTSEC-2026-0374",
+  "RUSTSEC-2026-0173",
 ]
 
 [licenses]

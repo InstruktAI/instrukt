@@ -12,7 +12,7 @@ use anyhow::{Context as _, bail};
 use instrukt_core::config::Configuration;
 use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
-use instrukt_runner::requested_review::{self, Reached};
+use instrukt_runner::requested_review::{self, ReReviewOutcome, Reached};
 use instrukt_todos::work::review::{self, ReviewProject, Verdict};
 
 use crate::context::Ctx;
@@ -26,11 +26,13 @@ pub struct ReviewArgs {
 #[derive(Debug, clap::Subcommand)]
 enum ReviewCommand {
     /// Ask for the independent review of an exact committed worktree head
-    /// by its coordinates alone; instrukt renders the reviewer's assignment
-    /// and starts or sends to the head's reviewer itself.
+    /// by its coordinates alone; instrukt renders the reviewer's assignment,
+    /// starts or wakes the reviewer itself, and returns recorded verdicts to
+    /// the asking session.
     Start(StartArgs),
     /// Record the calling session's verdict of the commits after the base
-    /// up to the head, with the complete report.
+    /// up to the head, with the complete report, and queue verdict notices
+    /// for sessions that asked for a requested review of the head.
     Record(RecordArgs),
     /// Record that a commit the canonical branch does not contain owes no
     /// independent review, with its basis.
@@ -219,6 +221,14 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         sources: args.sources,
     })?;
     let verdicts = crate::wiring::head_verdicts(ctx);
+    let asker = caller(ctx, &config)?;
+    let now = ctx.clock.now();
+    let delivery = || {
+        super::runner::with_installation(ctx, true, None, |request| {
+            instrukt_runner::installation::runner_wakeup(request, now)
+        })
+        .map_err(|error| error.to_string())
+    };
     let project = instrukt_runner::interfaces::ProjectRef {
         slug: project.slug,
         root: project.root,
@@ -229,7 +239,9 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             config: &config,
             project: &project,
             verdicts: verdicts.as_ref(),
-            now: ctx.clock.now(),
+            asker,
+            delivery: &delivery,
+            now,
         },
         coordinates,
     )?;
@@ -240,22 +252,54 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let reached = match (reply.reached, reply.repeated) {
         (_, true) => "already reached by this same outstanding ask",
         (Reached::Started, false) => "started by this ask",
-        (Reached::Sent, false) => "sent this ask",
+        (Reached::Woke, false) => "woken by this ask",
     };
     ctx.out.line(&format!(
         "requested {} of {} from pinned base {}",
         reply.kind, reply.head, reply.base
     ))?;
+    if let Some(re_review) = &reply.re_review {
+        let line = match re_review {
+            ReReviewOutcome::ReachedReviewer { earlier } => format!(
+                "re-review: traced to earlier head {} by {}, woke its reviewer of record",
+                earlier.head,
+                earlier.traced_by.as_str()
+            ),
+            ReReviewOutcome::FreshReviewer(reason) => match reason.earlier() {
+                Some(earlier) => format!(
+                    "re-review: traced to earlier head {} by {}; reuse impossible ({reason}), fell back to head's own requested reviewer",
+                    earlier.head,
+                    earlier.traced_by.as_str()
+                ),
+                None => format!(
+                    "re-review: reuse impossible ({reason}), fell back to head's own requested reviewer"
+                ),
+            },
+        };
+        ctx.out.line(&line)?;
+    }
     ctx.out.line(&format!(
         "reviewer: session {}, {reached}, start key {}",
         reply.reviewer, reply.start_key
     ))?;
     ctx.out
         .line(&format!("report: {}", reply.report.display()))?;
-    ctx.out.line(&format!(
-        "outcome: in the report, and in `{}` once the reviewer records its verdict",
-        reply.show
-    ))?;
+    let outcome = match &reply.asker {
+        Some(asker) => format!(
+            "outcome: in the report, in `{}` once the reviewer records its verdict, and delivered to session {asker}",
+            reply.show
+        ),
+        None => format!(
+            "outcome: in the report, and in `{}` once the reviewer records its verdict (no calling session resolved for delivery)",
+            reply.show
+        ),
+    };
+    ctx.out.line(&outcome)?;
+    if reply.wakeup_stale {
+        ctx.out.line(
+            "warning: runner wake-up is stale; verdict delivery waits until the next runner wake-up (check `instrukt ticks status`)",
+        )?;
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -281,6 +325,34 @@ fn record(args: RecordArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let clock = ctx.clock.clone();
     let env = crate::wiring::environment(ctx)?;
     let recorded = review::record(&ctx.home, &env, &project, &request, &|| clock.now())?;
+    let recorded_version = requested_review::RecordedVersion {
+        project: project.slug.clone(),
+        head: recorded.head.clone(),
+        number: recorded.version,
+        verdict: match request.verdict {
+            Verdict::Approve => instrukt_runner::interfaces::HeadVerdictValue::Approve,
+            Verdict::NeedsWork => instrukt_runner::interfaces::HeadVerdictValue::NeedsWork,
+        },
+        report_digest: recorded.name.to_string(),
+        base: recorded.base.clone(),
+        reviewer: recorded.reviewer.clone(),
+        recorded_at: recorded.recorded_at,
+    };
+    if let Err(error) =
+        requested_review::queue_verdict_notices(&ctx.home, &recorded_version, ctx.clock.now())
+    {
+        tracing::warn!(
+            event = "requested_review_notice_failed",
+            project = %project.slug,
+            head = %recorded.head,
+            version = recorded.version,
+            error = %error
+        );
+        eprintln!(
+            "instrukt: warning: could not queue verdict notice for {}: {error}; the verdict is recorded and readable with `instrukt review show {}`",
+            recorded.head, recorded.head
+        );
+    }
     ctx.out.line(&format!(
         "recorded {} version {}: {} {} {}",
         recorded.head,

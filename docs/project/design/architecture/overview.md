@@ -106,6 +106,16 @@ provenance is not a roleless bypass. A bot-role commit resolves its author from
 the verified App actor even without native provider-agent identity; other
 unverified agent identity remains unresolved.
 
+Core likewise declares the local-only, lock-free home backup standing query
+interface (`HomeBackupStanding`) consumed by publication's `instrukt status`,
+carrying runner's standing answer and structured `(path, reason)`
+unreadable-state errors so publication never reads runner's private state path;
+`instrukt-runner` implements it and `instrukt-cli` wires it, preserving one-way
+`instrukt-runner` → `instrukt-core`. Core's `state_db` infrastructure layer
+also exposes a reusable SQLite online-backup and consistency-verification
+primitive shared by runner's home backup and single-company export
+(`project/instrukt/spec/feature/company/company-containers`).
+
 The shared GitHub boundary uses configured project/author/reviewer Apps and
 issues installation credentials from protected key references under
 `project/instrukt/spec/feature/work/github-apps`. CLI wiring supplies its
@@ -123,6 +133,7 @@ Committed sources recreate publication. User-owned configuration and secrets, lo
 history and the work record need preservation: the state database holds the
 work record's only copy, and GitHub shows it to people without holding it.
 Deleting the home is not a lossless reset.
+
 
 
 | Path | Holds | Re-created from |
@@ -147,12 +158,16 @@ Deleting the home is not a lossless reset.
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
 | `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
 | `state/computer-fleet.json` | the computer fleet's current failure on this computer, `{failure, since}`, written whole beside its previous version and renamed over it by `instrukt run`'s evaluation responder or `instrukt tick`'s fleet step while a failure lasts, removed on the next success or when no cluster connection is configured; readers take no lock; shown by `instrukt events status` as the worker `computer-fleet` (`project/instrukt/spec/domain/runner`) | nothing: the next attempt records the failure again |
+| `state/runner-workers/<id>.json` | per-worker current failure records shown by `instrukt events status` (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next failing pass records the failure again |
+| `state/redis-reachability.db` | per-Redis last observed reachability store (SQLite, WAL; `-wal` and `-shm` beside it) for background writers (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next background Redis command observes reachability again (at most one repeated transition log) |
+| `state/redis-reachability.lock` | write-isolation lock of `state/redis-reachability.db` (`project/instrukt/spec/domain/runner`, Runner background state) | taken again by the next background reachability transition |
 | `state/eval-fingerprint/current.yaml` | the current eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`) | the next `sync` |
 | `state/eval-fingerprint/<commit>.yaml` | one record per published commit: the fingerprint it was published under and its prose and units digests; history that stamps' evaluation windows are attributed against, kept as written, a record that holds no digests holding its fingerprint alone | nothing: a lost record loses that commit's attribution; must be preserved |
 | `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+
 
 
 `state/requested-review.db` holds the requested reviews
@@ -162,20 +177,31 @@ write-isolation unit, taken only by that command
 records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
 
+Home backup adds two bounded single-writer state files under `state/`, kept
+outside `state/instrukt.db` and `state/writer.lock` (`sdlc/policy/state-storage`),
+plus one serialization lock for backup runs:
+
+| Path | Nature & owner | Loss cost | Medium, write-isolation unit, scope & bound |
+| --- | --- | --- | --- |
+| `state/backup-state.json` | External bookkeeping; single writer `instrukt backup run` (`runner` context). Holds `schema_version`, `first_attempt_at`, `last_attempt_at`, `last_outcome` (`ok` \| `failed`), `last_generation`, `last_success_at`, and redacted `last_error` (preserving `first_attempt_at`, `last_success_at`, and `last_generation` across subsequent failed runs, and advancing `last_success_at`/`last_generation` once `_validated/<key>` is published) | Standing degrades to `never_run` until the next `instrukt backup run`; remote generations stay intact and discoverable via `instrukt backup list` (no remote rebuild on local reads) | Bounded single-record JSON file (`< 4 KiB`), written whole and atomically (`0600`). Write-isolation unit: `state/backup.lock` (readers such as `instrukt status` and `instrukt events status` read lock-free via atomic rename). Scope: per-home (`INSTRUKT_HOME`); overwritten in place, never grows, excluded from backup archives |
+| `state/backup.lock` | Lock file; taken exclusively by `instrukt backup run` (and non-blocking by live-home `instrukt backup restore`) | Taken again by the next backup run | Advisory lock file serializing concurrent `instrukt backup run` invocations and writes to `state/backup-state.json`; never shared with `state/writer.lock` or `state/runner.lock`. Scope: per-home |
+| `state/backup-staleness-notified.json` | External bookkeeping; single writer `instrukt tick` / `instrukt run` (`runner` context). Holds `schema_version`, `episode_anchor` (`last_success_at`, or `first_attempt_at` when no backup has succeeded yet), and `notified_at` so staleness invokes `runner.notify` once per episode | At most one duplicate staleness notification on the next runner wake if lost while still stale; no data loss or network transfer | Bounded single-record JSON file (`< 1 KiB`), written whole and atomically (`0600`) before invoking `runner.notify` for a stale episode and removed when a newer `last_success_at` is observed. Write-isolation unit: `state/runner.lock` (never shared with `state/backup.lock` or `state/writer.lock`). Scope: per-home; overwritten/removed in place, never grows, excluded from backup archives |
+
+
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
 a link at the database file itself is refused
 (`project/instrukt/spec/feature/work/state-database`). The state database also holds
-the read-back cursor of each connector (`connector_read_back`), each conversation
-message's no-work interval and the current state of the runner's background
-workers — the history workers and the readiness refresh (`runner_workers`). The
-computer fleet's evaluation responder keeps its current failure in
-`state/computer-fleet.json`, not in the state database, and its uses of cluster
-Redis record no reachability in the state database; outside a one-time schema
-upgrade of an older database, it takes no writer lock
-(`project/instrukt/spec/domain/runner`). Installation keeps no record of the units it wrote and the runner
+the read-back cursor of each connector (`connector_read_back`) and each conversation
+message's no-work interval. Runner background worker failures live under
+`state/runner-workers/` beside `state/computer-fleet.json`, and per-Redis
+reachability lives in `state/redis-reachability.db` under
+`state/redis-reachability.lock`, outside the state database and
+`state/writer.lock` (`project/instrukt/spec/domain/runner`, Runner background
+state). Installation keeps no record of the units it wrote and the runner
 service publishes no identity: both converge by name
 (`project/instrukt/spec/feature/runner/module-installation`).
+
 
 A project carries `instrukt.yaml` (the project layer) and documentation in
 three positions:
@@ -243,7 +269,8 @@ the command-line parser's own text and exit status 2.
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
-| OS scheduler | runner | `instrukt tick` each minute |
+| OS scheduler | runner | `instrukt tick` each minute; when global `backup` is validly configured, one owned daily timer invoking `instrukt backup run` at the configured local time (`project/instrukt/spec/feature/runner/module-installation`) |
+| S3-compatible object storage | runner | one-shot CLI commands (`instrukt backup run\|list\|restore`) speaking provider-neutral S3 APIs directly through the S3 client with plain upload framing (without `aws-chunked` streaming-trailer checksums), built-in bounded retries, and single-object and multipart upload and server-side copy over credential-free `https` (or loopback `http` for local verification); never wrapped through `instrukt-outside` (`project/instrukt/design/architecture/outside-gate`, `project/instrukt/spec/feature/runner/home-backup`) |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
@@ -507,24 +534,48 @@ session-fixed timing through A3's bounded batch log.
 On a project that opts in, every commit GitHub checks before the canonical
 branch advances carries the reviewer bot's review status, obtained without
 anyone asking: an eligible pull request's current head and the integrator's
-candidate. Four contexts take part and each keeps its own decision; the review
-itself belongs to the procedure that answers the request.
+candidate.
+
+Whether a commit owes independent review is its author's decision, made when
+committing and kept as review evidence (`general/policy/commits`); instrukt
+asks for a review on its own initiative only where no author of ours can
+decide (`project/instrukt/spec/feature/workflow/integration-gate`, Review
+coverage of a candidate).
+The picture below shows who decides and what follows at each stage, by kind of
+author. A trusted author is a session of ours, which decides for its own
+commits (todo, one-off worktree), or a trusted account or configured App bot
+with no session of ours behind its pull request, for which instrukt decides; an
+outside author's work is not reviewed.
+
+| Author kind | Who decides review | The review | A revised head | Where the verdict reaches | The human gate |
+| --- | --- | --- | --- | --- | --- |
+| Todo (a session of ours in a todo's lifecycle) | The lifecycle: every delivery is build-reviewed, and each commit carries its author's choice from the commit (`project/instrukt/spec/feature/repository/attributed-commit`) | Build review of the finalized head (`project/instrukt/spec/feature/workflow/delivery-cycle`) | The lifecycle's fix and re-review loop (`sdlc/procedure/lifecycle/fix-review-findings`) | The todo's record, reflected on its pull request (`project/instrukt/spec/feature/work/github-record`); the finalized head's approval covers it in the candidate | The approval gates the workflow configures |
+| One-off worktree (a session of ours outside a todo) | Its author, per commit, when committing: it asks for a requested review of a head that contains the commit, or records the exemption with its basis | The requested reviewer on the exact head (`project/instrukt/spec/feature/runner/requested-review`) | A further requested review wakes the earlier head's reviewer of record (or starts the new head's own when none stands), and a dispute on an unchanged head wakes the head's reviewer of record | Work's head verdict, which the gate reads (`project/instrukt/spec/feature/work/github-apps`), and a verdict notice delivered to the session that asked (`project/instrukt/spec/feature/runner/requested-review`) | None of its own |
+| Trusted pull request no session of ours authored | instrukt: the runner asks for every eligible head (`project/instrukt/spec/feature/runner/pull-request-review`) | A standing reviewer answering `runner.review_needed` | A new push is a new head, reviewed in its own right | The reviewer bot's pull-request review and commit status (`project/instrukt/spec/feature/work/github-apps`) | Branch protection requiring the review status, the repository owner's act |
+| Outside pull request | Nobody: it is not reviewed (`project/instrukt/spec/feature/runner/pull-request-review`, Which heads are reviewed) | None | None | None | None |
+| Integration gate (the candidate) | The record: each commit the candidate adds is covered by its evidence or goes back to its author to decide; instrukt decides only for commits no author of ours can decide (`project/instrukt/spec/feature/workflow/integration-gate`) | A review of the exact candidate, asked only when no uncovered commit has an author of ours who can decide | A changed candidate is a new commit, derived afresh | The derived approval, or the candidate's own verdict, as its review status (`project/instrukt/spec/feature/work/github-apps`) | Branch protection's required checks and review status |
+
+Five contexts take part in the gate and each keeps its own decision; the
+review itself belongs to the procedure that answers the request.
 
 | Context | Decides | Contract |
 | --- | --- | --- |
-| runner | Which commits are owed a review; the one live request per commit and its repetition until a verdict exists | `project/instrukt/spec/feature/runner/pull-request-review` |
-| work | Review evidence and its admission, which evidence is current, its publication and transfer, and the two identities' readiness | `project/instrukt/spec/feature/work/github-apps` |
-| workflow | Whether a candidate's content is covered | `project/instrukt/spec/feature/workflow/integration-gate` |
+| repository | The routing choice the commit command takes from the author, and handing a no-review choice to work as the commit's exemption | `project/instrukt/spec/feature/repository/attributed-commit` |
+| runner | Which pull-request heads are owed a review; the one live request per commit and its repetition until a verdict exists; whether the runtime holds a named session; asking a held candidate's authors and telling the integrator | `project/instrukt/spec/feature/runner/pull-request-review` |
+| work | Review evidence and its admission, the exemption a commit's author records when committing among it, which evidence is current, its publication and transfer, and the two identities' readiness | `project/instrukt/spec/feature/work/github-apps` |
+| workflow | Whether a candidate's content is covered, commit by commit, and what follows an uncovered commit: its author is asked, or the candidate owes a review | `project/instrukt/spec/feature/workflow/integration-gate` |
 | configuration | The per-project opt-in and where its prerequisites are refused | `project/instrukt/spec/feature/configuration/layered-configuration` |
 
 ```mermaid
 sequenceDiagram
+  participant A as author (agent)
   participant G as GitHub
   participant R as runner (tick)
   participant V as reviewer (agent)
   participant W as work
   participant F as workflow
   participant I as integrator (agent)
+  A->>W: instrukt repo commit with a no-review choice: the commit's exemption, with its basis
   R->>G: open pull requests and heads (conditional requests)
   R->>W: does this head carry a verdict?
   W->>G: for a head with no evidence here, the reviewer bot's status on it, the review that status links and its latest review on each pull request observed at that head
@@ -534,12 +585,19 @@ sequenceDiagram
   R->>W: publish what is outstanding to the pull requests observed at each head
   W->>G: a review on each such pull request and the review status on the commit, linking one of those reviews, as the reviewer bot, until the newest of each shows the current verdict
   R->>F: active candidate: is its content covered?
-  F->>W: current evidence of each head and commit the finding depends on
+  F->>W: current evidence of each commit the candidate adds
+  F->>R: for each uncovered commit's named session: does the runtime hold it?
   alt every commit covered
     R->>W: record the derived approval
     W->>G: review status on the candidate commit, by a tick that found it covered
-  else a commit is not covered
-    R-->>V: runner.review_needed for the exact candidate
+  else a commit is not covered: the candidate is held
+    R-->>I: once per candidate: runner.candidate_held (commits and whose decisions)
+    alt an uncovered commit has an author of ours who can decide
+      R-->>A: once per commit and session: decide — ask for review, or record why none is owed
+      A->>W: instrukt review exempt, or a review of a head that contains the commit
+    else no uncovered commit has an author of ours who can decide
+      R-->>V: runner.review_needed for the exact candidate
+    end
   end
   R-->>I: runner.ci_completed once the candidate's result is complete
 ```
@@ -581,7 +639,7 @@ them takes the state database's writer lock.
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
-| `state/review.db` | head verdicts with their versions, reports and moments, each standing here, handed off by an export or set aside by an import, exemptions and imported derived approvals; written only by the `instrukt review` commands | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
+| `state/review.db` | head verdicts with their versions, reports and moments, each standing here, handed off by an export or set aside by an import, exemptions and imported derived approvals; written only by the `instrukt review` commands and by `instrukt repo commit` for the exemption its author's no-review choice records | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
 | `state/review.lock` | the evidence store's write-isolation unit, held for each of those commands' transactions | taken again by the next command |
 | `state/review-publication.db` | the derived approvals the tick recorded and each withdrawal of one, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken and each withdrawal with the commit found uncovered are not re-created |
 | `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
@@ -613,6 +671,43 @@ Observation rides the tick's existing
 conditional GitHub pass, requests the event platform and publication the tick;
 the gate adds no webhook, queue or process.
 
+A held candidate adds no store either. The ask to each uncovered commit's
+author is one of the runner's inputs to that session, queued in the state
+database together with the runner's record of the ask, `review_asks`, before
+anything is sent; the integrator's notice is the event `runner.candidate_held`,
+which the event log appends once per candidate
+(`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
+candidate's authors). Both are this computer's: a computer that takes over
+serving the project asks afresh, at the cost of one repeated ask per held
+commit.
+
+### Home backup and restore
+
+```mermaid
+flowchart LR
+  C[configuration: global backup + company conversion] --> R[runner: instrukt backup run under backup.lock]
+  R --> S["instrukt-core::state_db online backup + quick_check"]
+  S --> P["stream tar -> zstd -> age X25519 -> 0700 staging"]
+  P --> U["S3 client (plain framing): PutObject/Multipart -> _staging/<key>"]
+  U --> V["HEAD exact size -> CopyObject / UploadPartCopy -> <key> + _validated/<key>"]
+  V --> K[prune this machine-id + clean stale _staging/multiparts]
+  K --> B["atomic state/backup-state.json (0600)"]
+  B -. lock-free HomeBackupStanding .-> ST["publication: instrukt status"]
+  B -. runner.lock wake check .-> AN["runner: backup-staleness-notified.json + runner.notify"]
+```
+
+Home backup composes three bounded contexts without crossing write-isolation
+units (`project/instrukt/spec/domain/context-map`). Configuration supplies
+admitted global `backup` settings (withholding only home backup when invalid)
+and symlink-confined company-home forward conversion; runner executes one-shot
+CLI backup, listing, and guarded restore directly against provider-neutral
+S3-compatible object storage (outside `instrukt-outside`), records local
+bookkeeping in `state/backup-state.json` under `state/backup.lock`, tracks
+wake-time staleness notifications in `state/backup-staleness-notified.json`
+under `state/runner.lock`, and converges the owned daily OS timer via
+unfiltered `instrukt install`; publication renders runner's local-only,
+lock-free `HomeBackupStanding` answer verbatim in `instrukt status` without
+reading runner's files or contacting remote storage.
 ## Failure modes
 
 - **The program panics:** the terminal shows only `instrukt stopped
@@ -808,3 +903,48 @@ the gate adds no webhook, queue or process.
   not published is gone. The computer that serves next recognises what the
   reviewer bot published, has every other owed head reviewed again, and shows
   whatever approval GitHub last received.
+
+- **A home backup fails consistency, headroom, symlink-confinement, or remote
+  staged verification:** nothing is published to the computer's namespace,
+  existing validated generations stay intact, best-effort remote staging and
+  multipart abort cleanup runs, local staging is deleted,
+  `state/backup-state.json` records the failure while preserving the last
+  successful generation, and `instrukt backup run` invokes `runner.notify`
+  directly. If a post-validation step (staging deletion, retention pruning, or
+  orphan cleanup) fails after `_validated/<key>` is published,
+  `state/backup-state.json` still advances `last_success_at` and
+  `last_generation` while recording the failure, invoking `runner.notify`, and
+  exiting non-zero. A failure writing `state/backup-state.json` never
+  suppresses `runner.notify` and surfaces alongside the primary error.
+- **Global `backup` configuration carries validation findings:** only home
+  backup admission is withheld; backup commands refuse naming the finding and
+  configuration door, `instrukt install --check` reports unmet demand without
+  withdrawing an existing owned backup timer, and all other admitted modules
+  and runner work continue unchanged.
+- **A home restore fails before or during destination swap:** insufficient
+  headroom on any written volume, decryption error, unsafe tar entry, failed
+  SQLite integrity check, busy home lock, lock-path or destination symlink
+  escape (including leaf symlinks), or declined/non-interactive confirmation
+  leaves the destination untouched, releases acquired locks, removes staging,
+  and refuses naming the cause and recovery door. During swap, pre-existing
+  SQLite sidecars are moved into same-filesystem rollback staging after each
+  main database's atomic rename succeeds rather than unlinked mid-swap, and
+  deleted only once the entire swap commits; a mid-swap failure rolls back
+  moved entries and matching sidecars from same-filesystem rollback staging
+  and, if rollback fails, reports the partial state with the repeat-restore
+  recovery door.
+- **No home backup succeeds within runner's staleness threshold
+  (`project/instrukt/spec/domain/runner`) while global `backup` is configured
+  (whether admitted or withheld, and regardless of the latest attempt's
+  outcome):** `instrukt status` and `instrukt events status` surface active
+  staleness (alongside any active failure) from local bookkeeping on every
+  host; hosts running `instrukt tick` or `instrukt run` record
+  `state/backup-staleness-notified.json` under `state/runner.lock` before
+  invoking `runner.notify` once per episode until a subsequent backup succeeds.
+- **Backup bookkeeping or staleness mark is unreadable, unwritable, or carries
+  a newer schema:** `instrukt status` and `instrukt events status` report
+  unreadable `state/backup-state.json` with `(path, reason)` without hiding
+  unrelated sections; `instrukt tick` and `instrukt run` log a warning without
+  aborting unrelated runner work or fabricating staleness notifications, and
+  skip `runner.notify` rather than looping when
+  `state/backup-staleness-notified.json` cannot be read or written.

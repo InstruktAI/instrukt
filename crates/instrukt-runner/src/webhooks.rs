@@ -642,7 +642,11 @@ fn receive_sign_in(home: &Home, request: &Request, now: Timestamp) -> HttpReply 
         Ok(config) => config,
         Err(_) => return HttpReply::plain(500, "cannot read ingress configuration\n".into()),
     };
-    let transport = match ScopedTransport::cluster_only(&global, &RunnerState::new(&inspection)) {
+    let transport = match ScopedTransport::cluster_with(
+        &global,
+        &RunnerState::new(&inspection),
+        crate::transport::Reachability::Unrecorded,
+    ) {
         Ok(transport) => transport,
         Err(_) => return HttpReply::plain(502, "cluster Redis unavailable\n".into()),
     };
@@ -707,7 +711,11 @@ fn receive_issuer(home: &Home, request: &Request) -> HttpReply {
         Ok(config) => config,
         Err(_) => return HttpReply::plain(500, "cannot read ingress configuration\n".into()),
     };
-    let transport = match ScopedTransport::cluster_only(&global, &RunnerState::new(&inspection)) {
+    let transport = match ScopedTransport::cluster_with(
+        &global,
+        &RunnerState::new(&inspection),
+        crate::transport::Reachability::Unrecorded,
+    ) {
         Ok(transport) => transport,
         Err(_) => return HttpReply::plain(502, "cluster Redis unavailable\n".into()),
     };

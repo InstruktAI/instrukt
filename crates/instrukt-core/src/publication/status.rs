@@ -23,6 +23,8 @@ pub struct Request<'a> {
     pub caller_error: Option<String>,
     pub env: &'a Env,
     pub instructions: Result<Option<crate::interfaces::Answer>, String>,
+    pub backup: &'a dyn crate::interfaces::HomeBackupStanding,
+    pub now: jiff::Timestamp,
 }
 #[derive(Serialize)]
 pub struct Report {
@@ -30,6 +32,7 @@ pub struct Report {
     pub machine: Value,
     pub runtime: Value,
     pub modules: Value,
+    pub backup: Value,
     pub repository: Value,
     pub published: Vec<Value>,
     pub projects: Vec<Value>,
@@ -181,6 +184,22 @@ pub fn inspect(request: &Request<'_>) -> Report {
     }
     modules.insert("features".into(), features(selected, runtime_unreadable));
     modules.insert("errors".into(), json!(modules_errors));
+    let (backup, backup_failed) = match request.backup.standing(&home, request.now) {
+        Ok(standing) => {
+            let mut value = standing.to_json();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("errors".into(), json!([]));
+            }
+            (value, false)
+        }
+        Err(err) => (
+            json!({
+                "standing": null,
+                "errors": [error(&err.path, &err.reason)],
+            }),
+            true,
+        ),
+    };
     let mut publication_errors = Vec::new();
     let records = match PublishedRecord::load_all(&home) {
         Ok(records) => records,
@@ -256,6 +275,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
         || !machine_errors.is_empty()
         || !runtime_errors.is_empty()
         || !modules_errors.is_empty()
+        || backup_failed
         || !repository_errors.is_empty()
         || published
             .iter()
@@ -265,6 +285,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
         machine,
         runtime,
         modules: Value::Object(modules),
+        backup,
         repository,
         published,
         projects,
@@ -353,4 +374,109 @@ fn positions(
         result.push(json!({"position":name,"path":path,"owner":owner,"conflict":owner.is_some()&&owner!=project}));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interfaces::{
+        BackupStanding, BackupStandingError, BackupSuccess, HomeBackupStanding,
+    };
+
+    struct FixedStanding(Result<BackupStanding, BackupStandingError>);
+
+    impl HomeBackupStanding for FixedStanding {
+        fn standing(
+            &self,
+            _home: &Home,
+            _now: jiff::Timestamp,
+        ) -> Result<BackupStanding, BackupStandingError> {
+            self.0.clone()
+        }
+    }
+
+    fn run_inspect(standing: Result<BackupStanding, BackupStandingError>) -> Report {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        let env = Env::default();
+        let fixed = FixedStanding(standing);
+        inspect(&Request {
+            home: &home,
+            cwd: dir.path(),
+            version: "0.1.0",
+            executable: Ok(PathBuf::from("/usr/local/bin/instrukt")),
+            caller_error: None,
+            env: &env,
+            instructions: Ok(None),
+            backup: &fixed,
+            now: "2030-01-06T12:00:00Z".parse().unwrap(),
+        })
+    }
+
+    #[test]
+    fn backup_section_projects_every_standing_variant_and_marks_unreadable_unhealthy() {
+        let ts: jiff::Timestamp = "2030-01-06T03:00:00Z".parse().unwrap();
+        let success = BackupSuccess {
+            at: ts,
+            generation: "m1/instrukt-home.20300106T030000Z.tar.zst.age".into(),
+        };
+
+        let unconfigured = run_inspect(Ok(BackupStanding::Unconfigured));
+        assert!(unconfigured.healthy());
+        assert_eq!(unconfigured.backup["standing"], "unconfigured");
+        assert_eq!(unconfigured.backup["admitted"], false);
+        assert_eq!(unconfigured.backup["stale"], false);
+        assert_eq!(unconfigured.backup["errors"], json!([]));
+
+        let never_run = run_inspect(Ok(BackupStanding::NeverRun { admitted: true }));
+        assert!(never_run.healthy());
+        assert_eq!(never_run.backup["standing"], "never_run");
+        assert_eq!(never_run.backup["admitted"], true);
+
+        let ok = run_inspect(Ok(BackupStanding::Ok {
+            admitted: true,
+            last_attempt_at: ts,
+            last_success: success.clone(),
+        }));
+        assert!(ok.healthy());
+        assert_eq!(ok.backup["standing"], "ok");
+        assert_eq!(ok.backup["last_generation"], success.generation);
+        assert_eq!(ok.backup["stale"], false);
+
+        let stale = run_inspect(Ok(BackupStanding::Stale {
+            admitted: true,
+            last_attempt_at: ts,
+            last_success: success.clone(),
+        }));
+        assert!(stale.healthy());
+        assert_eq!(stale.backup["standing"], "stale");
+        assert_eq!(stale.backup["stale"], true);
+
+        let failed = run_inspect(Ok(BackupStanding::Failed {
+            admitted: false,
+            stale: true,
+            last_attempt_at: ts,
+            last_success: Some(success),
+            last_error: "network timeout".into(),
+        }));
+        assert!(failed.healthy());
+        assert_eq!(failed.backup["standing"], "failed");
+        assert_eq!(failed.backup["admitted"], false);
+        assert_eq!(failed.backup["stale"], true);
+        assert_eq!(failed.backup["last_error"], "network timeout");
+
+        let unreadable = run_inspect(Err(BackupStandingError {
+            path: PathBuf::from("/tmp/backup-state.json"),
+            reason: "corrupt JSON".into(),
+        }));
+        assert!(!unreadable.healthy());
+        assert!(unreadable.backup["standing"].is_null());
+        assert_eq!(
+            unreadable.backup["errors"][0]["path"],
+            "/tmp/backup-state.json"
+        );
+        assert_eq!(unreadable.backup["errors"][0]["reason"], "corrupt JSON");
+        // Other sections remain intact even when backup standing fails.
+        assert_eq!(unreadable.instrukt["version"], "0.1.0");
+    }
 }

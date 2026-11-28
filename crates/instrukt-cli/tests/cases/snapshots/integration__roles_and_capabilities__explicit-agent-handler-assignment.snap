@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+assertion_line: 578
 expression: h.help()
 ---
 Context engineering for coding agents
@@ -32,8 +33,9 @@ Commands:
   tick       One runner wake-up, as the OS scheduler invokes it
   ticks      Scheduled tick status
   sessions   Inspect active and settled native runtime threads
-  install    Converge/check module infrastructure across adopted projects; repair with the same
-             command
+  install    Converge/check machine backup timer and module infrastructure across adopted projects;
+             repair with the same command
+  backup     Encrypted offsite backup, generation listing and guarded restore of this instrukt home
   help       Print this message or the help of the given subcommand(s)
 
 Options:

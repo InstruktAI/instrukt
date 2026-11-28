@@ -305,7 +305,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     let validated = env.run(repo.path(), ["config", "validate"]).success();
     insta::assert_snapshot!(stdout(&env, &validated), @"");
     insta::assert_snapshot!(stderr(&env, &validated), @r"
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 7; file migrates on the next writing command
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 8; file migrates on the next writing command
     instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
     ");
     assert_eq!(
@@ -465,12 +465,146 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     docs render:
     stdout:
     stderr:
-    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 8 is newer than this instrukt supports (7); run `instrukt config validate --global` to see what to fix
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 9 is newer than this instrukt supports (8); run `instrukt config validate --global` to see what to fix
     config validate --global:
     stdout:
     stderr:
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 8, newer than this instrukt supports (7); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 9, newer than this instrukt supports (8); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
     "
     );
     assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);
+}
+
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL10
+#[test]
+fn global_backup_configuration_validates_redacts_and_withholds_only_backup() {
+    let env = TestEnv::new();
+    let recipient = age::x25519::Identity::generate().to_public().to_string();
+
+    let valid = [
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}"),
+        "runner: {runtime: t3}".to_owned(),
+        "backup:".to_owned(),
+        "  endpoint: https://s3.example.test".to_owned(),
+        "  region: auto".to_owned(),
+        "  bucket: machine-backups".to_owned(),
+        "  access_key_id: ${BACKUP_KEY}".to_owned(),
+        "  secret_access_key: ${BACKUP_SECRET}".to_owned(),
+        format!("  age_recipient: {recipient}"),
+        String::new(),
+    ]
+    .join("\n");
+    write_global(&env, &valid);
+    let secrets = env.instrukt_home().join("secrets.env");
+    std::fs::write(
+        &secrets,
+        "BACKUP_KEY=AKIA_VALID\nBACKUP_SECRET=SUPER_SECRET_RAW\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    env.run(env.home(), ["config", "validate", "--global"])
+        .success();
+
+    let got = env
+        .run(
+            env.home(),
+            ["config", "get", "--global", "backup", "--json"],
+        )
+        .success();
+    let text = String::from_utf8_lossy(&got.get_output().stdout);
+    assert!(!text.contains("SUPER_SECRET_RAW"), "secret leaked: {text}");
+    assert!(!text.contains("AKIA_VALID"), "access key leaked: {text}");
+    let val: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(val["bucket"], "machine-backups");
+    assert_eq!(val["access_key_id"], "${BACKUP_KEY}");
+
+    let rev = stdout(
+        &env,
+        &env.run(env.home(), ["config", "get", "--global", "--revision"])
+            .success(),
+    );
+    env.run(
+        env.home(),
+        [
+            "config",
+            "patch",
+            "--global",
+            "--revision",
+            rev.trim(),
+            "--yaml",
+            "backup:\n  endpoint: http://remote.example.test\n",
+        ],
+    )
+    .failure();
+
+    let bad = [
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}"),
+        "runner: {runtime: t3}".to_owned(),
+        "backup:".to_owned(),
+        "  endpoint: http://remote.example.test".to_owned(),
+        "  region: auto".to_owned(),
+        "  bucket: machine-backups".to_owned(),
+        "  access_key_id: LITERAL_ACCESS_KEY".to_owned(),
+        "  secret_access_key: LITERAL_SECRET_KEY".to_owned(),
+        "  age_recipient: not-a-recipient".to_owned(),
+        "  keep: 0".to_owned(),
+        "  time: '25:99'".to_owned(),
+        String::new(),
+    ]
+    .join("\n");
+    write_global(&env, &bad);
+    let invalid = env
+        .run(env.home(), ["config", "validate", "--global"])
+        .failure();
+    let val_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&invalid.get_output().stdout),
+        String::from_utf8_lossy(&invalid.get_output().stderr)
+    );
+    assert!(val_out.contains("backup.endpoint"), "{val_out}");
+    assert!(val_out.contains("backup.access_key_id"), "{val_out}");
+    assert!(val_out.contains("backup.age_recipient"), "{val_out}");
+    assert!(!val_out.contains("LITERAL_SECRET_KEY"), "{val_out}");
+
+    let got_bad = env
+        .run(env.home(), ["config", "get", "--global", "backup"])
+        .success();
+    let bad_text = String::from_utf8_lossy(&got_bad.get_output().stdout);
+    assert!(!bad_text.contains("LITERAL_ACCESS_KEY"), "{bad_text}");
+    assert!(!bad_text.contains("LITERAL_SECRET_KEY"), "{bad_text}");
+
+    let runtime = env
+        .run(env.home(), ["config", "get", "--global", "runner.runtime"])
+        .success();
+    assert_eq!(
+        String::from_utf8_lossy(&runtime.get_output().stdout).trim(),
+        "t3"
+    );
+
+    env.run(env.home(), ["backup", "list"]).failure();
+    assert!(!env.instrukt_home().join("state/backup.lock").exists());
+
+    let repo = project(
+        &env,
+        "bad-proj",
+        &format!(
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: bad-proj\nbackup:\n  bucket: nope\n"
+        ),
+    );
+    env.run(repo.path(), ["config", "validate"]).failure();
+
+    let bad_company = env.instrukt_home().join("companies/acme");
+    std::fs::create_dir_all(&bad_company).unwrap();
+    std::fs::write(
+        bad_company.join("company.yaml"),
+        format!(
+            "schema_version: {COMPANY_SCHEMA_VERSION}\ncompany: acme\nbackup:\n  bucket: nope\n"
+        ),
+    )
+    .unwrap();
+    env.run(env.home(), ["config", "validate", "--company", "acme"])
+        .failure();
 }

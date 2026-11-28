@@ -102,6 +102,13 @@ computer's review evidence for a project and are `installation-write`,
 addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`).
 
+`instrukt repo commit --exempt` is `code-commit`: the exemption it records
+is the commit's own, declared in the commit act by the session the commit
+names, and the evidence's admission invariants decide whether it is admitted,
+for every caller alike (`project/instrukt/spec/feature/work/github-apps`).
+Recording an exemption for a commit already made is `instrukt review exempt`,
+which is `stamp`.
+
 `instrukt repo reclaim` belongs to the Repository family: it is `code-commit`,
 so the roles that commit in a todo's worktree are the roles that reclaim it.
 Its object is the workspace the caller's assignment records, wherever the
@@ -113,13 +120,13 @@ caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 `instrukt review start` asks for a requested review
 (`project/instrukt/spec/feature/runner/requested-review`) and is
 `assignment-write`, addressing the project the caller stands in: it records an
-assignment and starts the session that works it, as `todo attempt` reserves
-one, and records no review evidence. The shipped `orchestrate` bundle carries
-it; focused roles without that bundle, the reviewers and builders among them,
-are refused it. The requested reviewer it starts resolves to the
-`commit-reviewer` role, the project and its placement from the runner's
-requested-review record, and its `stamp` grant at `own` reaches that project's
-review evidence.
+assignment and starts or wakes the session that works it, as `todo attempt`
+reserves one, and records no review evidence. The shipped `orchestrate` bundle
+carries it; focused roles without that bundle, the reviewers and builders among
+them, are refused it. The requested reviewer it starts or wakes resolves to the
+`commit-reviewer` role, the project and its placement from the latest open or
+accepted ask recorded under its start key in the runner's requested-review
+record, and its `stamp` grant at `own` reaches that project's review evidence.
 
 `instrukt init --company <key>` belongs to the Repository family: it is
 `repository-write`, and its object is the company's home, a machine-wide
@@ -152,6 +159,16 @@ Repository family: it is `code-commit`, addressing the working tree the hook
 runs in, so `own` reaches it in the workspace the caller's assignment records.
 The detached `hooks worker` a post-hook starts remains `runner-execute`, and
 the sync it runs remains `publication`.
+
+`instrukt backup` belongs to the Installation and runner family, addressing
+this computer's installation (a machine-wide object reached only by `any`):
+`instrukt backup list` is `installation-read`, and `instrukt backup run` and
+`instrukt backup restore` are `installation-write`, matching
+`instrukt review export` and `instrukt review import`. A session whose recorded
+assignment names a company (a company conversation's among them) is refused
+every `instrukt backup` command whatever its class, naming the operator's door,
+and nothing runs (`project/instrukt/spec/feature/runner/home-backup`,
+`sdlc/policy/security-awareness`).
 
 ### Caller and object resolution
 

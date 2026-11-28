@@ -8,7 +8,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+age.workspace = true
+aws-credential-types.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-http-client.workspace = true
+rpassword.workspace = true
 rustix.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+zeroize.workspace = true
+zstd.workspace = true
 anyhow.workspace = true
 service-binding = "=3.0.0"
 notify.workspace = true
@@ -46,7 +55,6 @@ darwin-libproc.workspace = true
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

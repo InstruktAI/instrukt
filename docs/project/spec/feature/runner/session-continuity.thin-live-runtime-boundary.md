@@ -39,6 +39,11 @@ runtime (`project/instrukt/spec/feature/runtime/adapter`; how global
 | Thread retention | Optional thread archiving (`finished_threads` and `archive`, `project/instrukt/spec/feature/runner/thread-retention`). |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent (`project/instrukt/spec/feature/runner/anomaly-notification`). |
 
+Requested review also uses `caller_identity` when available, to record the
+session that asks (without refusing a caller that resolves to none), and native
+input delivery (`send`), to return each verdict recorded for the head to that
+session (`project/instrukt/spec/feature/runner/requested-review`).
+
 Receiving and publishing external webhook facts require no agent runtime on an
 ingress-only computer
 (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`).
@@ -70,8 +75,11 @@ binds procedure parameters before dispatch. User text travels as separate
 process arguments or standard input, never as executable shell text.
 
 For subscribed procedures, the opening input establishes the assignment before
-its separately identified event data. Delivery intents, waiting-slot combining,
-delivery-log composition, and input consumption observation are owned by
+its separately identified event data. All instrukt-owned delivery kinds —
+`event`, `approval`, `verdict` (requested-review verdict), `review_ask`
+(author ask), and runner-owned `recovery` — share the one session-wide waiting
+slot, delivery intents, delivery-log composition, and input consumption
+observation owned by
 `project/instrukt/spec/feature/runner/procedure-event-delivery`. Native agent
 messages and child reports belong to the runtime and never occupy this
 instrukt-owned waiting slot. Recovery here concerns only instrukt-started
@@ -96,6 +104,9 @@ captured request without recomputing it.
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 | Conversation session (per conversation) | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
 | Conversation session (company-scoped) | `instrukt:conversation:<encoded-company>:<connector>` |
+
+A requested reviewer keeps the key of the head it was started for when an ask
+for a later head wakes it (Keyed wake).
 
 For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>`, or `platform`; a person token retains its kind and cannot
@@ -145,7 +156,8 @@ or sending the opening brief separately.
 
 Every placement runs in the checkout's own runtime project. Whenever the runner
 adopts, wakes, succeeds, or delivers input to an instrukt-owned session —
-event, approval, recovery, and conversation input alike — it compares the
+event, approval, recovery, verdict-notice, author-ask, and conversation input
+alike, for every binding kind — it compares the
 session's native project against the live runtime project rooted at the exact
 execution checkout through a read-only lookup (`execution_root` in `check`
 mode; comparison never registers a project). The binding's recorded project is
@@ -179,6 +191,30 @@ checkout's own project remain reusable and wake on delivery. Observation or
 send failures retain their target and never establish terminal presence.
 Corrupt or contradictory binding or project evidence fails visibly without
 arbitrary adoption.
+
+### Keyed wake
+
+A keyed wake sends input to a session an instrukt start key binds, addressed by
+the session. The caller names the session and the object it wakes it for; the
+runner finds the key whose current generation is that session, holds that
+key's lock from recording to the runtime's acceptance, and sends under a
+command identity derived from the key, the generation, and the waking object.
+The caller records that identity with its object before anything reaches the
+runtime, and a replay sends the same identity again, which the runtime accepts
+once.
+
+A wake never starts a session and never moves a generation. A session no
+instrukt key binds, or one whose key's current generation is another session,
+is not woken. Neither is a session that was archived or deleted (`gone`), or
+one with a turn in progress. Each answer names the session and why, and the
+caller decides what follows.
+
+A reviewer wake is addressed by a reviewed head. The runner asks work for the
+head's reviewer of record (`project/instrukt/spec/feature/work/github-apps`)
+and keyed-wakes that session with coordinates only. A head with no reviewer of
+record has no reviewer to wake. The requested-review caller wakes only a
+reviewer of record under a requested-reviewer key of the asking project
+(`project/instrukt/spec/feature/runner/requested-review`).
 
 ### Runner quota marking and fallback policy
 

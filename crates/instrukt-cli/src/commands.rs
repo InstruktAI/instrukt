@@ -3,6 +3,7 @@
 //! context's library API; behavior lives in the libraries.
 
 pub mod agents;
+pub mod backup;
 pub mod blueprint;
 pub mod company;
 pub mod config;

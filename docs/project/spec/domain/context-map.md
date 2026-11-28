@@ -31,7 +31,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history, the container each company runs in on a host, and encrypted home backup with guarded restore | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
@@ -117,7 +117,17 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → runner | Customer / Supplier | Whether a pull request is a todo's, whether a commit carries a verdict and which review evidence is current for it; recording or withdrawing a derived approval and publishing outstanding verdicts through work's command contract |
 | runner → work | Customer / Supplier | A commit's review requests, each with its number, its standing (queued, selected, handed over to a named session, or ended with its disposition), the session it reached and its pinned base; which input opened the turn a named session has in progress when it offers a revision; and a named session's conversation. All three are consulted when a head verdict is admitted |
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
-| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer, the runner's red observation of the canonical head and the runner's answer on each uncovered commit's named session; for a held candidate, which uncovered commits wait on which session's decision, and whether the candidate owes its own review |
+| runner → workflow | Customer / Supplier | Whether the selected runtime holds a named session, consulted for each uncovered commit's authoring session when coverage is derived |
+| runner → workflow | Published language | `runner.candidate_held` tells the integrator which candidate is held and for whose decisions |
+
+The commit-time review-routing choice adds one crossing, whether or not the
+project opted in to automatic review
+(`project/instrukt/spec/feature/repository/attributed-commit`, Review routing).
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → repository | Customer / Supplier | Admission and recording of the exemption a commit's author chooses when committing, through a core-declared interface the CLI wires; consulted by `instrukt repo commit` once the commit exists |
 
 Fleet attention adds these crossings
 (`project/instrukt/spec/feature/runner/fleet-attention`):
@@ -141,12 +151,13 @@ their answers pool.
 | publication → work | Customer / Supplier | The projects a home publishes and their checkout paths, read by the evaluation report on the asking computer and on each answering one |
 
 A requested review (`project/instrukt/spec/feature/runner/requested-review`)
-adds one crossing and is no part of the review gate: it emits no event and the
+adds two crossings and is no part of the review gate: it emits no event and the
 runner holds no review request for it.
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; the pinned base work admits the commit's verdict against; and, for that project, which commit's standing verdict has a version with a given report digest; consulted when a requested review is admitted |
+| runner → work | Customer / Supplier | The requested-review verdict-notice queuing, called by `instrukt review record` once its evidence write has closed, with the recorded version |
 
 
 Worktree reclamation adds these crossings; its contract is
@@ -193,6 +204,14 @@ Thread retention adds these crossings; its contract is
 | configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
 | work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
 
+Home backup adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/home-backup`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | Admitted global `backup` settings (withheld alone when invalid so other capabilities run unchanged) and company-home settings forward conversion (`project/instrukt/spec/feature/configuration/layered-configuration`, `project/instrukt/spec/feature/configuration/company-homes`) |
+| runner → publication | Customer / Supplier | Local-only, lock-free home backup standing query (standing, last backup timestamp, last published generation, or unreadable-state `path` and `reason`), declared by core and wired by the CLI (`project/instrukt/spec/feature/publication/instrukt-status`) |
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator
@@ -206,7 +225,9 @@ relationships: work's GitHub boundary translates the record one way into
 issues, artifacts, the work branch, its pull request and reviews, and people's
 controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
-session operations, native thread streams and external notifications; the
+session operations, native thread streams and external notifications; runner's
+S3-compatible object-storage adapter translates home backup publication, listing,
+retention, and restore operations into provider-neutral S3 API calls; the
 company context's connectors translate a channel provider's messages into
 conversation turns and answers, at the connector interface company defines.
 

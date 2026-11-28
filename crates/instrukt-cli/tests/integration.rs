@@ -66,6 +66,8 @@ mod graph_navigation;
 mod harness;
 #[path = "cases/history.rs"]
 mod history;
+#[path = "cases/home-backup.rs"]
+mod home_backup;
 #[path = "cases/hook-sections.rs"]
 mod hook_sections;
 #[path = "cases/inbound-webhook-endpoint-framework.rs"]

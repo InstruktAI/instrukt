@@ -313,7 +313,6 @@ mod tests {
             yaml(&text),
         );
     }
-
     fn carried_example() -> Value {
         let mut legacy = yaml("schema_version: 1\nagents: {order: [codex, claude]}\n");
         super::selection(&super::Layer::Global, &mut legacy)
@@ -353,6 +352,41 @@ mod tests {
         assert!(
             matches!(err, super::ConfigError::InvalidValue { .. }),
             "{err:?}"
+        );
+    }
+
+    #[test]
+    fn golden_v7_global_document_migrates_losslessly_to_v8_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::home::Home::at_user_home(dir.path().to_path_buf()).for_inspection();
+        let golden_v7 = "\
+schema_version: 7
+ticks: 'off'
+modules:
+  todos: true
+  events: false
+  history: true
+runner:
+  runtime: t3
+  notify: echo notify
+  archive_finished_after: 14d
+github:
+  api_url: https://api.github.com
+";
+        crate::fsx::atomic_write(&home.global_config(), golden_v7.as_bytes()).unwrap();
+        let view = crate::config::inspect_layer(&home, &crate::config::Layer::Global).unwrap();
+        assert_eq!(view.schema_version, Some(7));
+        assert!(view.migration.is_some());
+        let cfg = crate::config::Configuration::load_global(&home).unwrap();
+        assert!(!cfg.ticks_enabled().unwrap());
+        assert!(cfg.module_enabled(crate::config::Module::Todos).unwrap());
+        assert_eq!(cfg.runner_runtime().unwrap(), crate::config::Runtime::T3);
+        assert!(cfg.backup().unwrap().is_none());
+        let upcycled = upcycle(yaml(golden_v7), 7, LayerKind::Global);
+        assert_eq!(upcycled["schema_version"].as_u64(), Some(8));
+        assert_eq!(
+            upcycled["runner"]["archive_finished_after"].as_str(),
+            Some("14d")
         );
     }
 }

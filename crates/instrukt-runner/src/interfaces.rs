@@ -1085,6 +1085,19 @@ pub struct ReviewIdentities {
     pub reviewer: instrukt_core::github::Bot,
 }
 
+/// The active integration candidate whose coverage the runner asks work to
+/// derive.
+pub struct CandidateQuery<'a> {
+    pub project: &'a ProjectRef,
+    pub repository: &'a str,
+    pub candidate: &'a instrukt_core::ids::CommitSha,
+    /// The eligible pull requests whose head the candidate is.
+    pub pulls: &'a [u64],
+    /// Whether the selected runtime holds each session an uncovered commit
+    /// names.
+    pub presence: &'a dyn crate::review::SessionPresence,
+}
+
 /// What deriving a candidate's coverage found, as the runner acts on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CandidateFinding {
@@ -1093,8 +1106,10 @@ pub enum CandidateFinding {
     Settled,
     /// Every commit is covered; the derived approval is recorded.
     Covered,
-    /// A commit is not covered: the candidate owes a review.
-    Owed,
+    /// A commit is not covered: the candidate is held, with workflow's
+    /// decision on whose decisions it waits for and whether it owes its own
+    /// review.
+    Held(crate::review::HeldCandidate),
     /// The repository cannot answer; derived again next tick.
     CannotAnswer(String),
 }
@@ -1144,7 +1159,9 @@ pub struct HeadVerdict {
 
 /// Work's answers a requested review is admitted on
 /// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask,
-/// Coordinates, Requested review records). Read-only: no lock is taken.
+/// Coordinates, Requested review records). Reads are read-only and unlocked
+/// once the review evidence store is at its current schema (taking a one-time
+/// upgrade lock on first read of an older store on a writable home).
 pub trait HeadVerdicts: Send + Sync {
     /// `head`'s verdict standing on this computer and its pinned base.
     fn head_verdict(
@@ -1152,6 +1169,14 @@ pub trait HeadVerdicts: Send + Sync {
         project: &ProjectRef,
         head: &instrukt_core::ids::CommitSha,
     ) -> Result<HeadVerdict, String>;
+    /// The commit of `project` whose standing verdict has a version whose
+    /// report has the SHA-256 digest of `report`, when one stands on this
+    /// computer.
+    fn commit_with_report(
+        &self,
+        project: &ProjectRef,
+        report: &str,
+    ) -> Result<Option<instrukt_core::ids::CommitSha>, String>;
     /// The moment before which review evidence history retires at `now`.
     fn history_cutoff(&self, now: Timestamp) -> Timestamp;
 }
@@ -1187,17 +1212,14 @@ pub trait AutomaticReview: Send + Sync {
         project: &instrukt_core::ids::ProjectSlug,
         commit: &instrukt_core::ids::CommitSha,
     ) -> Result<bool, String>;
-    /// Derives whether the active integration `candidate` is covered and
-    /// records, publishes or withdraws its derived approval accordingly.
-    /// `pulls` are the eligible pull requests whose head it is. `now` is the
-    /// pass's moment; `clock` is read again when publication's credential is
-    /// issued, since coverage may first have spent seconds.
+    /// Derives whether the active integration candidate `query` names is
+    /// covered and records, publishes or withdraws its derived approval
+    /// accordingly. `now` is the pass's moment; `clock` is read again when
+    /// publication's credential is issued, since coverage may first have
+    /// spent seconds.
     fn candidate(
         &self,
-        project: &ProjectRef,
-        repository: &str,
-        candidate: &instrukt_core::ids::CommitSha,
-        pulls: &[u64],
+        query: &CandidateQuery<'_>,
         now: Timestamp,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<CandidateFinding, String>;

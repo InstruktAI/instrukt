@@ -1,6 +1,7 @@
 //! Scoped Redis publication. A source identity names an endpoint/database, never a credential.
 
 mod _endpoint;
+mod _reachability;
 
 use std::sync::Arc;
 
@@ -12,6 +13,32 @@ use crate::events::{EnvelopeError, EventEnvelope};
 use crate::state::RunnerState;
 
 pub(crate) use _endpoint::Endpoint;
+pub(crate) use _reachability::{
+    ensure_migrated as ensure_reachability_migrated,
+    retire_unconfigured as retire_unconfigured_reachability,
+};
+
+/// Logical source identities for the currently configured Redis endpoints,
+/// derived from endpoint URLs alone (no credential resolution). Returns
+/// `Err(_)` on configuration or URL errors so retirement callers never prune
+/// active endpoints on a transient configuration failure.
+pub(crate) fn configured_source_identities(
+    config: &Configuration,
+) -> Result<Vec<String>, TransportError> {
+    let mut sources = Vec::new();
+    for (scope, url) in [
+        ("cluster", config.cluster_redis_url()?),
+        ("local", config.local_redis_url()?),
+    ] {
+        if let Some(url) = url {
+            let identity = _endpoint::endpoint_identity_from_url(&url, scope)?;
+            if !sources.contains(&identity) {
+                sources.push(identity);
+            }
+        }
+    }
+    Ok(sources)
+}
 
 pub const EVENT_STREAM: &str = "instrukt:events";
 pub const DEAD_LETTER_STREAM: &str = "instrukt:events:dlq";
@@ -98,12 +125,15 @@ impl TransportError {
 }
 
 /// Whether a transport's uses of a Redis keep that Redis's reachability
-/// record in the state database.
+/// record in [`instrukt_core::home::Home::redis_reachability_db_file`],
+/// isolated from the state database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reachability {
-    /// Each use that succeeds or fails to reach the Redis keeps the record.
+    /// Each background use that succeeds or fails to reach the Redis updates
+    /// its reachability record on transitions.
     Recorded,
-    /// Its uses write nothing into the state database.
+    /// Interactive or inspection uses write no reachability record and take no
+    /// reachability lock.
     Unrecorded,
 }
 
@@ -144,8 +174,20 @@ impl ScopedTransport {
         env: &Env,
         state: &RunnerState,
     ) -> Result<Self, TransportError> {
+        Self::from_config_with(config, env, state, Reachability::Recorded)
+    }
+
+    /// Configures both scopes with explicit reachability recording policy.
+    pub fn from_config_with(
+        config: &Configuration,
+        env: &Env,
+        state: &RunnerState,
+        reachability: Reachability,
+    ) -> Result<Self, TransportError> {
         let settings = config.redis(env)?;
-        let cluster = Arc::new(Endpoint::new(&settings.cluster, "cluster", state)?);
+        let cluster = Arc::new(
+            Endpoint::new(&settings.cluster, "cluster", state)?.with_reachability(reachability),
+        );
         let local = match settings.local {
             None => {
                 tracing::warn!(
@@ -155,7 +197,8 @@ impl ScopedTransport {
                 Arc::clone(&cluster)
             }
             Some(settings) => {
-                let endpoint = Endpoint::new(&settings, "local", state)?;
+                let endpoint =
+                    Endpoint::new(&settings, "local", state)?.with_reachability(reachability);
                 if endpoint.identity == cluster.identity {
                     Arc::clone(&cluster)
                 } else {

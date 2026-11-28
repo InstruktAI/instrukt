@@ -185,7 +185,7 @@ Following `general/procedure/doc-snippet-authoring`,
         `general/procedure/doc-snippet-authoring`; pending markers or sibling
         companions for edits to already-delivered fills), verifies with
         `instrukt docs validate` and `instrukt docs render --check`, and commits
-        via `instrukt repo commit --todo <slug>`.
+        via `instrukt repo commit --todo <slug> --review`.
      3. Obtains independent commit-review `APPROVE`
         (`sdlc/procedure/lifecycle/work/review-commits`) bound to that exact
         commit SHA (resolving any required changes), and hands the reviewed

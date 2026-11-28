@@ -10,6 +10,7 @@
 mod _coverage;
 mod _finding;
 mod _flavor;
+mod _held;
 mod _observe;
 mod _provider;
 mod _schema;
@@ -18,9 +19,12 @@ mod _standing;
 #[cfg(test)]
 pub(crate) mod _testing;
 
-pub use _coverage::{Approved, Coverage, CoverageEvidence, CoveringItem, CoveringKind, coverage};
+pub use _coverage::{
+    Approved, Coverage, CoverageEvidence, CoveringItem, CoveringKind, UncoveredCommit, coverage,
+};
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError, WORKFLOW_FILE};
+pub use _held::held;
 pub use _observe::ObservationError;
 pub(crate) use _observe::{check_handoff_evidence, require_independent};
 pub use _provider::{

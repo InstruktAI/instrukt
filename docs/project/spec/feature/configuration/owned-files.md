@@ -35,7 +35,9 @@ The file is owner-only and permissions are checked on read. Missing, blank,
 unreadable or insufficiently protected required material refuses the dependent
 operation with the reference and cause, never its value. An operation needing
 no secret does not require unrelated values to be present. Only
-`instrukt secrets set` and `instrukt secrets generate` write the file. At a
+`instrukt secrets set`, `instrukt secrets generate`, and guarded home restore
+(`instrukt backup restore`, restoring backed-up `secrets.env` files owner-only,
+`project/instrukt/spec/feature/runner/home-backup`) write the file. At a
 terminal, `secrets set` asks for the value with echo off; from redirected input
 or `--from-file` it reads that. Writes
 are atomic, and values are never echoed or included in diagnostics. Reading,
