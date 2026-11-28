@@ -246,28 +246,41 @@ mod tests {
     }
 
     #[test]
-    fn queued_or_never_started_cancelled_requests_do_not_hide_executed_quota_failures() {
+    fn queued_requests_do_not_hide_executed_quota_failures() {
         let session = SessionRef::parse("t3:capacity-thread").unwrap();
-        for status in ["queued", "cancelled"] {
-            let mut value = projection("failed", "usage_limit");
-            let mut request = value["runs"][0].clone();
-            request["id"] = json!("later-request");
-            request["ordinal"] = json!(2);
-            request["status"] = json!(status);
-            request["startedAt"] = json!(null);
-            request["completedAt"] = if status == "queued" {
-                json!(null)
-            } else {
-                json!("2026-11-28T14:02:00Z")
-            };
-            value["runs"].as_array_mut().unwrap().push(request);
-            let observed = outcome(value, &session).unwrap().unwrap();
-            assert_eq!(observed.run, "quota-run");
-            assert!(matches!(
-                observed.result,
-                CapacityResult::QuotaExhausted { .. }
-            ));
-        }
+        let mut value = projection("failed", "usage_limit");
+        let mut request = value["runs"][0].clone();
+        request["id"] = json!("later-request");
+        request["ordinal"] = json!(2);
+        request["status"] = json!("queued");
+        request["startedAt"] = json!(null);
+        request["completedAt"] = json!(null);
+        value["runs"].as_array_mut().unwrap().push(request);
+        let observed = outcome(value, &session).unwrap().unwrap();
+        assert_eq!(observed.run, "quota-run");
+        assert!(matches!(
+            observed.result,
+            CapacityResult::QuotaExhausted { .. }
+        ));
+    }
+
+    #[test]
+    fn never_started_cancelled_requests_do_not_hide_executed_quota_failures() {
+        let session = SessionRef::parse("t3:capacity-thread").unwrap();
+        let mut value = projection("failed", "usage_limit");
+        let mut request = value["runs"][0].clone();
+        request["id"] = json!("later-request");
+        request["ordinal"] = json!(2);
+        request["status"] = json!("cancelled");
+        request["startedAt"] = json!(null);
+        request["completedAt"] = json!("2026-11-28T14:02:00Z");
+        value["runs"].as_array_mut().unwrap().push(request);
+        let observed = outcome(value, &session).unwrap().unwrap();
+        assert_eq!(observed.run, "quota-run");
+        assert!(matches!(
+            observed.result,
+            CapacityResult::QuotaExhausted { .. }
+        ));
     }
 
     #[test]
