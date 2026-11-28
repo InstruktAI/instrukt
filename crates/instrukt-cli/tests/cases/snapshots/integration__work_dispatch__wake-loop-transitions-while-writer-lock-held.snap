@@ -1,0 +1,34 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+assertion_line: 1228
+expression: "serde_json::json!({\n    \"kept_and_skipped\": redact_state(kept_status), \"replaced_while_skipped\":\n    redact_state(replaced_status), \"cleared_on_unblocked_wake\":\n    redact_state(cleared_status),\n})"
+---
+{
+  "kept_and_skipped": {
+    "admission_runner": {
+      "at": "2030-02-01T00:05:00Z",
+      "outcome": "kept"
+    },
+    "skipped_wake": {
+      "at": "2030-02-01T00:05:00Z",
+      "cause": "cannot lock [STATE]/runtime-dispatch.lock: Is a directory (os error 21)"
+    }
+  },
+  "replaced_while_skipped": {
+    "admission_runner": {
+      "at": "2030-02-01T00:10:00Z",
+      "outcome": "replaced"
+    },
+    "skipped_wake": {
+      "at": "2030-02-01T00:10:00Z",
+      "cause": "cannot lock [STATE]/runtime-dispatch.lock: Is a directory (os error 21)"
+    }
+  },
+  "cleared_on_unblocked_wake": {
+    "admission_runner": {
+      "at": "2030-02-01T00:15:00Z",
+      "outcome": "replaced"
+    },
+    "skipped_wake": null
+  }
+}

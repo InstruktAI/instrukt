@@ -943,6 +943,16 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
             [&cluster_source],
         )
         .unwrap();
+        db.execute(
+            "INSERT INTO runner_skipped_wake(id,at,cause) VALUES(1,'2026-11-23T08:15:00Z','dispatch lock held')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO runner_admission(id,at,outcome) VALUES(1,'2026-11-23T08:10:00Z','kept')",
+            [],
+        )
+        .unwrap();
         let version: u32 = db
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
@@ -950,19 +960,31 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
         work_rows(&db)
     };
 
-    let read_workers = |env: &common::TestEnv| -> serde_json::Value {
+    let read_events_status = |env: &common::TestEnv| -> serde_json::Value {
         let out = env
             .run(env.home(), ["events", "status", "--json"])
             .success();
-        let status: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-        status["workers"].clone()
+        serde_json::from_slice(&out.get_output().stdout).unwrap()
+    };
+    let read_workers =
+        |env: &common::TestEnv| -> serde_json::Value { read_events_status(env)["workers"].clone() };
+    let read_wake_loop_status = |env: &common::TestEnv| -> serde_json::Value {
+        let status = read_events_status(env);
+        serde_json::json!({
+            "skipped_wake": status["skipped_wake"],
+            "admission_runner": status["admission"]["runner"],
+        })
     };
 
     // Read-only inspection of the v37 database preserves active workers and
-    // leaves the file on disk byte-for-byte untouched.
+    // wake-loop rows while leaving the file on disk byte-for-byte untouched
+    // and creating neither wake-loop state file.
     let v37_bytes = std::fs::read(&file).unwrap();
     let pre_upgrade_workers = read_workers(&project.env);
+    let pre_upgrade_wake_loop = read_wake_loop_status(&project.env);
     assert_eq!(std::fs::read(&file).unwrap(), v37_bytes);
+    assert!(!state.join("runner-skipped-wake.json").exists());
+    assert!(!state.join("runner-admission.json").exists());
     insta::assert_json_snapshot!(pre_upgrade_workers, @r#"
     [
       {
@@ -977,10 +999,22 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
       }
     ]
     "#);
+    insta::assert_json_snapshot!(pre_upgrade_wake_loop, @r#"
+    {
+      "skipped_wake": {
+        "at": "2026-11-23T08:15:00Z",
+        "cause": "dispatch lock held"
+      },
+      "admission_runner": {
+        "at": "2026-11-23T08:10:00Z",
+        "outcome": "kept"
+      }
+    }
+    "#);
 
     // The real CLI migrates the database and reads the work through it,
-    // keeping populated legacy worker and reachability tables until the runner
-    // transfers them.
+    // keeping populated legacy worker, reachability, and wake-loop tables
+    // until the runner transfers them.
     project.ok(["list"]);
     {
         let raw = Connection::open(&file).unwrap();
@@ -991,10 +1025,13 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
         assert_eq!(work_rows(&raw), before);
     }
     assert_eq!(read_workers(&project.env), pre_upgrade_workers);
+    assert_eq!(read_wake_loop_status(&project.env), pre_upgrade_wake_loop);
+    assert!(!state.join("runner-skipped-wake.json").exists());
+    assert!(!state.join("runner-admission.json").exists());
 
-    // A runner tick moves the active worker and reachability rows into their
-    // isolated stores, drops both legacy tables, preserves original since
-    // timestamps, and suppresses duplicate redis_reachable logging.
+    // A runner tick moves the active worker, reachability, and wake-loop rows
+    // into their isolated stores, drops all four legacy tables, preserves
+    // original timestamps, and suppresses duplicate redis_reachable logging.
     let global_path = project.env.instrukt_home().join("instrukt.yaml");
     let mut global = std::fs::read_to_string(&global_path).unwrap();
     global.push_str(&format!(
@@ -1004,18 +1041,21 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
     std::fs::write(&global_path, global).unwrap();
     project.env.run(project.env.home(), ["tick"]).success();
     assert_eq!(read_workers(&project.env), pre_upgrade_workers);
+    assert_eq!(read_wake_loop_status(&project.env), pre_upgrade_wake_loop);
+    assert!(state.join("runner-skipped-wake.json").exists());
+    assert!(state.join("runner-admission.json").exists());
 
     let raw = Connection::open(&file).unwrap();
     let retired: u32 = raw
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability', 'runner_skipped_wake', 'runner_admission')",
             [],
             |row| row.get(0),
         )
         .unwrap();
     assert_eq!(
         retired, 0,
-        "runner move drops retired runner_workers and redis_reachability tables"
+        "runner move drops retired runner_workers, redis_reachability, runner_skipped_wake, and runner_admission tables"
     );
     let reachability_log = |env: &common::TestEnv| {
         let log = std::fs::read_to_string(env.log_dir().join("tick.log")).unwrap_or_default();

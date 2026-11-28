@@ -53,7 +53,62 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v40),
     Step(v41),
     Sql(V42),
+    Step(v43),
 ];
+
+/// Drops the retired `runner_skipped_wake` table once empty or transferred.
+const DROP_RUNNER_SKIPPED_WAKE: &str = "DROP TABLE IF EXISTS runner_skipped_wake;";
+
+/// Drops the retired `runner_admission` table once empty or transferred.
+const DROP_RUNNER_ADMISSION: &str = "DROP TABLE IF EXISTS runner_admission;";
+
+/// Drops both retired wake-loop tables (`runner_skipped_wake` and
+/// `runner_admission`) once the runner has moved any recorded rows into its
+/// isolated wake-loop state files (`state-database`, Version 43).
+pub(super) const DROP_RUNNER_WAKE_LOOP_STATE: &str =
+    "DROP TABLE IF EXISTS runner_skipped_wake; DROP TABLE IF EXISTS runner_admission;";
+
+/// Drops each retired table in `tables` that exists and currently holds no
+/// rows, leaving any populated table intact until its owning runner transfers
+/// the rows and calls the removal hook.
+fn drop_empty_retired_tables(
+    tx: &rusqlite::Transaction<'_>,
+    tables: &[(&str, &str)],
+) -> rusqlite::Result<()> {
+    for &(table, drop_sql) in tables {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )?;
+        if present {
+            let held: bool = tx.query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM {table})"),
+                [],
+                |row| row.get(0),
+            )?;
+            if !held {
+                tx.execute_batch(drop_sql)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Version 43: retire `runner_skipped_wake` and `runner_admission` once their
+/// rows have left the state database (`state-database`, Version 43). Each
+/// table is dropped immediately when empty and kept while it holds a row until
+/// the runner moves it into `state/runner-skipped-wake.json` or
+/// `state/runner-admission.json` and calls `remove_runner_wake_loop_state`.
+fn v43(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    drop_empty_retired_tables(
+        tx,
+        &[
+            ("runner_skipped_wake", DROP_RUNNER_SKIPPED_WAKE),
+            ("runner_admission", DROP_RUNNER_ADMISSION),
+        ],
+    )
+}
 
 /// Version 42: the runner's record of each ask to a held integration
 /// candidate's authoring session (`state-database`, "Runner tables",
@@ -88,27 +143,13 @@ pub(super) const DROP_REDIS_REACHABILITY: &str = "DROP TABLE IF EXISTS redis_rea
 /// table is dropped immediately when empty and kept while it holds rows until
 /// the runner moves them into its isolated stores and calls the removal hook.
 fn v41(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    for (table, drop_sql) in [
-        ("runner_workers", DROP_RUNNER_WORKERS),
-        ("redis_reachability", DROP_REDIS_REACHABILITY),
-    ] {
-        let present: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
-            [table],
-            |row| row.get(0),
-        )?;
-        if present {
-            let held: bool = tx.query_row(
-                &format!("SELECT EXISTS(SELECT 1 FROM {table})"),
-                [],
-                |row| row.get(0),
-            )?;
-            if !held {
-                tx.execute_batch(drop_sql)?;
-            }
-        }
-    }
-    Ok(())
+    drop_empty_retired_tables(
+        tx,
+        &[
+            ("runner_workers", DROP_RUNNER_WORKERS),
+            ("redis_reachability", DROP_REDIS_REACHABILITY),
+        ],
+    )
 }
 /// Version 40: the shared remote record ends (`state-database`, Version
 /// 40). `listing_copies` and the reflection columns that tracked a record
