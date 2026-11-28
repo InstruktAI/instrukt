@@ -292,8 +292,8 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         || messages_of("repaired") == 1,
     );
     assert_eq!(runner.running(), pid, "the same runner process");
-    // Background worker failure recording and clearing never wait on
-    // instrukt.db's writer.lock.
+    // Background worker failure recording and clearing never wait on the state
+    // database's writer lock.
     {
         let _writer = instrukt_core::fsx::LockGuard::acquire(
             &env.instrukt_home().join("state/writer.lock"),
@@ -346,7 +346,7 @@ fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
     // Ensure local's state database already exists at current schema (just as
     // remote's does after runner startup) so history's one-time state-db
     // creation is not what runs here; merged search and Redis reachability
-    // recording must then succeed on both computers with writer.lock held.
+    // recording must then succeed on both computers with the writer lock held.
     drop(
         instrukt_core::state_db::StateDb::open(&instrukt_core::home::Home::at_user_home(
             local.home().to_path_buf(),

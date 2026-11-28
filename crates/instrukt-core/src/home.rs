@@ -335,12 +335,6 @@ impl Home {
         self.state_dir().join("redis-reachability.lock")
     }
 
-    /// Temporary accessor removed once transport switches to
-    /// [`Home::redis_reachability_db_file`].
-    pub fn redis_reachability_dir(&self) -> PathBuf {
-        self.state_dir().join("redis-reachability")
-    }
-
     /// `~/.instrukt/state/history.lock` — the history store's
     /// write-isolation unit: every history write runs under it, and once the
     /// one-time move of earlier history out of the state database is
