@@ -28,7 +28,8 @@ pub(super) fn merge(
     search: &super::Search<'_>,
 ) -> Result<SearchResult, HistoryError> {
     let config = Configuration::load_global(home)?;
-    let fleet = match computer_fleet::open(&config, home, computer_fleet::Reachability::Recorded) {
+    let fleet = match computer_fleet::open(&config, home, computer_fleet::Reachability::Unrecorded)
+    {
         Ok(fleet) => fleet,
         Err(Unopened::Unusable(cause)) => return Err(HistoryError::Transport(cause)),
         Err(Unopened::NotConfigured) => {

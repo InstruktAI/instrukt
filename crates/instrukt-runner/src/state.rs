@@ -18,10 +18,11 @@ use std::path::{Path, PathBuf};
 use instrukt_core::fsx::{self, FsError};
 use instrukt_core::home::Home;
 use instrukt_core::state_db::rusqlite::{Connection, Transaction};
-use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+use instrukt_core::state_db::{StateDb, StateDbError, StateRead, StoreError};
 
 pub(crate) use _workers::{
-    WorkerFailure, read_worker_failures, record_worker_failure_at, worker_state,
+    WorkerFailure, ensure_workers_migrated, read_worker_failures, record_worker_failure_at,
+    worker_state,
 };
 
 /// The runner's state could not be read or written.
@@ -38,6 +39,12 @@ pub enum StateError {
     },
     #[error(transparent)]
     Fs(#[from] FsError),
+}
+
+impl From<StoreError> for StateError {
+    fn from(error: StoreError) -> Self {
+        Self::Db(error.into())
+    }
 }
 
 /// One home's runner state.

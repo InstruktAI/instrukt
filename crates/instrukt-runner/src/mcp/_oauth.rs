@@ -118,13 +118,15 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
         cause: "global `ingress.url` is not configured locally; set it with `instrukt config patch --global`".into(),
     })?;
 
-    let transport =
-        ScopedTransport::cluster_only(&global, &RunnerState::new(home)).map_err(|error| {
-            McpError::Server {
-                server: "ingress".into(),
-                cause: format!("local cluster Redis configuration invalid: {error}"),
-            }
-        })?;
+    let transport = ScopedTransport::cluster_with(
+        &global,
+        &RunnerState::new(home),
+        crate::transport::Reachability::Unrecorded,
+    )
+    .map_err(|error| McpError::Server {
+        server: "ingress".into(),
+        cause: format!("local cluster Redis configuration invalid: {error}"),
+    })?;
     ping_cluster(&transport).map_err(|error| McpError::Server {
         server: "ingress".into(),
         cause: format!("cluster Redis is not reachable locally: {error}"),
@@ -615,11 +617,15 @@ fn obtain_authorization_code_login(
         server: server.name.to_string(),
         cause: "global `ingress.url` must be configured for MCP sign-in".into(),
     })?;
-    let transport = ScopedTransport::cluster_only(&global, &RunnerState::new(&inspection))
-        .map_err(|error| McpError::Server {
-            server: server.name.to_string(),
-            cause: format!("cluster Redis is unavailable for MCP sign-in: {error}"),
-        })?;
+    let transport = ScopedTransport::cluster_with(
+        &global,
+        &RunnerState::new(&inspection),
+        crate::transport::Reachability::Unrecorded,
+    )
+    .map_err(|error| McpError::Server {
+        server: server.name.to_string(),
+        cause: format!("cluster Redis is unavailable for MCP sign-in: {error}"),
+    })?;
 
     // 5. Enforce issuer pinning BEFORE resolving client secret.
     let (registration, client_secret) = if let Some(ref client_ref) = sign_in_cfg.client_ref {

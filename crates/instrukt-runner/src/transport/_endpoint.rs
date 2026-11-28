@@ -1,25 +1,53 @@
 //! Shared connection limits and reachability for one logical Redis database.
 
-use std::io::ErrorKind;
-use std::path::Path;
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use instrukt_core::config::RedisEndpoint;
-use instrukt_core::fsx::{FsError, LockGuard};
 use instrukt_core::home::Home;
 use redis::{ConnectionAddr, FromRedisValue, IntoConnectionInfo};
-use serde::{Deserialize, Serialize};
 
 use super::{Reachability, RedisFailure, TransportError};
-use crate::state::{self, RunnerState, StateError};
+use crate::state::RunnerState;
 
-/// Bounded wait for a per-source reachability transition lock.
-const REACHABILITY_LOCK_WAIT: Duration = Duration::from_secs(5);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ReachabilityRecord {
-    reachable: bool,
+pub(super) fn endpoint_identity_from_url(
+    url: &str,
+    scope: &'static str,
+) -> Result<String, TransportError> {
+    let invalid = || TransportError::Url { scope };
+    let info = url.into_connection_info().map_err(|_| invalid())?;
+    let redis = info.redis_settings();
+    if redis.username().is_some() || redis.password().is_some() {
+        return Err(invalid());
+    }
+    let address = match info.addr() {
+        ConnectionAddr::Unix(path) => {
+            let absolute = if path.is_absolute() {
+                path.clone()
+            } else {
+                return Err(invalid());
+            };
+            let resolved = absolute
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .zip(absolute.file_name())
+                .map_or_else(|| absolute.clone(), |(parent, name)| parent.join(name));
+            format!("unix:{}", resolved.display())
+        }
+        ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
+            let host = if host.eq_ignore_ascii_case("localhost") {
+                "127.0.0.1".into()
+            } else {
+                host.to_ascii_lowercase()
+            };
+            format!("tcp:{host}:{port}")
+        }
+        _ => return Err(invalid()),
+    };
+    Ok(crate::events::occurrence_id(&[
+        &address,
+        &redis.db().to_string(),
+    ]))
 }
 
 pub(crate) struct Endpoint {
@@ -56,46 +84,19 @@ impl Endpoint {
         state: &RunnerState,
     ) -> Result<Self, TransportError> {
         let invalid = || TransportError::Url { scope };
+        let identity = endpoint_identity_from_url(&settings.url, scope)?;
         let mut info = settings
             .url
             .as_str()
             .into_connection_info()
             .map_err(|_| invalid())?;
         let mut redis = info.redis_settings().clone();
-        if redis.username().is_some() || redis.password().is_some() {
-            return Err(invalid());
-        }
         if let Some(username) = &settings.username {
             redis = redis.set_username(username);
         }
         if let Some(password) = &settings.password {
             redis = redis.set_password(password);
         }
-        let address = match info.addr() {
-            ConnectionAddr::Unix(path) => {
-                let absolute = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    return Err(invalid());
-                };
-                let resolved = absolute
-                    .parent()
-                    .and_then(|parent| parent.canonicalize().ok())
-                    .zip(absolute.file_name())
-                    .map_or_else(|| absolute.clone(), |(parent, name)| parent.join(name));
-                format!("unix:{}", resolved.display())
-            }
-            ConnectionAddr::Tcp(host, port) | ConnectionAddr::TcpTls { host, port, .. } => {
-                let host = if host.eq_ignore_ascii_case("localhost") {
-                    "127.0.0.1".into()
-                } else {
-                    host.to_ascii_lowercase()
-                };
-                format!("tcp:{host}:{port}")
-            }
-            _ => return Err(invalid()),
-        };
-        let identity = crate::events::occurrence_id(&[&address, &redis.db().to_string()]);
         info = info.set_redis_settings(redis);
         let client = redis::Client::open(info).map_err(|_| invalid())?;
         Ok(Self {
@@ -111,8 +112,8 @@ impl Endpoint {
         })
     }
 
-    /// This endpoint keeping, or not keeping, its source's reachability file
-    /// under `state/redis-reachability/`.
+    /// This endpoint keeping, or not keeping, its source's reachability record
+    /// in [`Home::redis_reachability_db_file`].
     pub fn with_reachability(mut self, records: Reachability) -> Self {
         self.records = records;
         self
@@ -254,279 +255,20 @@ impl Endpoint {
         Ok(conn)
     }
 
-    fn read_reachability(&self, path: &Path) -> Result<Option<bool>, StateError> {
-        state::refuse_symlink(path)?;
-        match std::fs::read(path) {
-            Ok(bytes) => match serde_json::from_slice::<ReachabilityRecord>(&bytes) {
-                Ok(record) => Ok(Some(record.reachable)),
-                Err(error) => {
-                    tracing::warn!(
-                        event = "redis_reachability_unread",
-                        source = %self.identity,
-                        path = %path.display(),
-                        %error
-                    );
-                    Ok(None)
-                }
-            },
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => {
-                tracing::warn!(
-                    event = "redis_reachability_unread",
-                    source = %self.identity,
-                    path = %path.display(),
-                    %error
-                );
-                Ok(None)
-            }
-        }
-    }
-
     fn record_reachability(&self, reachable: bool) {
         if self.records == Reachability::Unrecorded {
             return;
         }
-        let dir = self.home.redis_reachability_dir();
-        if let Err(error) = state::refuse_symlink(&dir) {
-            tracing::warn!(event = "redis_reachability_not_recorded", error = %error);
-            return;
-        }
-        let file = dir.join(format!("{}.json", self.identity));
-        // Lock-free steady-state fast path: unchanged state performs zero
-        // locks and zero writes.
-        match self.read_reachability(&file) {
-            Ok(Some(previous)) if previous == reachable => return,
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(event = "redis_reachability_not_recorded", error = %error);
-                return;
-            }
-        }
-        let lock = dir.join(format!("{}.lock", self.identity));
-        let _guard = self
-            .reachability
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let result: Result<(), StateError> = (|| {
-            state::refuse_symlink(&dir)?;
-            state::refuse_symlink(&lock)?;
-            let _file_lock = LockGuard::acquire(&lock, REACHABILITY_LOCK_WAIT)?;
-            if self.read_reachability(&file)? == Some(reachable) {
-                return Ok(());
-            }
-            let bytes = serde_json::to_vec(&ReachabilityRecord { reachable }).map_err(|error| {
-                StateError::Fs(FsError::Write {
-                    path: file.clone(),
-                    source: std::io::Error::other(error),
-                })
-            })?;
-            state::write_bytes(&file, &bytes)?;
-            if reachable {
-                tracing::info!(event = "redis_reachable", source = %self.identity);
-            } else {
-                tracing::warn!(event = "redis_unreachable", source = %self.identity);
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            tracing::warn!(event = "redis_reachability_not_recorded", error = %error);
-        }
+        super::_reachability::record(&self.home, &self.identity, reachable, &self.reachability);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Duration, Endpoint, Reachability, ReachabilityRecord, RedisEndpoint, RunnerState};
-    use instrukt_core::fsx::{self, LockGuard};
+    use super::{Duration, Endpoint, RedisEndpoint, RunnerState};
     use instrukt_core::home::Home;
     use std::net::TcpListener;
-    use std::sync::{Arc, Barrier, Mutex, mpsc};
-    use tracing::field::{Field, Visit};
-
-    struct CaptureEvents {
-        events: Arc<Mutex<Vec<String>>>,
-    }
-
-    struct EventField(Option<String>);
-
-    impl Visit for EventField {
-        fn record_str(&mut self, field: &Field, value: &str) {
-            if field.name() == "event" {
-                self.0 = Some(value.to_owned());
-            }
-        }
-        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "event" {
-                self.0 = Some(format!("{value:?}"));
-            }
-        }
-    }
-
-    impl tracing::Subscriber for CaptureEvents {
-        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-            true
-        }
-        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            tracing::span::Id::from_u64(1)
-        }
-        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-        fn event(&self, event: &tracing::Event<'_>) {
-            let mut visitor = EventField(None);
-            event.record(&mut visitor);
-            if let Some(name) = visitor.0 {
-                self.events.lock().unwrap().push(name);
-            }
-        }
-        fn enter(&self, _span: &tracing::span::Id) {}
-        fn exit(&self, _span: &tracing::span::Id) {}
-    }
-
-    fn endpoint(home: &Home) -> Endpoint {
-        let state = RunnerState::new(home);
-        Endpoint::new(
-            &RedisEndpoint {
-                url: "redis://127.0.0.1:6399/0".into(),
-                username: None,
-                password: None,
-                max_connections: 1,
-                socket_timeout: 1,
-            },
-            "cluster",
-            &state,
-        )
-        .unwrap()
-    }
-
-    fn temp_home() -> (tempfile::TempDir, Home) {
-        let dir = fsx::temp_dir(&tempfile::Builder::new()).unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        (dir, home)
-    }
-
-    #[test]
-    fn reachability_transitions_persist_across_endpoints_and_succeed_under_held_writer_lock() {
-        let (_dir, home) = temp_home();
-        let _writer = LockGuard::acquire(&home.writer_lock_file(), Duration::from_secs(1)).unwrap();
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = CaptureEvents {
-            events: Arc::clone(&events),
-        };
-        let first = endpoint(&home);
-        let second = endpoint(&home);
-        let file = home
-            .redis_reachability_dir()
-            .join(format!("{}.json", first.identity));
-
-        tracing::subscriber::with_default(subscriber, || {
-            first.record_reachability(true);
-            first.record_reachability(true);
-            second.record_reachability(true);
-            second.record_reachability(false);
-            first.record_reachability(false);
-            first.record_reachability(true);
-        });
-        let stored: ReachabilityRecord =
-            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert!(stored.reachable);
-        assert!(!home.state_db_file().exists());
-        assert_eq!(
-            *events.lock().unwrap(),
-            vec!["redis_reachable", "redis_unreachable", "redis_reachable"]
-        );
-    }
-
-    #[test]
-    fn concurrent_reachability_transitions_serialize_and_log_once() {
-        let (_dir, home) = temp_home();
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let barrier = Arc::new(Barrier::new(4));
-        std::thread::scope(|scope| {
-            for _ in 0..4 {
-                let home = home.clone();
-                let events = Arc::clone(&events);
-                let barrier = Arc::clone(&barrier);
-                scope.spawn(move || {
-                    let ep = endpoint(&home);
-                    let subscriber = CaptureEvents { events };
-                    tracing::subscriber::with_default(subscriber, || {
-                        barrier.wait();
-                        ep.record_reachability(false);
-                    });
-                });
-            }
-        });
-        let ep = endpoint(&home);
-        let file = home
-            .redis_reachability_dir()
-            .join(format!("{}.json", ep.identity));
-        let stored: ReachabilityRecord =
-            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert!(!stored.reachable);
-        let logged = events.lock().unwrap();
-        assert_eq!(
-            logged
-                .iter()
-                .filter(|e| e.as_str() == "redis_unreachable")
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn symlinks_at_reachability_file_or_lock_are_refused() {
-        let (_dir, home) = temp_home();
-        let ep = endpoint(&home);
-        let dir = home.redis_reachability_dir();
-        fsx::create_dir_all(&dir).unwrap();
-        let outside = home.state_dir().join("outside-reach.json");
-        fsx::atomic_write(&outside, b"untouched").unwrap();
-
-        let file = dir.join(format!("{}.json", ep.identity));
-        fsx::symlink(&outside, &file).unwrap();
-        ep.record_reachability(true);
-        assert_eq!(std::fs::read(&outside).unwrap(), b"untouched");
-
-        fsx::remove_file(&file).unwrap();
-        let lock = dir.join(format!("{}.lock", ep.identity));
-        fsx::symlink(&outside, &lock).unwrap();
-        ep.record_reachability(true);
-        assert!(!file.exists());
-        assert_eq!(std::fs::read(&outside).unwrap(), b"untouched");
-    }
-
-    #[test]
-    fn malformed_reachability_json_warns_and_is_replaced_on_transition() {
-        let (_dir, home) = temp_home();
-        let ep = endpoint(&home);
-        let file = home
-            .redis_reachability_dir()
-            .join(format!("{}.json", ep.identity));
-        fsx::atomic_write(&file, b"{corrupt").unwrap();
-
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = CaptureEvents {
-            events: Arc::clone(&events),
-        };
-        tracing::subscriber::with_default(subscriber, || {
-            ep.record_reachability(false);
-        });
-        let stored: ReachabilityRecord =
-            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert!(!stored.reachable);
-        let logged = events.lock().unwrap();
-        assert!(logged.iter().any(|e| e == "redis_reachability_unread"));
-        assert!(logged.iter().any(|e| e == "redis_unreachable"));
-    }
-
-    #[test]
-    fn unrecorded_endpoint_writes_no_reachability_file() {
-        let (_dir, home) = temp_home();
-        let ep = endpoint(&home).with_reachability(Reachability::Unrecorded);
-        ep.record_reachability(true);
-        ep.record_reachability(false);
-        assert!(!home.redis_reachability_dir().exists());
-    }
+    use std::sync::mpsc;
 
     #[test]
     fn an_in_flight_announcement_leaves_the_only_reader_slot_available() {

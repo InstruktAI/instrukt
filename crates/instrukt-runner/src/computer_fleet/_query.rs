@@ -108,10 +108,10 @@ pub struct Fleet {
 }
 
 /// Opens the fleet query on `config`'s cluster connection, keeping the
-/// cluster Redis's per-source reachability file or not, as `reachability`
-/// says. This is the one reading of whether a cluster connection is
-/// configured: an address that is present but cannot be used is never treated
-/// as absent.
+/// cluster Redis's reachability record in the reachability store
+/// (`Home::redis_reachability_db_file`) or not, as `reachability` says. This is
+/// the one reading of whether a cluster connection is configured: an address
+/// that is present but cannot be used is never treated as absent.
 pub fn open(
     config: &Configuration,
     home: &Home,

@@ -412,7 +412,12 @@ pub(crate) fn prepare_installation(
 ) -> anyhow::Result<()> {
     let state = RunnerState::new(home);
     let config = instrukt_core::config::Configuration::load_global(home)?;
-    let transport = ScopedTransport::from_config(&config, env, &state)?;
+    let transport = ScopedTransport::from_config_with(
+        &config,
+        env,
+        &state,
+        crate::transport::Reachability::Unrecorded,
+    )?;
     let computer = instrukt_core::machine::machine_id(home)?;
     let (wakeup, _) = tokio::sync::mpsc::channel(1);
     let runtime = ConsumerRuntime::new(
