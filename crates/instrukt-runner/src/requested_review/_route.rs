@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::Path;
 
 use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::interfaces::VerdictStanding;
 use crate::keyed::{self, WakeTarget, WakeTargetLookup};
@@ -17,7 +17,7 @@ use super::_store::{self, EarlierHead, TracedBy};
 use super::{AskContext, AskError, Check, failed, refused};
 
 /// Why a re-review could not reuse an earlier head's reviewer of record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum ReuseImpossible {
     /// Neither the prior report's digest nor its canonical path identified an
@@ -73,7 +73,7 @@ impl fmt::Display for ReuseImpossible {
 }
 
 /// How a re-review resolved its earlier head and reviewer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReReviewOutcome {
     /// Reached the earlier head's reviewer of record.

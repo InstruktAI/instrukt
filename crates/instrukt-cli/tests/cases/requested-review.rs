@@ -6,7 +6,15 @@
 //! fake GitHub.
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
+use instrukt_core::ids::CommitSha;
+use instrukt_runner::requested_review::{EarlierHead, ReReviewOutcome, ReuseImpossible, TracedBy};
+
 use crate::fixtures::reviewed::Reviewed;
+
+#[derive(serde::Deserialize)]
+struct ReReviewReply {
+    re_review: ReReviewOutcome,
+}
 
 fn stderr(assert: &assert_cmd::assert::Assert) -> String {
     String::from_utf8(assert.get_output().stderr.clone()).unwrap()
@@ -159,17 +167,16 @@ fn findings_on_an_unchanged_head_are_disputed_with_the_reviewer_that_recorded_th
         (1, 2),
         "the fixing commit wakes the reviewer that recorded the earlier verdict"
     );
-    let rereview_json: serde_json::Value = serde_json::from_str(&stdout(&rereview)).unwrap();
+    let expected_earlier = EarlierHead {
+        head: CommitSha::parse(&head).unwrap(),
+        traced_by: TracedBy::Digest,
+    };
+    let rereview_reply: ReReviewReply = serde_json::from_str(&stdout(&rereview)).unwrap();
     assert_eq!(
-        rereview_json["re_review"],
-        serde_json::json!({
-            "reached_reviewer": {
-                "earlier": {
-                    "head": head,
-                    "traced_by": "digest"
-                }
-            }
-        })
+        rereview_reply.re_review,
+        ReReviewOutcome::ReachedReviewer {
+            earlier: expected_earlier.clone(),
+        }
     );
     insta::assert_snapshot!(
         "requested-review-rereview-input",
@@ -198,17 +205,11 @@ fn findings_on_an_unchanged_head_are_disputed_with_the_reviewer_that_recorded_th
         2,
         "an archived earlier reviewer starts a fresh reviewer for the fixing head"
     );
-    let fresh_json: serde_json::Value = serde_json::from_str(&stdout(&fresh)).unwrap();
+    let fresh_reply: ReReviewReply = serde_json::from_str(&stdout(&fresh)).unwrap();
     assert_eq!(
-        fresh_json["re_review"],
-        serde_json::json!({
-            "fresh_reviewer": {
-                "reason": "reviewer_gone",
-                "earlier": {
-                    "head": head,
-                    "traced_by": "digest"
-                }
-            }
+        fresh_reply.re_review,
+        ReReviewOutcome::FreshReviewer(ReuseImpossible::ReviewerGone {
+            earlier: expected_earlier,
         })
     );
 }

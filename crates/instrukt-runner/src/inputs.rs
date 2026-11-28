@@ -31,6 +31,19 @@ pub enum InputOutcome {
     Failed,
 }
 
+impl InputOutcome {
+    fn from_state(value: &str) -> Self {
+        match value {
+            "entered" => Self::Entered,
+            "accepted" => Self::Accepted,
+            "unconfirmed" => Self::Unconfirmed,
+            "set_aside" => Self::SetAside,
+            "failed" => Self::Failed,
+            _ => Self::Pending,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum InputKind {
     Event,
@@ -214,14 +227,9 @@ pub(crate) fn outcome(
             .map_err(state::sql(path))
         })?
         .flatten();
-    Ok(match value.as_deref() {
-        Some("entered") => InputOutcome::Entered,
-        Some("accepted") => InputOutcome::Accepted,
-        Some("unconfirmed") => InputOutcome::Unconfirmed,
-        Some("set_aside") => InputOutcome::SetAside,
-        Some("failed") => InputOutcome::Failed,
-        _ => InputOutcome::Pending,
-    })
+    Ok(value
+        .as_deref()
+        .map_or(InputOutcome::Pending, InputOutcome::from_state))
 }
 
 /// The target key serializes event and todo workers.
@@ -881,13 +889,21 @@ mod tests {
         text.parse().unwrap()
     }
 
-    fn row_state(state: &RunnerState, target: &SessionRef, id: &str) -> Option<(String, bool)> {
+    fn row_state(
+        state: &RunnerState,
+        target: &SessionRef,
+        id: &str,
+    ) -> Option<(InputOutcome, bool)> {
         state
             .read(|conn, path| {
                 conn.query_row(
                     "SELECT state, waiting FROM runtime_inputs WHERE runtime=?1 AND session=?2 AND input_id=?3",
                     params![target.runtime.as_str(), target.id.as_str(), id],
-                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+                    |r| {
+                        let raw: String = r.get(0)?;
+                        let waiting: bool = r.get(1)?;
+                        Ok((InputOutcome::from_state(&raw), waiting))
+                    },
                 )
                 .optional()
                 .map_err(state::sql(path))
@@ -1138,11 +1154,11 @@ mod tests {
         pump_inner(&state, &adapter, None, &target, t_late, true).unwrap();
         assert_eq!(
             row_state(&state, &target, "v-accepted"),
-            Some(("unconfirmed".into(), false))
+            Some((InputOutcome::Unconfirmed, false))
         );
         assert_eq!(
             row_state(&state, &target, "v-pending"),
-            Some(("failed".into(), false))
+            Some((InputOutcome::Failed, false))
         );
 
         // When a non-verdict pending row remains alongside a gone verdict batch, returns Err(Gone)
@@ -1190,11 +1206,11 @@ mod tests {
         ));
         assert_eq!(
             row_state(&state, &target2, "v-selected"),
-            Some(("unconfirmed".into(), false))
+            Some((InputOutcome::Unconfirmed, false))
         );
         assert_eq!(
             row_state(&state, &target2, "ev-pending"),
-            Some(("pending".into(), false))
+            Some((InputOutcome::Pending, false))
         );
     }
 
@@ -1274,20 +1290,20 @@ mod tests {
 
         assert_eq!(
             row_state(&state, &session, "v-old-pending"),
-            Some(("failed".into(), false))
+            Some((InputOutcome::Failed, false))
         );
         assert_eq!(
             row_state(&state, &session, "v-fresh-pending"),
-            Some(("failed".into(), false))
+            Some((InputOutcome::Failed, false))
         );
         assert_eq!(
             row_state(&state, &session, "v-old-accepted"),
-            Some(("unconfirmed".into(), false))
+            Some((InputOutcome::Unconfirmed, false))
         );
         // Non-verdict rows are untouched by close_verdict_inputs_on_succession.
         assert_eq!(
             row_state(&state, &session, "ev-keep"),
-            Some(("pending".into(), false))
+            Some((InputOutcome::Pending, false))
         );
 
         let retired = state
@@ -1297,11 +1313,11 @@ mod tests {
         assert_eq!(row_state(&state, &session, "v-old-pending"), None);
         assert_eq!(
             row_state(&state, &session, "v-fresh-pending"),
-            Some(("failed".into(), false))
+            Some((InputOutcome::Failed, false))
         );
         assert_eq!(
             row_state(&state, &session, "v-old-accepted"),
-            Some(("unconfirmed".into(), false))
+            Some((InputOutcome::Unconfirmed, false))
         );
     }
 }

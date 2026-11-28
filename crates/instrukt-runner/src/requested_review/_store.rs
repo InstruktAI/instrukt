@@ -15,7 +15,7 @@ use instrukt_core::state_db::rusqlite::{
 };
 use instrukt_core::state_db::{Migration, Read, Store, StoreDb, StoreError, StoreLock};
 use jiff::Timestamp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::_admission::Coordinate;
 
@@ -124,7 +124,7 @@ pub(super) fn canonical_report(path: &Path) -> Result<PathBuf, std::io::Error> {
 }
 
 /// How a re-review's prior report identified its earlier head.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TracedBy {
     Digest,
@@ -150,7 +150,7 @@ impl TracedBy {
 
 /// The earlier head a re-review's prior report traced to, paired with how it
 /// was identified.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EarlierHead {
     pub head: CommitSha,
     pub traced_by: TracedBy,
@@ -675,7 +675,6 @@ mod tests {
         // Reading migrates in memory: backfills both rows without ENOENT and keeps on-disk V1.
         let asks1 = asks(&home, &project, &head1).unwrap();
         assert_eq!(asks1.len(), 1);
-        assert_eq!(asks1[0].rendering, "rendered-1");
         assert_eq!(asks1[0].asker, None);
         assert_eq!(asks1[0].trace, None);
         assert_eq!(asks1[0].closed_at, None);
@@ -684,7 +683,6 @@ mod tests {
 
         let asks2 = asks(&home, &project, &head2).unwrap();
         assert_eq!(asks2.len(), 1);
-        assert_eq!(asks2[0].rendering, "rendered-2");
         assert_eq!(asks2[0].report, missing_parent_report);
 
         assert_eq!(
@@ -696,13 +694,32 @@ mod tests {
             None
         );
 
-        {
+        let (v1_rendering1, v1_rendering2) = {
             let raw = Connection::open(home.requested_review_db_file()).unwrap();
             let version: u32 = raw
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .unwrap();
             assert_eq!(version, 1);
-        }
+            let r1: String = raw
+                .query_row(
+                    "SELECT rendering FROM asks WHERE project = ?1 AND head = ?2",
+                    params![project.as_str(), head1.as_str()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let r2: String = raw
+                .query_row(
+                    "SELECT rendering FROM asks WHERE project = ?1 AND head = ?2",
+                    params![project.as_str(), head2.as_str()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            (r1, r2)
+        };
+        assert!(!asks1[0].rendering.is_empty());
+        assert_eq!(asks1[0].rendering, v1_rendering1);
+        assert!(!asks2[0].rendering.is_empty());
+        assert_eq!(asks2[0].rendering, v1_rendering2);
 
         // Writing migrates on disk to user_version == 2.
         let report3 = canonical_report(&existing_reports.join("three.md")).unwrap();
@@ -740,6 +757,14 @@ mod tests {
             .unwrap();
         assert_eq!(version, 2);
 
+        assert_eq!(
+            asks(&home, &project, &head1).unwrap()[0].rendering,
+            v1_rendering1
+        );
+        assert_eq!(
+            asks(&home, &project, &head2).unwrap()[0].rendering,
+            v1_rendering2
+        );
         let asks3 = asks(&home, &project, &head3).unwrap();
         assert_eq!(asks3[0].asker.as_ref(), Some(&asker));
         assert_eq!(asks3[0].trace.as_ref(), Some(&trace));
@@ -916,9 +941,10 @@ mod tests {
         .unwrap() else {
             panic!("expected second ask to record");
         };
+        let latest_before = latest_for_key(&home, key).unwrap().unwrap();
         assert_eq!(
-            latest_for_key(&home, key).unwrap().unwrap().digest,
-            "sha256:2"
+            (latest_before.digest, latest_before.number),
+            (ask2.digest, ask2.number)
         );
 
         close_unaccepted(
@@ -929,9 +955,10 @@ mod tests {
             ts("2026-11-26T11:05:00Z"),
         )
         .unwrap();
+        let latest_after = latest_for_key(&home, key).unwrap().unwrap();
         assert_eq!(
-            latest_for_key(&home, key).unwrap().unwrap().digest,
-            "sha256:1"
+            (latest_after.digest, latest_after.number),
+            (ask1.digest, ask1.number)
         );
         assert!(
             asks(&home, &project, &head2).unwrap()[0]
