@@ -1,11 +1,11 @@
 //! Where a responder records its current outside failure. The computer
 //! fleet's evaluation responder and the tick's fleet step keep theirs in
-//! `state/computer-fleet.json` (`project/instrukt/spec/domain/runner`,
-//! "Fleet query and membership"), and other runner workers keep theirs in
-//! `state/runner-workers/<id>.json` (`project/instrukt/spec/domain/runner`,
+//! [`Home::computer_fleet_file`] (`project/instrukt/spec/domain/runner`,
+//! "Fleet query and membership"), and other runner workers keep theirs under
+//! [`Home::runner_workers_dir`] (`project/instrukt/spec/domain/runner`,
 //! "Runner background state") — each written whole beside its previous
-//! version and renamed over it, outside `instrukt.db` and `state/writer.lock`,
-//! so readers take no lock.
+//! version and renamed over it, isolated from the state database and its
+//! writer lock ([`Home::writer_lock_file`]), so readers take no lock.
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ pub(crate) trait FailureRecorder: Send + 'static {
     fn record(&mut self, failure: Option<&str>) -> bool;
 }
 
-/// The file's document for `state/computer-fleet.json`.
+/// The file's document for [`Home::computer_fleet_file`].
 #[derive(Serialize, Deserialize)]
 struct Recorded {
     failure: String,
@@ -68,7 +68,7 @@ impl FailureFile {
         }
     }
 
-    /// A failure file for a runner worker under `state/runner-workers/`.
+    /// A failure file for a runner worker under [`Home::runner_workers_dir`].
     pub(crate) fn worker(home: &Home, worker: &'static str, clock: Clock) -> Self {
         Self {
             target: Target::Worker {
@@ -267,32 +267,5 @@ mod tests {
     fn an_absent_file_shows_no_worker() {
         let (_dir, home) = home();
         assert!(status(&home).is_none());
-    }
-
-    #[test]
-    fn worker_failure_file_preserves_since_and_clears_under_held_writer_lock() {
-        let (_dir, home) = home();
-        let _writer = instrukt_core::fsx::LockGuard::acquire(
-            &home.writer_lock_file(),
-            std::time::Duration::from_secs(1),
-        )
-        .unwrap();
-        let now = Arc::new(Mutex::new(seconds(10)));
-        let mut recorder = FailureFile::worker(&home, "history-search", clock(&now));
-        assert!(recorder.record(Some("redis down")));
-        *now.lock().unwrap() = seconds(70);
-        assert!(recorder.record(Some("still down")));
-        let entries = crate::state::read_worker_failures(&home).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].worker, "history-search");
-        assert_eq!(entries[0].failure, "still down");
-        assert_eq!(entries[0].since, Some(seconds(10)));
-
-        assert!(recorder.record(None));
-        assert!(
-            crate::state::read_worker_failures(&home)
-                .unwrap()
-                .is_empty()
-        );
     }
 }

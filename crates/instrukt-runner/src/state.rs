@@ -8,8 +8,8 @@
 //! taken for that transaction alone, so a runner write never waits on a
 //! work command for longer than the command holds it. The runner lock
 //! `state/runner.lock` serializes runner invocations and guards no data.
-//! Worker failure state lives outside `instrukt.db` in isolated state files
-//! (`state/runner-workers/<id>.json`).
+//! Worker failure state lives outside the state database in per-worker state
+//! files under [`Home::runner_workers_dir`].
 
 mod _workers;
 

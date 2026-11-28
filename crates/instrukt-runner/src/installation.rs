@@ -956,7 +956,7 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         Ok(serde_json::json!({"count":count,"recent":recent}))
     })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
     // The runner workers' current failures, while they last: the per-worker
-    // failure files under state/runner-workers/ and the computer fleet's file.
+    // failure files under `Home::runner_workers_dir` and `Home::computer_fleet_file`.
     let mut workers: Vec<serde_json::Value> = crate::state::read_worker_failures(request.home)?
         .into_iter()
         .map(crate::state::WorkerFailure::into_json)

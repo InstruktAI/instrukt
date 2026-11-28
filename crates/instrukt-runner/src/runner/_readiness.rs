@@ -4,7 +4,8 @@
 //! waits on one in progress. The `readiness` failure file lives as long as
 //! the worker: written by a failed refresh, removed by the next success and
 //! when the worker ends, a stop by SIGINT or SIGTERM included, which also
-//! revokes the kept token without touching `state/writer.lock`.
+//! revokes the kept token without touching the state database's writer lock
+//! (`Home::writer_lock_file`).
 
 use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};

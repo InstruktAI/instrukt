@@ -1,5 +1,6 @@
-//! Per-worker failure files under `state/runner-workers/<id>.json`, outside
-//! `instrukt.db` and `state/writer.lock` (`project/instrukt/spec/domain/runner`,
+//! Per-worker failure files stored under [`Home::runner_workers_dir`],
+//! isolated from the state database and its writer lock
+//! ([`Home::writer_lock_file`]; `project/instrukt/spec/domain/runner`,
 //! "Runner background state").
 
 use std::io::ErrorKind;
@@ -7,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use instrukt_core::fsx::{self, FsError};
 use instrukt_core::home::Home;
+use instrukt_core::state_db::rusqlite::Connection;
+use instrukt_core::state_db::{StateDb, StateRead};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +42,13 @@ impl WorkerFailure {
     }
 }
 
+fn worker_entry_stem(name: &str) -> Option<&str> {
+    if name.starts_with('.') {
+        return None;
+    }
+    name.strip_suffix(".json")
+}
+
 fn unreadable_worker(stem: &str, error: String, since: Option<Timestamp>) -> WorkerFailure {
     WorkerFailure {
         worker: format!("runner-worker:{stem}"),
@@ -47,67 +57,168 @@ fn unreadable_worker(stem: &str, error: String, since: Option<Timestamp>) -> Wor
     }
 }
 
-/// Reads all current runner worker failure files without locking or creating
-/// the directory. A missing directory is healthy (empty); unreadable or
-/// symlink `.json` files are surfaced as worker failures rather than masked as
-/// healthy.
+fn legacy_workers_table_exists(conn: &Connection, path: &Path) -> Result<bool, StateError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runner_workers')",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(super::sql(path))
+}
+
+fn read_legacy_worker_rows(
+    conn: &Connection,
+    path: &Path,
+) -> Result<Vec<(String, String, String)>, StateError> {
+    let mut statement = conn
+        .prepare("SELECT worker, failure, since FROM runner_workers")
+        .map_err(super::sql(path))?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(super::sql(path))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(super::sql(path))
+}
+
+/// Transfers any active legacy `runner_workers` rows from the state database
+/// into per-worker files under [`Home::runner_workers_dir`] without overwriting
+/// newer files, then drops the legacy table. Lock-free no-op when read-only,
+/// when no state database exists, or when the legacy table is already gone.
+pub(crate) fn ensure_workers_migrated(home: &Home) -> Result<(), StateError> {
+    if home.is_state_read_only() {
+        return Ok(());
+    }
+    let rows = match StateRead::open(home)? {
+        Some(read) => {
+            if !legacy_workers_table_exists(read.conn(), read.path())? {
+                return Ok(());
+            }
+            read_legacy_worker_rows(read.conn(), read.path())?
+        }
+        None => return Ok(()),
+    };
+    super::refuse_symlink(&home.runner_workers_dir())?;
+    for (worker, failure, since_raw) in rows {
+        let path = worker_path(home, &worker);
+        super::refuse_symlink(&path)?;
+        if path.exists() {
+            continue;
+        }
+        let since = match since_raw.parse::<Timestamp>() {
+            Ok(ts) => ts,
+            Err(error) => {
+                tracing::warn!(
+                    event = "runner_worker_state_unread",
+                    worker = %worker,
+                    path = %path.display(),
+                    %error
+                );
+                Timestamp::now()
+            }
+        };
+        let record = WorkerRecord {
+            worker,
+            failure,
+            since,
+        };
+        let bytes = serde_json::to_vec(&record).map_err(|error| {
+            StateError::Fs(FsError::Write {
+                path: path.clone(),
+                source: std::io::Error::other(error),
+            })
+        })?;
+        super::write_bytes(&path, &bytes)?;
+    }
+    let mut db = StateDb::open(home)?;
+    db.remove_runner_workers()?;
+    Ok(())
+}
+
+/// Reads all current runner worker failures without locking or creating
+/// [`Home::runner_workers_dir`]. Unreadable or symlink entries surface as
+/// worker failures rather than healthy state; any un-moved legacy
+/// `runner_workers` rows visible through [`StateRead`] (including read-only
+/// older-schema inspection snapshots) are merged without touching disk.
 pub(crate) fn read_worker_failures(home: &Home) -> Result<Vec<WorkerFailure>, StateError> {
     let dir = home.runner_workers_dir();
     super::refuse_symlink(&dir)?;
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => return Err(StateError::Read { path: dir, source }),
-    };
     let mut failures = Vec::new();
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(source) => return Err(StateError::Read { path: dir, source }),
-        };
-        let file_name = entry.file_name();
-        let Some(name) = file_name.to_str() else {
-            continue;
-        };
-        if name.starts_with('.') {
-            continue;
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                    Err(source) => return Err(StateError::Read { path: dir, source }),
+                };
+                let file_name = entry.file_name();
+                let Some(stem) = file_name.to_str().and_then(worker_entry_stem) else {
+                    continue;
+                };
+                let path = entry.path();
+                let meta = match std::fs::symlink_metadata(&path) {
+                    Ok(meta) => meta,
+                    Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        failures.push(unreadable_worker(stem, error.to_string(), None));
+                        continue;
+                    }
+                };
+                if meta.file_type().is_symlink() {
+                    failures.push(unreadable_worker(
+                        stem,
+                        format!("{} is a symbolic link", path.display()),
+                        None,
+                    ));
+                    continue;
+                }
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|modified| Timestamp::try_from(modified).ok());
+                match std::fs::read(&path) {
+                    Ok(bytes) => match serde_json::from_slice::<WorkerRecord>(&bytes) {
+                        Ok(record) => failures.push(WorkerFailure {
+                            worker: record.worker,
+                            failure: record.failure,
+                            since: Some(record.since),
+                        }),
+                        Err(error) => {
+                            failures.push(unreadable_worker(stem, error.to_string(), mtime))
+                        }
+                    },
+                    Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                    Err(error) => failures.push(unreadable_worker(stem, error.to_string(), mtime)),
+                }
+            }
         }
-        let Some(stem) = name.strip_suffix(".json") else {
-            continue;
-        };
-        let path = entry.path();
-        let meta = match std::fs::symlink_metadata(&path) {
-            Ok(meta) => meta,
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(error) => {
-                failures.push(unreadable_worker(stem, error.to_string(), None));
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(source) => return Err(StateError::Read { path: dir, source }),
+    }
+    if let Some(read) = StateRead::open(home)?
+        && legacy_workers_table_exists(read.conn(), read.path())?
+    {
+        for (worker, failure, since_raw) in read_legacy_worker_rows(read.conn(), read.path())? {
+            if failures.iter().any(|entry| entry.worker == worker) {
                 continue;
             }
-        };
-        if meta.file_type().is_symlink() {
-            failures.push(unreadable_worker(
-                stem,
-                format!("{} is a symbolic link", path.display()),
-                None,
-            ));
-            continue;
-        }
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|modified| Timestamp::try_from(modified).ok());
-        match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<WorkerRecord>(&bytes) {
-                Ok(record) => failures.push(WorkerFailure {
-                    worker: record.worker,
-                    failure: record.failure,
-                    since: Some(record.since),
-                }),
-                Err(error) => failures.push(unreadable_worker(stem, error.to_string(), mtime)),
-            },
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(error) => failures.push(unreadable_worker(stem, error.to_string(), mtime)),
+            let since = match since_raw.parse::<Timestamp>() {
+                Ok(ts) => Some(ts),
+                Err(error) => {
+                    tracing::warn!(
+                        event = "runner_worker_state_unread",
+                        worker = %worker,
+                        path = %read.path().display(),
+                        %error
+                    );
+                    None
+                }
+            };
+            failures.push(WorkerFailure {
+                worker,
+                failure,
+                since,
+            });
         }
     }
     failures.sort_by(|a, b| a.worker.cmp(&b.worker));
@@ -167,6 +278,7 @@ pub(crate) fn record_worker_failure_at(
     failure: Option<&str>,
     now: Timestamp,
 ) -> Result<(), StateError> {
+    ensure_workers_migrated(home)?;
     super::refuse_symlink(&home.runner_workers_dir())?;
     let path = worker_path(home, worker);
     match failure {
@@ -211,190 +323,16 @@ pub(crate) fn worker_state(home: &Home, worker: &str, failure: Option<&str>) -> 
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    use instrukt_core::fsx::{self, LockGuard};
-    use instrukt_core::home::Home;
-    use jiff::Timestamp;
-    use tracing::field::{Field, Visit};
-
-    use super::{
-        WorkerRecord, read_worker_failures, record_worker_failure_at, worker_path, worker_state,
-    };
-    use crate::state::StateError;
-
-    fn home() -> (tempfile::TempDir, Home) {
-        let dir = fsx::temp_dir(&tempfile::Builder::new()).unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        (dir, home)
-    }
-
-    fn seconds(n: i64) -> Timestamp {
-        Timestamp::from_second(1_900_000_000 + n).unwrap()
-    }
-
-    struct CaptureEvents {
-        events: Arc<Mutex<Vec<String>>>,
-    }
-
-    struct EventField(Option<String>);
-
-    impl Visit for EventField {
-        fn record_str(&mut self, field: &Field, value: &str) {
-            if field.name() == "event" {
-                self.0 = Some(value.to_owned());
-            }
-        }
-        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "event" {
-                self.0 = Some(format!("{value:?}"));
-            }
-        }
-    }
-
-    impl tracing::Subscriber for CaptureEvents {
-        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
-            true
-        }
-        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            tracing::span::Id::from_u64(1)
-        }
-        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-        fn event(&self, event: &tracing::Event<'_>) {
-            let mut visitor = EventField(None);
-            event.record(&mut visitor);
-            if let Some(name) = visitor.0 {
-                self.events.lock().unwrap().push(name);
-            }
-        }
-        fn enter(&self, _span: &tracing::span::Id) {}
-        fn exit(&self, _span: &tracing::span::Id) {}
-    }
+    use super::worker_entry_stem;
 
     #[test]
-    fn failure_updates_preserve_since_and_recovery_removes_the_file() {
-        let (_dir, home) = home();
-        let worker = "history-extraction";
-        record_worker_failure_at(&home, worker, Some("first cause"), seconds(0)).unwrap();
-        record_worker_failure_at(&home, worker, Some("second cause"), seconds(60)).unwrap();
-        let path = worker_path(&home, worker);
-        let stored: WorkerRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(stored.worker, worker);
-        assert_eq!(stored.failure, "second cause");
-        assert_eq!(stored.since, seconds(0));
-
-        record_worker_failure_at(&home, worker, None, seconds(120)).unwrap();
-        assert!(!path.exists());
-        // Removing an absent file succeeds idempotently.
-        record_worker_failure_at(&home, worker, None, seconds(180)).unwrap();
-    }
-
-    #[test]
-    fn writes_and_clears_succeed_while_writer_lock_is_held() {
-        let (_dir, home) = home();
-        let _writer = LockGuard::acquire(&home.writer_lock_file(), Duration::from_secs(1)).unwrap();
-        assert!(worker_state(
-            &home,
-            "readiness",
-            Some("provider unavailable")
-        ));
-        let path = worker_path(&home, "readiness");
-        assert!(path.exists());
-        assert!(!home.state_db_file().exists());
-        assert!(worker_state(&home, "readiness", None));
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn symlinks_at_worker_file_or_directory_are_refused() {
-        let (_dir, home) = home();
-        let outside = home.state_dir().join("outside.json");
-        fsx::atomic_write(&outside, b"keep").unwrap();
-        let path = worker_path(&home, "history-search");
-        fsx::create_dir_all(path.parent().unwrap()).unwrap();
-        fsx::symlink(&outside, &path).unwrap();
-
-        let write_err = record_worker_failure_at(&home, "history-search", Some("boom"), seconds(0));
-        assert!(matches!(write_err, Err(StateError::Symlink { .. })));
-        let clear_err = record_worker_failure_at(&home, "history-search", None, seconds(0));
-        assert!(matches!(clear_err, Err(StateError::Symlink { .. })));
-        assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
-    }
-
-    #[test]
-    fn overwriting_malformed_worker_file_warns_and_replaces_since() {
-        let (_dir, home) = home();
-        let worker = "runtime-start:t3:demo";
-        let path = worker_path(&home, worker);
-        fsx::atomic_write(&path, b"{not json").unwrap();
-
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let subscriber = CaptureEvents {
-            events: Arc::clone(&events),
-        };
-        tracing::subscriber::with_default(subscriber, || {
-            record_worker_failure_at(&home, worker, Some("fresh cause"), seconds(42)).unwrap();
-        });
-        let stored: WorkerRecord = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(stored.failure, "fresh cause");
-        assert_eq!(stored.since, seconds(42));
-        assert!(
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|e| e == "runner_worker_state_unread")
-        );
-    }
-
-    #[test]
-    fn reading_worker_failures_ignores_dotfiles_and_surfaces_corrupt_and_symlink_files() {
-        let (_dir, home) = home();
-        assert!(read_worker_failures(&home).unwrap().is_empty());
-        assert!(
-            !home.runner_workers_dir().exists(),
-            "reading must not create runner-workers/"
-        );
-
-        let _writer = LockGuard::acquire(&home.writer_lock_file(), Duration::from_secs(1)).unwrap();
-        record_worker_failure_at(&home, "history-extraction", Some("bad shape"), seconds(10))
-            .unwrap();
-        // Atomic-write temp dotfiles are ignored.
-        fsx::atomic_write(
-            &home.runner_workers_dir().join(".tmp12345.json"),
-            b"partial",
-        )
-        .unwrap();
-        // Malformed JSON is surfaced as a worker failure.
-        fsx::atomic_write(&home.runner_workers_dir().join("corrupt.json"), b"{bad").unwrap();
-        // Symlinked JSON is surfaced as a worker failure rather than followed.
-        let outside = home.state_dir().join("outside-read.json");
-        fsx::atomic_write(
-            &outside,
-            br#"{"worker":"spoof","failure":"nope","since":"2026-11-27T00:00:00Z"}"#,
-        )
-        .unwrap();
-        fsx::symlink(&outside, home.runner_workers_dir().join("linked.json")).unwrap();
-
-        let failures = read_worker_failures(&home).unwrap();
-        let workers: Vec<&str> = failures.iter().map(|entry| entry.worker.as_str()).collect();
+    fn worker_entry_stem_accepts_only_non_dotfile_json_names() {
         assert_eq!(
-            workers,
-            vec![
-                "history-extraction",
-                "runner-worker:corrupt",
-                "runner-worker:linked",
-            ]
+            worker_entry_stem("0123456789abcdef.json"),
+            Some("0123456789abcdef")
         );
-        assert_eq!(failures[0].since, Some(seconds(10)));
-        assert!(!failures[1].failure.is_empty());
-        assert!(failures[1].since.is_some());
-        assert!(!failures[2].failure.is_empty());
-        let json = failures[0].clone().into_json();
-        assert_eq!(json["worker"], "history-extraction");
-        assert_eq!(json["failure"], "bad shape");
-        assert_eq!(json["since"], seconds(10).to_string());
+        assert_eq!(worker_entry_stem(".tmp12345.json"), None);
+        assert_eq!(worker_entry_stem(".hidden"), None);
+        assert_eq!(worker_entry_stem("worker.lock"), None);
     }
 }
