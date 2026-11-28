@@ -205,6 +205,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_still_running_execution_supplies_no_terminal_capacity_evidence() {
+        let session = SessionRef::parse("t3:capacity-thread").unwrap();
         assert!(
             outcome(projection("running", "usage_limit"), &session)
                 .unwrap()
