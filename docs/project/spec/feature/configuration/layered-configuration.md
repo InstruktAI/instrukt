@@ -697,6 +697,7 @@ And the configuration is unchanged
 
 ### Configuration value shapes
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
@@ -709,6 +710,20 @@ And the configuration is unchanged
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
+<!-- change:thin-live-runtime-boundary -->
+| Key | Type / allowed values | Default |
+| --- | --- | --- |
+| `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
+| `backup` | global-only mapping with required `endpoint` (`https` URL, or loopback `http`, without credentials), `region`, `bucket`, `access_key_id` and `secret_access_key` (`${NAME}` references resolving to non-blank values in `~/.instrukt/secrets.env`), `age_recipient` (public `age` recipient); optional `prefix`, `keep` (positive integer), `time` (`HH:MM` 24-hour local time) | absent (unconfigured); when present, `keep` defaults to `14`, `prefix` defaults to empty, and `time` follows the published global schema default (`instrukt config schema --global`). |
+| `runner.runtime` | compiled runtime adapter name registered via `RuntimeDeclaration` | absent; the default compiled adapter |
+| `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
+| `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
+| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
+| `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
+| `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
+| `schema_version` | schema version number written by init | current schema version; the first is `1`. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### UC-CL5: Configure external state in its owning source
 

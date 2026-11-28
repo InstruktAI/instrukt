@@ -191,11 +191,20 @@ and nothing runs (`project/instrukt/spec/feature/runner/home-backup`,
 
 ### Caller and object resolution
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The selected runtime adapter recognizes the native caller. For T3,
 `T3CODE_THREAD_ID` yields the native id and the session reference `t3:<id>`.
 The environment identifies the session, not its role. Role, todo and scope come
 from that session's recorded binding, never an environment role variable, a
 `--role` target argument, the current directory, a display title or git author.
+<!-- change:thin-live-runtime-boundary -->
+The selected runtime adapter recognizes the native caller and maps its
+environment to a native session reference `<runtime>:<native-id>`
+(`project/instrukt/spec/feature/runtime/adapter`). The environment identifies
+the session, not its role. Role, todo and scope come from that session's
+recorded binding, never an environment role variable, a `--role` target
+argument, the current directory, a display title or git author.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 For work sessions, work's `session_bindings` and attempt evidence supply the
 project, durable todo identity, role, lane, attempt, worktree and branch. Native

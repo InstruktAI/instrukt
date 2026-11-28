@@ -134,33 +134,20 @@ refused when the session has none or the runtime cannot say. A session with no
 such record has no speaker. No argument and no value the agent passes selects
 a speaker or a member.
 <!-- change:thin-live-runtime-boundary -->
-The speaker is resolved fail-closed at point of use by the company context
-(`project/instrukt/spec/domain/company`,
-`project/instrukt/spec/feature/company/conversations`), correlating a lock-free
-WAL snapshot of instrukt-owned conversation state against the selected
-runtime's live `read_state` (`project/instrukt/spec/feature/runtime/adapter`):
+The speaker is obtained at point of use from the company context's published
+fail-closed active-speaker lookup (`project/instrukt/spec/domain/company`,
+`project/instrukt/spec/feature/company/conversations`):
 
-- **Verified active addressed turn:** when the active bound session is present
-  and running with an active turn whose input identity matches an in-flight
-  addressed message on that binding, the call carries that message's recorded
-  member speaker (surviving restarts and staying intact after explicit
-  replies).
-- **Fail-closed refusal:** when the live observation or state lookup fails, the
-  session is idle (`input-ready`), failed, gone, absent, archived, or
-  preparing/queued, the active turn or its opening input is unavailable, the
-  input identity matches an adjacent/different company-delivered message or
-  carries an unrecognized company member envelope, or the calling session
-  matches a retired conversation generation (`runtime_generations`), the call
-  is refused and **never** falls through to the company's service-account
-  `login`.
-- **Confirmed direct operator / technical-owner turn:** when the active bound
-  session is confirmed running on an input matching no company-delivered
-  message and whose available opening text carries no company member envelope,
-  the call has no addressed member speaker and never inherits any prior
-  member's identity or credentials.
+- When the lookup returns a verified active member speaker, the call carries
+  that speaker's login per the table below.
+- When the lookup refuses or errors, the call is refused and never falls
+  through to the company's service-account `login`.
+- When the lookup confirms no addressed member speaker, or the calling session
+  has no company conversation binding, the call has no speaker and is served
+  per the table below without inheriting any prior member's identity or
+  credentials.
 
-A session outside company conversations has no speaker. No argument and no
-value the agent passes selects a speaker or a member.
+No argument and no value the agent passes selects a speaker or a member.
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 A speaker's stored logins are those of the one member entry of that company

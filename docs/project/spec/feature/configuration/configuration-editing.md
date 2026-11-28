@@ -190,17 +190,16 @@ requires an authenticated administrator speaking in a direct message:
   administrator asks in a direct message to the company agent, or the local
   operator runs the command outside any session.
 <!-- change:thin-live-runtime-boundary -->
-- The active turn's speaker is verified fail-closed through the company
-  context's active-speaker lookup (correlating a lock-free WAL snapshot of
-  instrukt-owned conversation state against `runtime`'s live `read_state`,
-  `project/instrukt/spec/domain/company`) and must resolve to Outcome 1
-  (verified active addressed turn) with `is_admin = true` and
-  `is_direct = true`, as recorded at admission. A non-admin, a channel turn
-  (`is_direct = false`), an idle/failed/gone/unobservable/unmatched turn, a
-  direct operator turn (Outcome 3), a retired conversation generation
-  (`runtime_generations`), or a `--company` naming another company is refused,
-  naming its door: an administrator asks in a direct message to the company
-  agent, or the local operator runs the command outside any session.
+- The calling session must have a verified active addressed member speaker from
+  the company context's published fail-closed active-speaker lookup
+  (`project/instrukt/spec/domain/company`,
+  `project/instrukt/spec/feature/company/conversations`) with `is_admin = true`
+  and `is_direct = true`, as recorded at admission. A non-admin, a channel turn
+  (`is_direct = false`), any speaker-lookup refusal or error, a confirmed
+  direct-operator turn with no addressed speaker, or a `--company` naming
+  another company is refused, naming its door: an administrator asks in a
+  direct message to the company agent, or the local operator runs the command
+  outside any session.
 <!-- /planned-change:thin-live-runtime-boundary -->
 - Allowed verbs inside that scope are `schema --company <own> mcp`,
   `get --company <own> mcp`, `get --company <own> --revision`,

@@ -264,8 +264,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 <!-- change:thin-live-runtime-boundary -->
 - **Owns:** Per-computer history extraction/search and merged history queries
-  (consuming runtime's non-live `ColdTextSource` for extraction and legacy
-  record normalization); module-aware runner execution; todo dispatch policy;
+  (consuming runtime's non-live `ColdTextSource` for retained conversation text
+  extraction and `RuntimeDeclaration`'s static legacy-history normalizer hook
+  for legacy record normalization); module-aware runner execution; todo dispatch policy;
   procedure activation from events; the admission, rendering, start and wake of
   requested reviews and the return of their verdicts to the sessions that
   asked; operational session inspection, keyed start orchestration, and session

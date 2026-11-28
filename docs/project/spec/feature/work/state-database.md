@@ -60,32 +60,10 @@ meaning and the writes of the conversation tables.
 
 <!-- planned:thin-live-runtime-boundary -->
 - **Company explicit reply outbox and curated turn status stay outside it:**
-  - `state/company-replies.db` (SQLite WAL, `PRAGMA user_version = 1`, owner-only
-    permissions and symlink refusal) under `state/company-replies.lock` holds
-    authoritative explicit reply pieces written exclusively by synchronous
-    `instrukt company reply` (`explicit_replies`, keyed by `(reply_id, piece)`
-    with `company`, `connector`, `conversation`, nullable `turn_message`,
-    nullable `turn_input_id`, `text`, and `queued_at`). The background company
-    relay reads it lock-free via WAL snapshot and copies rows idempotently into
-    `conversation_answers` in `state/instrukt.db`; `instrukt company reply`
-    never acquires `state/writer.lock` and opportunistically prunes aged
-    confirmed-posted rows (older than 7 days, verified via lock-free WAL read
-    of `conversation_answers`, bounded per call, skipping on transient read
-    errors). Covered by home backup (`project/instrukt/spec/feature/runner/home-backup`)
-    and single-company export/import via consistent filtered online backup or
-    pre-snapshot drain (`project/instrukt/spec/feature/company/company-containers`).
-  - `state/company-turn-status/<binding-digest>.json` holds the latest curated
-    working status for one active addressed turn (`schema_version = 1`,
-    `session`, `input_id`, `company`, `connector`, `conversation`, validated
-    non-empty single-line `text` bounded to at most 256 UTF-8 bytes, and
-    `updated_at`). `<binding-digest>` is the lowercase hexadecimal SHA-256 of
-    `<company>\0<connector>\0<binding_conversation>`. Written solely by
-    `instrukt company status` via atomic temp+fsync+rename (`0600`) with symlink
-    refusal and zero database or writer lock; the background relay reads
-    lock-free without mutating or unlinking the file, ignores entries whose
-    `(session, input_id)` do not match the current active turn, and warns and
-    falls back to the default calm line on malformed or unknown-schema JSON.
-    Excluded from home backup (`project/instrukt/spec/feature/runner/home-backup`).
+  explicit reply pieces queued by `instrukt company reply` live in
+  `state/company-replies.db` under `state/company-replies.lock`, and curated
+  active-turn status files live under `state/company-turn-status/`, each
+  isolated from `state/writer.lock` (`project/instrukt/spec/domain/company`).
 <!-- /planned:thin-live-runtime-boundary -->
 
 
@@ -330,14 +308,9 @@ live turn correlation:
 - `conversation_messages` drops `turn_update`, adds nullable `observed_run_id`,
   `turn_started_at`, and `terminal_error_queued_at`, and backfills
   `dispatch_command_id` for existing `state = 'sent'` opening rows whose
-  `dispatch_command_id IS NULL` from `runtime_bindings.start_key` (falling back
-  to `connected_conversations.request`'s captured `native_launch.command_id`).
+  `dispatch_command_id IS NULL` from `runtime_bindings.start_key`.
 - `conversation_answers` adds nullable `source_message` linking explicit reply
   and terminal error pieces back to their originating `conversation_messages.message`.
-- Serialized `RuntimeStart` payloads across `connected_conversations`,
-  `runtime_bindings`, `runtime_generations`, `procedure_responsibilities`,
-  `procedure_generations`, and `manual_standing_reservations` remain JSON
-  wire-compatible across the runtime crate extraction.
 <!-- /planned:thin-live-runtime-boundary -->
 
 
@@ -777,6 +750,7 @@ acceptance state and visible failure/outcome. A duplicate key returns its existi
 acceptance. Submission failures leave the consumer unsettled; accepted rows precede the final consumer-outcome, handled-mark and cursor transaction before Redis ACK. Later runtime handover and entry consumption are separate boundaries under
 `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **`procedure_responsibilities`** — continuing procedure/home[/subject] assignments.
 Key: `(procedure, exact_home, subject_or_none)`, with typed home and subject
 identity, next enqueue position and current session generation. One per-procedure/
@@ -788,6 +762,19 @@ assignment; later input retains its initialized settings;
 a successor adopts current publication. This is assignment bookkeeping, not a
 runtime session, transcript or lifecycle store. Conflicting semantic-key evidence or uncertain
 observation cannot advance the generation.
+<!-- change:thin-live-runtime-boundary -->
+**`procedure_responsibilities`** — continuing procedure/home[/subject] assignments.
+Key: `(procedure, exact_home, subject_or_none)`, with typed home and subject
+identity, next enqueue position and current session generation. One per-procedure/
+home resolution guard covers all its subjects. Generation history retains the
+runtime key, native session, execution checkout, system-origin assignment evidence,
+initialized role, attendance and interruptibility, and confirmed
+terminal/continuation disposition. Human settling does not retire a runtime
+standing assignment; later input retains its initialized settings;
+a successor adopts current publication. This is assignment bookkeeping, not a
+runtime session, transcript or lifecycle store. Conflicting semantic-key evidence or uncertain
+observation cannot advance the generation.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **`procedure_generations`** — retired standing assignment evidence keyed by
 responsibility and generation, retaining native identity, key, initialized
@@ -1164,14 +1151,14 @@ and `message`, the connector's identity of that message.
 | `dispatch_command_id` | The durable runtime input command identity for the current attempt (persisted for BOTH opening launches and follow-up sends before execution). Retained while the turn runs (never cleared by mid-turn explicit reply posting) and matched across `state IN ('pending', 'failed', 'sent') AND superseded_at IS NULL` for active-turn speaker correlation; cleared when the turn settles. |
 | `dispatch_write_at` | When writing the first request byte could have begun under the recorded follow-up command ID (set only on follow-up sends, not keyed opening starts, so `SEND_RECONCILE_BOUND` is not mis-armed while pending). Cleared when the attempt settles. |
 | `send_unknown_at` | When an unresolved send stopped blocking later work at `SEND_RECONCILE_BOUND`. The original frame, attempt boundary and time remain for a late match via bounded recent-turn observation. The row is not dispatched again and produces no further waiting indication or notice. A match clears this field. |
-| `retry_at`, `failed_turns` | The next eligible redelivery time on the operator clock and the failed-turn count used for bounded exponential backoff (`FAILED_RETRY_DELAY = 2m`, `FAILED_RETRY_LIMIT = 15m`, `FAILED_RETRY_MAX_ATTEMPTS = 3` retries / 4 total failed attempts). Upon exhaustion without an explicit reply, the row transitions atomically to `state = 'answered'` with `retry_at = NULL`, `terminal_error_queued_at = <now>`, and retained `failure` cause; rows with `terminal_error_queued_at IS NOT NULL` are never rescheduled. |
+| `retry_at`, `failed_turns` | The next eligible redelivery time on the operator clock and the failed-turn count used for bounded exponential backoff (`project/instrukt/spec/feature/company/conversations`). Upon retry exhaustion without an explicit reply, the row transitions atomically to `state = 'answered'` with `retry_at = NULL`, `terminal_error_queued_at = <now>`, and retained `failure` cause; rows with `terminal_error_queued_at IS NOT NULL` are never rescheduled. |
 | `observed_run_id`, `turn_started_at` | Live runtime run identity and start timestamp observed via `runtime`'s `read_state` once the turn enters execution; `NULL` before execution starts and retained until the turn settles. |
 | `terminal_error_queued_at` | Operator-clock timestamp when a terminal standard member-facing error reply was queued idempotently into `conversation_answers` (on bounded retry exhaustion or terminal completion without an explicit reply); `NULL` otherwise. |
 | `turn` | The explicit reply or terminal error turn identifier (`error:<message>`) that settled the message; `NULL` until then. |
 | `failure` | Cause of its last failed capture, delivery, or turn. `NULL` once served cleanly; retained on superseded rows and on rows settled via `terminal_error_queued_at` for operator inspection on `instrukt events status`. |
 | `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |
 | `admission_position` | Durable sequence assigned at admission. Migration 23 seeds older admitted messages in retained row order. |
-| `superseded_at` | The operator clock time when a later-admitted message from the same sender in the same conversation settles and supersedes this failed row. `NULL` until then. Supersession closes the interval and removes the row from status and unfinished work while retaining its failure record. |
+| `superseded_at` | The operator clock time when a later-admitted message from the same sender in the same conversation settles cleanly (`state = 'answered'`, `terminal_error_queued_at IS NULL`, with all answer pieces posted) and supersedes this failed row. `NULL` until then. Terminal-error-settled rows (`terminal_error_queued_at IS NOT NULL`) never supersede earlier `state = 'failed'` messages from the same sender. Supersession closes the interval and removes the row from status and unfinished work while retaining its failure record. |
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
 | `turn_ended_at` | When its turn was observed as ended, recorded before any post of its answer; a post of that answer that fails opens its interval from this time. `NULL` until then. |
 <!-- /planned-change:thin-live-runtime-boundary -->
