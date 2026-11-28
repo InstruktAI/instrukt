@@ -261,7 +261,7 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     Handling too large to stay a step in the entry procedure becomes a
     sub-procedure: a procedure in the group folder the entry procedure heads,
     carrying none of the root frontmatter. The entry procedure's route instructs
-    its agent to load the sub-procedure with `instrukt docs get <id>` when that
+    its agent to read the sub-procedure by ID when that
     route is taken, and never lists it in Required reads, which are inlined into
     every activation. Shared handling that other procedures use as well, such as
     the event-handling instructions, stays a Required read. One agent then holds

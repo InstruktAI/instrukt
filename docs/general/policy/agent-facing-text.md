@@ -22,8 +22,8 @@ visibility: 'public'
   path that delivers it reaches — an always-on rendering, a command's required
   reads, a dispatch brief, a refusal — not whoever the text is about.
 - **Text an executor loads is written for the executor.** An always-on
-  rendering — a global agent file, a domain's `instrukt docs get --domain`
-  rendering, a project's `AGENTS.md` — reaches every role in its scope,
+  rendering — a global agent file, a domain rendering,
+  a project's `AGENTS.md` — reaches every role in its scope,
   executors among them, so its text is written for the executor. What only a judge, governor, or maintainer needs lives in
   snippets those roles load on demand. Where an executor's job includes
   judging its own output, as an author self-reviews before committing, the

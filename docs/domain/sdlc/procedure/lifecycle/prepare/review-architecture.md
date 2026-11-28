@@ -36,7 +36,7 @@ the target.
 
 ## Steps
 
-First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
+First read the sdlc principles that apply to this work, as listed in the `sdlc` domain rendering.
 
 ### 1. Read context
 
@@ -58,8 +58,8 @@ First read the sdlc principles that apply to this work, as `instrukt docs get --
 - Discover the complete documentation change set directly from the worktree's
   diff under `docs/` against its merge base with canonical main (covering new
   pending snippets, companions, in-body pending markers, ADRs, frontmatter
-  edits, and `index.yaml`), then read each pending snippet in its pending view
-  via `instrukt docs get <id> --target {slug}` compared with its current
+  edits, and `index.yaml`), then read each pending snippet in its
+  `--target {slug}` pending view compared with its current
   contract — the design under review is the pending material, not the live text.
 - Relevant code paths cited by the artifact.
 - Walk the governing-contracts entry points yourself before you read the

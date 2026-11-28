@@ -13,13 +13,13 @@ visibility: 'public'
   what the contract says. Before any consequential act — a directive to another
   session, a todo change, a stamp, a dispatch, a commit, an artifact edit, or a
   ruling on another agent's work — run a filtered `instrukt docs index` and
-  `instrukt docs get` for the contracts governing that class of act in this
-  session, and act on what they say.
+  read the contracts governing that class of act in this session, and act on
+  what they say.
 - Secondhand knowledge from summaries, peers or workers is the signal to read
   the source.
 - The feeling that the answer is obvious is the signal to ground.
 - The first edit of a session is the boundary at which you load the domain it
-  writes into, with `instrukt docs get --domain <x>`, whatever the session was
+  writes into (`general/policy/context-retrieval`), whatever the session was
   before it.
 
 ### Own the call

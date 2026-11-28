@@ -70,8 +70,8 @@ of instrukt itself (`general/procedure/bug-reporting`).
    When a person asks to connect, inspect, update, or remove one of the
    company's external services:
    - If the platform-framed member envelope carries `admin=true` and
-     `direct=true`, load `instrukt docs get
-     general/procedure/company-onboarding/service-connection` and follow its
+     `direct=true`, read
+     `general/procedure/company-onboarding/service-connection` and follow its
      company-admin direct-message path.
    - If the speaker is an administrator asking in a channel (`direct=false`),
      tell them in one plain sentence to ask you in a direct message so service
@@ -134,7 +134,7 @@ of instrukt itself (`general/procedure/bug-reporting`).
 - **instrukt itself behaves erratically.** When a current contract of
   instrukt, its runtime or its platform appears broken and you hold an
   occurrence — the command and its output, the message it concerns — read
-  `instrukt docs get general/procedure/bug-reporting --closure` and report it
+  `general/procedure/bug-reporting` and its required reads, and report it
   under that procedure, into the project that owns the defect on this
   computer. You hold no authority to repair it: where the questions ask
   whether to fix it in context, your answer is always to report. The person

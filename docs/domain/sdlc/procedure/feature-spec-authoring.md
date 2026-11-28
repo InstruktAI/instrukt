@@ -73,10 +73,10 @@ shared owner. If no single owner can be named, stop authoring and resolve
 the boundary first. Ownership is decided per use case, not once per spec: a
 spec correctly placed under its context still admits no scenario whose
 predicate another context decides. Before authoring a scenario, read the spec
-of every context whose outcome its `Then` clauses assert —
+of every context whose outcome its `Then` clauses assert — find them with
 `instrukt docs index --areas spec` (the default view includes this project's
 specs; use `instrukt docs index --project <slug>` for a named project's), then
-`instrukt docs get <id>`, with `--target <slug>` when the owner is pending. A
+read each spec (using `--target <slug>` when the owner is pending). A
 feature spec carries no list of cross-context references: a claim about who
 decides what between two contexts belongs in the owning context's domain spec
 (`sdlc/spec/domain-spec`, Ownership boundary), and a dependency on another

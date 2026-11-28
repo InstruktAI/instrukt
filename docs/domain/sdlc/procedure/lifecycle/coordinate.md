@@ -89,9 +89,8 @@ you rest.
   project's active todos on this computer; a todo of another project is outside
   your reach, and a condition another computer emits reaches that computer's
   coordinator.
-- Read the contract of the role whose work a condition concerns with
-  `instrukt docs get` before judging it; live evidence is re-read for each
-  judgment.
+- Read the contract of the role whose work a condition concerns before judging
+  it; live evidence is re-read for each judgment.
 
 ## Steps
 
@@ -114,8 +113,7 @@ Apply these configured action values to the identified assignment and session.
 For each delivered event, read the todos it names with `instrukt todo show
 <slug>` and the session it names through the configured status inspection and
 conversation read. An event reports a condition as it was established; when
-the record shows it has cleared, nothing is owed for it. Load
-`sdlc/concept/coordination-cases` with `instrukt docs get` and place the
+the record shows it has cleared, nothing is owed for it. Read `sdlc/concept/coordination-cases` and place the
 condition in its case; its trigger, owners, your act and its settlement govern
 what follows. Where two contracts seem to conflict, resolve it by
 `general/policy/conflict-resolution` before concluding a defect exists.

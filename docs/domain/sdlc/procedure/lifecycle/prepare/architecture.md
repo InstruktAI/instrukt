@@ -114,7 +114,7 @@ routing above). Record delivery reasoning and ephemeral tactic decisions in the
 
 ## Steps
 
-First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
+First read the sdlc principles that apply to this work, as listed in the `sdlc` domain rendering.
 
 ### 1. Load context
 

@@ -106,14 +106,14 @@ canonical docs against freshly verified `<canonical-ref>`:
   ```
   If the `&&` chain exits non-zero, preserve the diagnostic and return
   `Verdict: BLOCKED`. When a fill appears in `instrukt docs index --target {slug}`
-  or matches that path filter, load `{slug}`'s candidate view via
-  `instrukt docs get <id> --target {slug}`. When `{slug}` retires the fill via
-  an empty sibling companion (`instrukt docs get <id> --target {slug}` renders
+  or matches that path filter, read `{slug}`'s candidate view (with
+  `--target {slug}`). When `{slug}` retires the fill via
+  an empty sibling companion (whose `--target {slug}` view renders
   an empty body) or removes it, treat that fill as absent for `{slug}` and
   report the absence explicitly in `verification-findings`.
 - **Fills untouched by `{slug}` (published canonical docs):** Before trusting
-  `instrukt docs index --project <project>` or `instrukt docs get <id>` (without
-  `--target`) to read a fill or judge it absent, confirm published project docs
+  `instrukt docs index --project <project>` or a default (non-`--target`)
+  snippet read to load a fill or judge it absent, confirm published project docs
   include `<canonical-ref>`'s latest commit touching that fill's path: read the
   `published commit` from `instrukt docs index --project <project>` and run
   `git log -1 --format=%H "<canonical-ref>" -- <path>` (verifying exit `0`
@@ -129,7 +129,7 @@ canonical docs against freshly verified `<canonical-ref>`:
   lags behind `<canonical-ref>`, do not treat the fill as absent or verify
   against a stale fill — return `Verdict: BLOCKED` citing the published commit
   versus `<canonical-ref>`'s fill commit. Once publication is current for that
-  path, load the delivered fill via `instrukt docs get <id>` (without
+  path, read the delivered fill (without
   `--target`), or report it absent in `verification-findings` when unlisted.
 
 ### 1. Ground intent, diff, and candidate project fills
@@ -150,8 +150,8 @@ Read in full:
   ```
 - Both project extension-point fills resolved by the rule above (candidate view
   via `--target {slug}` when `{slug}` adds, edits, replaces, or retires the
-  fill via parent or sibling companion; publication-checked
-  `instrukt docs get <id>` from published canonical docs otherwise).
+  fill via parent or sibling companion; publication-checked reads
+  from published canonical docs otherwise).
 
 ### 2. Plan dynamically (Layer 3) and classify tier
 
@@ -221,7 +221,7 @@ Select execution by archetype and Layer 1 `execution_host`:
     runs in-job on a public repository — sanitized approved intent criteria and
     diff summary, using an authorized private-storage input reference when
     payloads exceed workflow input size limits so the fresh CI runner never
-    depends on a local todo database or `docs get --target`). After completion
+    depends on a local todo database or pending `--target` snippet reads). After completion
     and **before** trusting or accepting evidence (especially any
     public-repository in-job Checker verdict under
     `sdlc/policy/live-verification`), inspect the run explicitly on

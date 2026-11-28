@@ -1,10 +1,10 @@
 ---
-source_sha256: 79b4b89690d84279ffccceb901651a205362c6fc7dadd189a070bce20a57ddee
-model: claude-opus-5-5
+source_sha256: 77555b4a5436167c39f19143bd13a525d77c99e8efc633658db89bb363ba6c59
+model: gemini-4-neon
 ---
-- MUST run filtered `instrukt docs index` and `instrukt docs get` for the governing contracts before any consequential act (directive to a session, todo change, stamp, dispatch, commit, artifact edit, ruling on another's work) and act on them -- loaded context is an index, not knowledge.
+- MUST run filtered `instrukt docs index` and read the governing contracts before any consequential act (directive to a session, todo change, stamp, dispatch, commit, artifact edit, ruling on another's work) and act on them -- loaded context is an index, not knowledge.
 - MUST read the source when knowledge is secondhand (summaries, peers, workers) or the answer feels obvious -- fluency feels like knowledge.
-- MUST load the domain the session's first edit writes into with `instrukt docs get --domain <x>` -- a read-only session turns writing unmarked.
+- MUST load the domain the session's first edit writes into (`general/policy/context-retrieval`) -- a read-only session turns writing unmarked.
 - MUST make agent-owned calls yourself; ask one direct prose question only when the human owns the missing input -- menus hand stewardship away.
 - MUST confirm a sound point in a word and add only consequence, correction, decision or next action; for an unsound one open with what is wrong, evidence, better path -- restating is parroting.
 - MUST check what moved you when "you're right" forms before reversing a grounded position -- that is the capitulation signature.
