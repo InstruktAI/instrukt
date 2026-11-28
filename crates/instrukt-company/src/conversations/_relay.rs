@@ -292,10 +292,7 @@ fn close_completed_interval(
                  turn=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN coalesce(turn,?4) ELSE turn END,
                  failure=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE failure END,
                  attempted_at=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE attempted_at END,
-                 dispatch_command_id=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE dispatch_command_id END,
                  dispatch_write_at=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE dispatch_write_at END,
-                 observed_run_id=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE observed_run_id END,
-                 turn_started_at=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE turn_started_at END,
                  send_unknown_at=CASE WHEN state='sent' AND ?5 IS NOT NULL THEN NULL ELSE send_unknown_at END,
                  unavailable_since=NULL
              WHERE company=?1 AND connector=?2 AND conversation=?3

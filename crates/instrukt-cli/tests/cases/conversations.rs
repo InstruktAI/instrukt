@@ -5082,6 +5082,24 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
     }
     "#);
 
+    // The reply is accepted while the addressed runtime turn is still active.
+    wait("mid-turn explicit reply accepted", || {
+        !c.slack.posts().is_empty()
+    });
+    c.env
+        .instrukt(&here)
+        .env("T3CODE_THREAD_ID", &native_session)
+        .args([
+            "company",
+            "status",
+            "--conversation",
+            "D1",
+            "--text",
+            "Finishing the checks",
+        ])
+        .assert()
+        .success();
+
     // 5. Finish the turn with raw internal monologue — explicit frontstage must NEVER post it!
     c.finish_idle_without_reply(&session, Some("INTERNAL MONOLOGUE DO NOT LEAK TO SLACK"));
 
