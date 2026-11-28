@@ -790,3 +790,12 @@ impl ColdTextSource for T3Conversations {
         crate::_t3_notifications::subscribe(&self.path)
     }
 }
+
+/// Normalize a legacy history record, omitting background command reports.
+pub fn normalize_legacy_history_message(message: &mut serde_json::Value) -> bool {
+    if reports_background_command(message) {
+        return false;
+    }
+    without_captured_context(message);
+    true
+}
