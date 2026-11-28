@@ -1225,8 +1225,8 @@ fn apply_update(
         }
         if record.hold.is_some() {
             return Err(WorkError::refused(format!(
-                "`{}` is already on hold; release it with `instrukt todo update {} --release` first",
-                record.slug, record.slug
+                "`{}` is already on hold; a hold's reason is a record and is never restated — release it only when its condition is met or the work is meant to move",
+                record.slug
             )));
         }
         record.hold = Some(hold);
