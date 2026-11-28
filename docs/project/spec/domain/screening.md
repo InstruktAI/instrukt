@@ -47,8 +47,9 @@ comes from or what its caller does with an unsafe verdict.
   `llm.screening` (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
 **Answer bound**
-: The maximum number of completion tokens a capability-free call requests:
-  default `1024`, allowed range `1` to `4096`.
+: The maximum number of completion tokens a capability-free call requests,
+  defaulting to `DEFAULT_MAX_TOKENS` and bounded by `MIN_MAX_TOKENS` through
+  `MAX_MAX_TOKENS` in `instrukt-screening`.
 
 **Unavailable**
 : Transient endpoint or transport unavailability as judged by the outside gate's
@@ -100,7 +101,8 @@ comes from or what its caller does with an unsafe verdict.
 ## Ownership boundary
 
 - **Owns:** the capability-free chat-completions request shape and response
-  admissibility (`200 OK` headers judged before reading the bounded 1 MiB body,
+  admissibility (`200 OK` headers judged before reading the body capped by
+  `MAX_RESPONSE_BODY_BYTES` in `instrukt-screening`,
   `finish_reason == "stop"`, `400`/`413`/`422` endpoint rejection vs defect);
   3-to-8-word fragmentation, CSPRNG shuffling, classification prompt, two-check
   execution rule, simple verdict parsing and pure boolean safety decision;
@@ -152,10 +154,10 @@ transient in-process state inside the host-constructed `instrukt-outside::Gate`.
 ### What a caller waits for
 
 Every HTTP try runs through a `reqwest::Client` built by
-`instrukt_outside::http::build_client` with `follow_redirects: false`, a
-10-second connect timeout, the admitted `llm.screening.timeout` per-request
-timeout, and zero HTTP-client retries so `instrukt-outside::Gate` is the single
-retry layer. Every try uses `Gate::call_async` with
+`instrukt_outside::http::build_client` with `follow_redirects: false`, the
+`CONNECT_TIMEOUT` connect timeout in `instrukt-screening`, the admitted
+`llm.screening.timeout` per-request timeout, and zero HTTP-client retries so
+`instrukt-outside::Gate` is the single retry layer. Every try uses `Gate::call_async` with
 `Key::new("screening", [host_port]).item(model)` (using the credential-free
 `host[:port]` from `llm.screening.url`), `Settings::default()` (standard HTTP
 unavailability rules and `Backoff::DEFAULT`), the caller's `CallerWait`
@@ -180,11 +182,12 @@ as background work of its runtime. In-process callers invoke
 For each try, `(status, headers, received_at)` (with `received_at = gate.now()`
 stamped on header receipt) is judged BEFORE reading any response body:
 
-1. **`200 OK`:** the only status whose body is read, streamed with a 1 MiB cap.
-   Mid-body transport errors route through
-   `instrukt_outside::http::judge_reqwest_error`. Body overflow (> 1 MiB),
-   invalid UTF-8, invalid JSON or missing `choices[0]` produce
-   `CallOutcome::Refused(MalformedAnswer)` without retrying.
+1. **`200 OK`:** the only status whose body is read, streamed up to
+   `MAX_RESPONSE_BODY_BYTES` in `instrukt-screening`. Mid-body transport errors
+   route through `instrukt_outside::http::judge_reqwest_error`. Body overflow
+   beyond `MAX_RESPONSE_BODY_BYTES`, invalid UTF-8, invalid JSON or missing
+   `choices[0]` produce `CallOutcome::Refused(MalformedAnswer)` without
+   retrying.
    `choices[0].finish_reason == Some("stop")` is checked before accepting
    `choices[0].message.content`; any other or missing `finish_reason` produces
    `CallOutcome::Refused(CutOff)` without retrying, and missing or empty
@@ -222,15 +225,13 @@ Before any HTTP request is sent, `call` and `is_safe` refuse at entry (naming
 the cause and, for missing or invalid prerequisites, the repair door, without
 disclosing any secret or embedded credential material) when:
 
-- `llm.screening` is unconfigured (`LlmAdmission::Unconfigured`) or invalid
-  (`LlmAdmission::Withheld`, including malformed URL, embedded URL credentials,
-  non-loopback plaintext `http` URL, missing `url`/`model`, invalid `timeout`,
-  unknown keys or non-`${NAME}` `api_key`);
-- `llm.screening.api_key` is set and its secret fails resolution in
-  `~/.instrukt/secrets.env`
-  (`project/instrukt/spec/feature/configuration/owned-files`);
+- global `llm.screening` admission is `LlmAdmission::Unconfigured` or
+  `LlmAdmission::Withheld` under
+  `project/instrukt/spec/feature/configuration/layered-configuration` and
+  `project/instrukt/spec/feature/configuration/owned-files`;
 - the prompt (`call`) or text (`is_safe`) is empty or whitespace-only (zero
-  words), or `max_tokens` (`call`) is outside `1..=4096`;
+  words), or `max_tokens` (`call`) is outside `MIN_MAX_TOKENS`..=`MAX_MAX_TOKENS`
+  in `instrukt-screening`;
 - for CLI `instrukt is-safe`, `<file>` or standard input is missing, unreadable
   or not valid UTF-8.
 

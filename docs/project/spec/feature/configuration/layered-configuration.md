@@ -193,8 +193,10 @@ When present, `llm.screening` declares:
     across `llm.*` entries; omitted for local endpoints needing no key; literal
     credentials are findings and expanded values are never disclosed in reads
     or diagnostics;
-  - `timeout` — positive whole seconds (`1` to `600`, default `45`) bounding
-    one HTTP request try against the endpoint.
+  - `timeout` — positive whole seconds within the `llm.screening.timeout`
+    bounds and default declared by the global configuration schema
+    (`instrukt config schema --global llm.screening`), bounding one HTTP
+    request try against the endpoint.
 
 An `llm` declaration in a project layer or company home, an unknown purpose key
 under `llm`, an unknown subkey under `llm.screening`, a missing `url` or
@@ -268,7 +270,7 @@ other capability the global layer admits runs unchanged.
 | `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
 | `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
-| `llm.screening` (under top-level `llm` map; required `url` — `https` or loopback `http`, never with embedded credentials, query or fragment — and `model`; optional `${NAME}` `api_key` into `~/.instrukt/secrets.env`; optional `timeout`, 1 to 600 s, default 45; bring a plain model with no built-in search or browsing) | global only | screening (`project/instrukt/spec/domain/screening`) |
+| `llm.screening` (under top-level `llm` map; required `url` — `https` or loopback `http`, never with embedded credentials, query or fragment — and `model`; optional `${NAME}` `api_key` into `~/.instrukt/secrets.env`; optional `timeout` bounded and defaulted by the global configuration schema; bring a plain model with no built-in search or browsing) | global only | screening (`project/instrukt/spec/domain/screening`) |
 | `ticks` | global only | the runner |
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |

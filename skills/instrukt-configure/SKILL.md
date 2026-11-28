@@ -159,9 +159,10 @@ For untrusted-text screening (`llm.screening` in the global layer of
 `http://...` with no embedded credentials, query, or fragment), `model`,
 optional `${NAME}` `api_key` stored in `~/.instrukt/secrets.env` via `instrukt
 secrets set <NAME>` (omitted for local servers such as LM Studio that need no
-key), and optional `timeout` (`1` to `600` seconds, default `45`). Tell the
-operator to bring a plain model with no built-in search or browsing; instrukt
-performs no runtime check on which model is configured.
+key), and optional `timeout` (see `instrukt config schema --global
+llm.screening` for its bounds and default). Tell the operator to bring a plain
+model with no built-in search or browsing; instrukt performs no runtime check
+on which model is configured.
 
 ## Converge and verify locally
 

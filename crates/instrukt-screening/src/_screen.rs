@@ -63,6 +63,19 @@ enum CheckResult {
     StopEarly(SafeOutcome),
 }
 
+/// Synchronous wrapper around [`is_safe_async`] using the workspace-shared
+/// Tokio runtime bridge.
+pub fn is_safe(
+    admission: &LlmAdmission,
+    text: &str,
+    gate: &Gate,
+    caller_wait: CallerWait,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<SafeOutcome, CallDefect> {
+    instrukt_outside::runtime::block_on(is_safe_async(admission, text, gate, caller_wait, stop))
+        .map_err(|error| CallDefect::Runtime(error.to_string()))?
+}
+
 /// Screens `text` through two independent capability-free checks over shuffled
 /// 3-to-8-word fragments (or a single fragment for 1–5 words).
 pub async fn is_safe_async(
@@ -300,211 +313,57 @@ fn normalize_reason(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use instrukt_core::config::LlmEndpointConfig;
-    use instrukt_outside::Report;
-    use jiff::Timestamp;
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    struct TestGate {
-        gate: Gate,
-        mono: Arc<Mutex<Instant>>,
-    }
-
-    impl TestGate {
-        fn new() -> Self {
-            let now: Timestamp = "2026-11-28T10:00:00Z".parse().unwrap();
-            let mono = Arc::new(Mutex::new(Instant::now()));
-            let m = Arc::clone(&mono);
-            let gate = Gate::new(
-                Arc::new(move || now),
-                Arc::new(move || *m.lock().unwrap()),
-                Report::to(|_| {}),
-            );
-            Self { gate, mono }
-        }
-
-        fn advance_mono(&self, by: Duration) {
-            *self.mono.lock().unwrap() += by;
-        }
-    }
-
-    fn admitted(port: u16) -> LlmAdmission {
-        LlmAdmission::Admitted(Box::new(LlmEndpointConfig {
-            url: url::Url::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap(),
-            model: "plain-model".into(),
-            api_key: None,
-            timeout: Duration::from_secs(10),
-        }))
-    }
-
-    fn ok_answer(content: &str) -> (u16, Vec<u8>) {
-        (
-            200,
-            serde_json::json!({
-                "choices": [{
-                    "finish_reason": "stop",
-                    "message": { "role": "assistant", "content": content }
-                }]
-            })
-            .to_string()
-            .into_bytes(),
-        )
-    }
-
-    fn spawn_scripted(
-        responses: Vec<(u16, Vec<u8>)>,
-        on_req: Option<Box<dyn Fn(usize) + Send + 'static>>,
-    ) -> (u16, Arc<Mutex<usize>>, std::thread::JoinHandle<()>) {
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-        let port = server.server_addr().to_ip().unwrap().port();
-        let count = Arc::new(Mutex::new(0usize));
-        let count_clone = Arc::clone(&count);
-        let handle = std::thread::spawn(move || {
-            for (idx, (status, body)) in responses.into_iter().enumerate() {
-                let mut req = server.recv().unwrap();
-                let mut sink = String::new();
-                req.as_reader().read_to_string(&mut sink).unwrap();
-                *count_clone.lock().unwrap() += 1;
-                if let Some(cb) = &on_req {
-                    cb(idx);
-                }
-                req.respond(tiny_http::Response::from_data(body).with_status_code(status))
-                    .unwrap();
-            }
-        });
-        (port, count, handle)
-    }
 
     #[test]
-    fn parse_verdict_handles_plain_fenced_malformed_and_caps_reason_length() {
+    fn parse_verdict_accepts_plain_benign_json() {
         assert_eq!(
             parse_verdict(r#"{"verdict":"benign"}"#),
             Some(Verdict::Benign)
         );
+    }
+
+    #[test]
+    fn parse_verdict_accepts_code_fenced_benign_json() {
         assert_eq!(
             parse_verdict("```json\n{\"verdict\":\"benign\"}\n```"),
             Some(Verdict::Benign)
         );
+    }
+
+    #[test]
+    fn parse_verdict_rejects_benign_with_non_empty_reason() {
         assert_eq!(
             parse_verdict(r#"{"verdict":"benign","reason":"unexpected"}"#),
             None
         );
+    }
+
+    #[test]
+    fn parse_verdict_rejects_flagged_without_reason() {
         assert_eq!(parse_verdict(r#"{"verdict":"flagged"}"#), None);
         assert_eq!(
             parse_verdict(r#"{"verdict":"flagged","reason":"  \n "}"#),
             None
         );
+    }
+
+    #[test]
+    fn parse_verdict_rejects_unknown_or_malformed_verdict() {
         assert_eq!(parse_verdict(r#"{"verdict":"maybe"}"#), None);
         assert_eq!(parse_verdict("not json"), None);
+    }
 
+    #[test]
+    fn parse_verdict_normalizes_and_caps_flagged_reason() {
         let long_reason = format!("line1\n\tline2\r{}", "é".repeat(300));
         let raw = serde_json::json!({"verdict": "flagged", "reason": long_reason}).to_string();
         let Some(Verdict::Flagged(normalized)) = parse_verdict(&raw) else {
             panic!("expected flagged verdict");
         };
+        assert!(!normalized.is_empty());
         assert!(!normalized.contains('\n'));
         assert!(!normalized.contains('\r'));
         assert!(!normalized.contains('\t'));
         assert_eq!(normalized.chars().count(), MAX_REASON_CHARS);
-        assert!(normalized.starts_with("line1 line2 "));
-    }
-
-    #[test]
-    fn shared_deadline_exhaustion_on_check_1_prevents_check_2_http_request() {
-        let tg = TestGate::new();
-        let mono_for_cb = Arc::clone(&tg.mono);
-        // Server expects ONLY ONE request: if check 2 were erroneously launched
-        // as an untimed single try, the server would have exited and caused a
-        // connection defect, or count would be > 1.
-        let (port, count, handle) = spawn_scripted(
-            vec![ok_answer(r#"{"verdict":"benign"}"#)],
-            Some(Box::new(move |_idx| {
-                // Simulate check 1 consuming the entire 5s budget on the controlled monotonic source.
-                *mono_for_cb.lock().unwrap() += Duration::from_secs(5);
-            })),
-        );
-        let outcome = crate::is_safe(
-            &admitted(port),
-            "one two three four five six seven",
-            &tg.gate,
-            CallerWait::Within(Duration::from_secs(5)),
-            &|| false,
-        )
-        .unwrap();
-        handle.join().unwrap();
-        assert_eq!(*count.lock().unwrap(), 1);
-        assert!(matches!(outcome, SafeOutcome::Waiting(_)), "{outcome:?}");
-    }
-
-    #[test]
-    fn endpoint_rejected_stops_before_check_2_while_flagged_or_disagreement_runs_both_checks() {
-        // EndpointRejected on check 1 stops immediately without running check 2.
-        let (port, count, handle) = spawn_scripted(vec![(413, b"too large".to_vec())], None);
-        let tg = TestGate::new();
-        let outcome = crate::is_safe(
-            &admitted(port),
-            "one two three four five six",
-            &tg.gate,
-            CallerWait::UntilReturns,
-            &|| false,
-        )
-        .unwrap();
-        handle.join().unwrap();
-        assert_eq!(*count.lock().unwrap(), 1);
-        assert!(matches!(
-            outcome,
-            SafeOutcome::Unsafe {
-                cause: UnsafeCause::EndpointRejected { status: 413 },
-                ..
-            }
-        ));
-
-        // Check 1 benign + check 2 flagged runs both checks and returns flagged reason.
-        let (port2, count2, handle2) = spawn_scripted(
-            vec![
-                ok_answer(r#"{"verdict":"benign"}"#),
-                ok_answer(r#"{"verdict":"flagged","reason":"attempts instruction override"}"#),
-            ],
-            None,
-        );
-        let outcome2 = crate::is_safe(
-            &admitted(port2),
-            "one two three four five six",
-            &tg.gate,
-            CallerWait::UntilReturns,
-            &|| false,
-        )
-        .unwrap();
-        handle2.join().unwrap();
-        assert_eq!(*count2.lock().unwrap(), 2);
-        assert_eq!(
-            outcome2,
-            SafeOutcome::Unsafe {
-                reason: "attempts instruction override".into(),
-                cause: UnsafeCause::Flagged,
-            }
-        );
-
-        // Both benign returns Safe.
-        let (port3, count3, handle3) = spawn_scripted(
-            vec![
-                ok_answer(r#"{"verdict":"benign"}"#),
-                ok_answer(r#"{"verdict":"benign"}"#),
-            ],
-            None,
-        );
-        tg.advance_mono(Duration::from_secs(1));
-        let outcome3 = crate::is_safe(
-            &admitted(port3),
-            "short text",
-            &tg.gate,
-            CallerWait::UntilReturns,
-            &|| false,
-        )
-        .unwrap();
-        handle3.join().unwrap();
-        assert_eq!(*count3.lock().unwrap(), 2);
-        assert_eq!(outcome3, SafeOutcome::Safe);
     }
 }

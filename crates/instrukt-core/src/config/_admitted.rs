@@ -874,12 +874,17 @@ mod tests {
         assert_eq!(
             admit_machine_layer(vec![llm_finding.clone()]),
             MachineLayer::Withheld {
-                findings: vec![llm_finding.clone()],
+                findings: vec![llm_finding],
                 thread_retention: false,
                 backup: false,
                 llm: true,
             }
         );
+    }
+
+    #[test]
+    fn a_machine_layer_with_llm_and_other_finding_is_refused() {
+        let llm_finding = finding("llm.screening.url");
         let other_finding = finding("ticks");
         assert_eq!(
             admit_machine_layer(vec![llm_finding.clone(), other_finding.clone()]),

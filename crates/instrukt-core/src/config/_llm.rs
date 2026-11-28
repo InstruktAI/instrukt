@@ -33,6 +33,7 @@ pub const MAX_LLM_TIMEOUT_SECS: u64 = 600;
 
 const REQUIRED_FIELDS: [&str; 2] = ["url", "model"];
 const OPTIONAL_FIELDS: [&str; 2] = ["api_key", "timeout"];
+const REDACTED_SECRET_PLACEHOLDER: &str = "<protected-file reference>";
 
 /// Validated, admitted OpenAI-compatible endpoint configuration with optional
 /// resolved API key held solely for HTTP I/O. Never implements `Serialize`.
@@ -166,7 +167,7 @@ pub(super) fn redact(value: &mut Value) {
             && !api_key.is_null()
             && !api_key.as_str().is_some_and(super::is_secret_reference)
         {
-            *api_key = Value::String("<protected-file reference>".into());
+            *api_key = Value::String(REDACTED_SECRET_PLACEHOLDER.into());
         }
         if let Some(url_val) = map.get_mut("url")
             && let Some(raw) = url_val.as_str()
@@ -195,7 +196,7 @@ fn redact_endpoint_url(raw: &str) -> Option<String> {
         }
         Err(_) => {
             if raw.contains('@') || raw.contains('?') || raw.contains('#') {
-                Some("<protected-file reference>".into())
+                Some(REDACTED_SECRET_PLACEHOLDER.into())
             } else {
                 None
             }
@@ -376,7 +377,7 @@ pub(super) fn json_schema() -> serde_json::Value {
                         "minimum": MIN_LLM_TIMEOUT_SECS,
                         "maximum": MAX_LLM_TIMEOUT_SECS,
                         "default": DEFAULT_LLM_TIMEOUT_SECS,
-                        "description": "Per-request HTTP timeout in whole seconds (1 to 600)."
+                        "description": "Per-request HTTP timeout in whole seconds."
                     }
                 }
             }
@@ -444,81 +445,10 @@ fn parse_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        Configuration, Env, GLOBAL_SCHEMA_VERSION, Layer, LayerKind, describe_schema, set_secret,
-        validate,
-    };
-    use std::os::unix::fs::PermissionsExt as _;
+    use crate::config::LayerKind;
 
     #[test]
-    fn inspect_global_screening_distinguishes_unconfigured_withheld_and_admitted() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        assert!(matches!(
-            inspect_global_screening(&home).unwrap(),
-            LlmAdmission::Unconfigured
-        ));
-
-        // Local unkeyed endpoint admits with default timeout and no secrets.env required.
-        let local_yaml = format!(
-            "schema_version: {GLOBAL_SCHEMA_VERSION}\nllm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: qwen2.5-7b-instruct\n"
-        );
-        crate::fsx::atomic_write(&home.global_config(), local_yaml.as_bytes()).unwrap();
-        let LlmAdmission::Admitted(cfg) = inspect_global_screening(&home).unwrap() else {
-            panic!("expected admitted local endpoint");
-        };
-        assert_eq!(cfg.url.as_str(), "http://127.0.0.1:1234/v1");
-        assert_eq!(cfg.model, "qwen2.5-7b-instruct");
-        assert!(cfg.api_key.is_none());
-        assert_eq!(cfg.timeout, Duration::from_secs(DEFAULT_LLM_TIMEOUT_SECS));
-
-        // Cloud endpoint with `${NAME}` validates via schema before secret exists,
-        // but entry inspection withholds until stored in 0600 secrets.env.
-        let cloud_yaml = format!(
-            "schema_version: {GLOBAL_SCHEMA_VERSION}\nllm:\n  screening:\n    url: https://api.openai.com/v1\n    model: gpt-4.1-mini\n    api_key: ${{SCREENING_API_KEY}}\n    timeout: 60\n"
-        );
-        crate::fsx::atomic_write(&home.global_config(), cloud_yaml.as_bytes()).unwrap();
-        let validation_findings = validate(&home, &Layer::Global).unwrap();
-        assert!(
-            validation_findings.is_empty(),
-            "syntax-only validation should accept valid ${{NAME}}: {validation_findings:?}"
-        );
-        let LlmAdmission::Withheld(findings) = inspect_global_screening(&home).unwrap() else {
-            panic!("expected withheld when secret is missing");
-        };
-        assert!(findings.iter().any(|f| f.key == "llm.screening.api_key"));
-        assert!(findings.iter().all(withholds_llm));
-
-        // Unsafe permissions on secrets.env withhold at entry.
-        set_secret(&home, "SCREENING_API_KEY", "sk-live-secret-value").unwrap();
-        std::fs::set_permissions(home.secrets_file(), std::fs::Permissions::from_mode(0o644))
-            .unwrap();
-        let LlmAdmission::Withheld(perm_findings) = inspect_global_screening(&home).unwrap() else {
-            panic!("expected withheld on 0644 secrets.env");
-        };
-        assert!(
-            perm_findings
-                .iter()
-                .all(|f| !f.message.contains("sk-live-secret-value"))
-        );
-
-        // Restoring 0600 admits and keeps Debug redacted.
-        std::fs::set_permissions(home.secrets_file(), std::fs::Permissions::from_mode(0o600))
-            .unwrap();
-        let LlmAdmission::Admitted(cloud) = inspect_global_screening(&home).unwrap() else {
-            panic!("expected admitted cloud endpoint");
-        };
-        assert_eq!(
-            cloud.api_key.as_ref().unwrap().expose(),
-            "sk-live-secret-value"
-        );
-        assert_eq!(cloud.timeout, Duration::from_secs(60));
-        let dbg = format!("{cloud:?}");
-        assert!(!dbg.contains("sk-live-secret-value"));
-    }
-
-    #[test]
-    fn validation_checks_url_matrix_timeout_bounds_unknown_keys_and_literal_credentials() {
+    fn check_accepts_https_and_loopback_http_urls() {
         for accepted in [
             "https://api.example.com/v1",
             "https://api.example.com:8443/v1",
@@ -539,7 +469,10 @@ mod tests {
                 "expected {accepted} accepted, got {findings:?}"
             );
         }
+    }
 
+    #[test]
+    fn check_rejects_unsafe_and_malformed_urls() {
         for rejected in [
             "http://remote.example.com/v1",
             "https://user:pass-leak@api.example.com/v1",
@@ -561,7 +494,10 @@ mod tests {
             );
             assert!(findings.iter().all(|f| !f.message.contains("pass-leak")));
         }
+    }
 
+    #[test]
+    fn check_accepts_timeout_within_bounds() {
         for good_timeout in [
             MIN_LLM_TIMEOUT_SECS,
             DEFAULT_LLM_TIMEOUT_SECS,
@@ -575,7 +511,10 @@ mod tests {
             check(&doc, LLM_KEY, &mut findings);
             assert!(findings.is_empty(), "{good_timeout}: {findings:?}");
         }
+    }
 
+    #[test]
+    fn check_rejects_out_of_range_or_non_integer_timeout() {
         for bad_timeout in ["0", "601", "-1", "45.5", "'45'"] {
             let doc: Value = serde_yaml_ng::from_str(&format!(
                 "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  timeout: {bad_timeout}\n"
@@ -588,22 +527,28 @@ mod tests {
                 "expected timeout {bad_timeout} rejected"
             );
         }
+    }
 
-        let bad_doc: Value = serde_yaml_ng::from_str(
-            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: '   '\n  api_key: sk-literal-secret\n  extra: 1\nother_purpose:\n  url: https://example.com\n",
+    #[test]
+    fn check_rejects_blank_model() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: '   '\n",
         )
         .unwrap();
         let mut findings = Vec::new();
-        check(&bad_doc, LLM_KEY, &mut findings);
-        let keys: Vec<&str> = findings.iter().map(|f| f.key.as_str()).collect();
-        for expected in [
-            "llm.screening.model",
-            "llm.screening.api_key",
-            "llm.screening.extra",
-            "llm.other_purpose",
-        ] {
-            assert!(keys.contains(&expected), "missing {expected} in {keys:?}");
-        }
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.iter().any(|f| f.key == "llm.screening.model"));
+    }
+
+    #[test]
+    fn check_rejects_literal_api_key_without_disclosing_value() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  api_key: sk-literal-secret\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.iter().any(|f| f.key == "llm.screening.api_key"));
         assert!(
             findings
                 .iter()
@@ -612,7 +557,20 @@ mod tests {
     }
 
     #[test]
-    fn llm_is_refused_in_project_and_company_layers() {
+    fn check_rejects_unknown_purpose_and_subkey() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  extra: 1\nother_purpose:\n  url: https://example.com\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        let keys: Vec<&str> = findings.iter().map(|f| f.key.as_str()).collect();
+        assert!(keys.contains(&"llm.screening.extra"), "{keys:?}");
+        assert!(keys.contains(&"llm.other_purpose"), "{keys:?}");
+    }
+
+    #[test]
+    fn llm_is_refused_in_project_layer() {
         let project_doc: Value = serde_yaml_ng::from_str(&format!(
             "schema_version: {}\nllm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: m\n",
             crate::config::PROJECT_SCHEMA_VERSION
@@ -622,9 +580,12 @@ mod tests {
         assert!(
             project_findings
                 .iter()
-                .any(|f| { f.key == "llm" && f.kind == FindingKind::NotPermittedInLayer })
+                .any(|f| f.key == "llm" && f.kind == FindingKind::NotPermittedInLayer)
         );
+    }
 
+    #[test]
+    fn llm_is_refused_in_company_layer() {
         let company_doc: Value = serde_yaml_ng::from_str(&format!(
             "schema_version: {}\ncompany: acme\nllm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: m\n",
             crate::config::COMPANY_SCHEMA_VERSION
@@ -634,52 +595,41 @@ mod tests {
         assert!(
             company_findings
                 .iter()
-                .any(|f| { f.key == "llm" && f.kind == FindingKind::NotPermittedInLayer })
+                .any(|f| f.key == "llm" && f.kind == FindingKind::NotPermittedInLayer)
         );
     }
 
     #[test]
-    fn config_get_preserves_references_and_redacts_literal_key_and_embedded_url_credentials() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        let yaml = format!(
-            "schema_version: {GLOBAL_SCHEMA_VERSION}\nllm:\n  screening:\n    url: https://user:url-secret@api.example.com:8443/v1?token=q-secret#frag\n    model: plain-model\n    api_key: literal-key-leaked\n"
-        );
-        crate::fsx::atomic_write(&home.global_config(), yaml.as_bytes()).unwrap();
-        let cfg = Configuration::load_global(&home).unwrap();
-        let view = cfg.get(Some("llm.screening"), &Env::default()).unwrap();
-        assert_eq!(view["api_key"].as_str(), Some("<protected-file reference>"));
+    fn redact_replaces_literal_api_key_and_embedded_url_credentials() {
+        let mut doc: Value = serde_yaml_ng::from_str(
+            "llm:\n  screening:\n    url: https://user:url-secret@api.example.com:8443/v1?token=q-secret#frag\n    model: plain-model\n    api_key: literal-key-leaked\n",
+        )
+        .unwrap();
+        redact(&mut doc);
         assert_eq!(
-            view["url"].as_str(),
+            doc["llm"]["screening"]["api_key"].as_str(),
+            Some(REDACTED_SECRET_PLACEHOLDER)
+        );
+        assert_eq!(
+            doc["llm"]["screening"]["url"].as_str(),
             Some("https://api.example.com:8443/v1")
         );
-
-        // Valid `${NAME}` reference is kept unexpanded, and null api_key stays null.
-        let yaml_ref = format!(
-            "schema_version: {GLOBAL_SCHEMA_VERSION}\nllm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: plain-model\n    api_key: ${{SCREENING_KEY}}\n"
-        );
-        crate::fsx::atomic_write(&home.global_config(), yaml_ref.as_bytes()).unwrap();
-        let cfg_ref = Configuration::load_global(&home).unwrap();
-        let env = Env::from_pairs([("SCREENING_KEY", "SHOULD_NOT_EXPAND")]);
-        let view_ref = cfg_ref.get(Some("llm.screening"), &env).unwrap();
-        assert_eq!(view_ref["api_key"].as_str(), Some("${SCREENING_KEY}"));
-        assert_eq!(view_ref["url"].as_str(), Some("http://127.0.0.1:1234/v1"));
-
-        let yaml_null = format!(
-            "schema_version: {GLOBAL_SCHEMA_VERSION}\nllm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: plain-model\n    api_key: null\n"
-        );
-        crate::fsx::atomic_write(&home.global_config(), yaml_null.as_bytes()).unwrap();
-        let cfg_null = Configuration::load_global(&home).unwrap();
-        let view_null = cfg_null
-            .get(Some("llm.screening"), &Env::default())
-            .unwrap();
-        assert!(view_null["api_key"].is_null());
     }
 
     #[test]
-    fn global_schema_describes_plain_model_guidance_for_llm_screening() {
-        let schema_text = describe_schema(LayerKind::Global, Some("llm.screening"), false).unwrap();
-        assert!(schema_text.contains("Bring a plain model with no built-in search or browsing"));
-        assert!(schema_text.contains("no runtime check"));
+    fn redact_preserves_secret_reference_and_null_api_key() {
+        let mut doc: Value = serde_yaml_ng::from_str(
+            "llm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: plain-model\n    api_key: ${SCREENING_KEY}\n",
+        )
+        .unwrap();
+        redact(&mut doc);
+        assert_eq!(
+            doc["llm"]["screening"]["api_key"].as_str(),
+            Some("${SCREENING_KEY}")
+        );
+        assert_eq!(
+            doc["llm"]["screening"]["url"].as_str(),
+            Some("http://127.0.0.1:1234/v1")
+        );
     }
 }

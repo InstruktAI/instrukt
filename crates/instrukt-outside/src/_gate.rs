@@ -1051,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn call_async_until_with_elapsed_deadline_returns_wait_without_trying() {
+    fn call_async_until_with_elapsed_deadline_returns_timed_out_without_trying() {
         let f = Fixture::new();
         let key = scope().item("shared-deadline");
         let deadline = f.gate.monotonic() + Duration::from_secs(5);
@@ -1078,8 +1078,11 @@ mod tests {
                 error: None
             } if wait.reason() == Reason::TimedOut
         ));
+    }
 
-        // When a key wait is already holding, elapsed deadline surfaces that wait without trying.
+    #[test]
+    fn call_async_until_with_elapsed_deadline_surfaces_existing_wait_without_trying() {
+        let f = Fixture::new();
         let held_key = scope().item("held-deadline");
         f.attempt(&held_key, Outcome::Down(Extent::Key, None));
         let past_deadline = f.gate.monotonic();

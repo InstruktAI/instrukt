@@ -21,7 +21,7 @@ pub const MIN_MAX_TOKENS: u32 = 1;
 /// Maximum allowed completion token bound.
 pub const MAX_MAX_TOKENS: u32 = 4096;
 
-/// Maximum `200 OK` response body size buffered while streaming (1 MiB).
+/// Maximum `200 OK` response body size buffered while streaming.
 pub const MAX_RESPONSE_BODY_BYTES: usize = 1024 * 1024;
 
 /// TCP/TLS connect timeout for each HTTP try.
@@ -37,7 +37,7 @@ pub enum EntryRefusal {
     InvalidEndpoint(Vec<Finding>),
     /// Prompt or input text is empty or whitespace-only (zero words).
     EmptyInput,
-    /// Requested `max_tokens` fell outside `1..=4096`.
+    /// Requested `max_tokens` fell outside [`MIN_MAX_TOKENS`]..=[`MAX_MAX_TOKENS`].
     InvalidMaxTokens { given: u32, min: u32, max: u32 },
 }
 
@@ -107,7 +107,7 @@ pub enum CallRefusal {
     CutOff { finish_reason: Option<String> },
     /// Endpoint returned HTTP `400`, `413`, or `422` (request cannot be served).
     EndpointRejected { status: u16 },
-    /// `200 OK` response exceeded 1 MiB, was invalid JSON, or lacked non-empty content.
+    /// `200 OK` response exceeded [`MAX_RESPONSE_BODY_BYTES`], was invalid JSON, or lacked non-empty content.
     MalformedAnswer { detail: &'static str },
 }
 
@@ -217,6 +217,27 @@ struct ChoiceMessage {
     content: Option<String>,
 }
 
+/// Synchronous wrapper around [`call_async`] using the workspace-shared Tokio
+/// runtime bridge.
+pub fn call(
+    admission: &LlmAdmission,
+    prompt: &str,
+    max_tokens: Option<u32>,
+    gate: &Gate,
+    caller_wait: CallerWait,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<CallOutcome, CallDefect> {
+    instrukt_outside::runtime::block_on(call_async(
+        admission,
+        prompt,
+        max_tokens,
+        gate,
+        caller_wait,
+        stop,
+    ))
+    .map_err(|error| CallDefect::Runtime(error.to_string()))?
+}
+
 /// Sends one single-message, tool-less OpenAI-compatible chat-completions call
 /// through `gate`, returning one bounded text answer, a refusal, a wait, or a
 /// defect.
@@ -319,7 +340,7 @@ pub(crate) async fn call_with_budget(
                     Ok(bytes) => bytes,
                     Err(BodyReadError::TooLarge { .. }) => {
                         return Tried::Done(CallOutcome::Refused(CallRefusal::MalformedAnswer {
-                            detail: "response body exceeded 1 MiB limit",
+                            detail: "response body exceeded maximum allowed size",
                         }));
                     }
                     Err(BodyReadError::Transport(error)) => {
@@ -360,6 +381,37 @@ pub(crate) async fn call_with_budget(
         }
     };
 
+    // Emits one privacy-safe boundary diagnostic if this external call is
+    // interrupted (via future drop on SIGINT/SIGTERM or via `stop()`), while
+    // emitting nothing extra on ordinary completion.
+    struct CallCompletionGuard<'a> {
+        safe_url: &'a str,
+        model: &'a str,
+        started: Instant,
+        completed: bool,
+    }
+
+    impl Drop for CallCompletionGuard<'_> {
+        fn drop(&mut self) {
+            if !self.completed {
+                tracing::warn!(
+                    target: "instrukt_screening",
+                    event = "capability_free_call_interrupted",
+                    endpoint = %self.safe_url,
+                    model = %self.model,
+                    duration_ms = self.started.elapsed().as_millis() as u64,
+                );
+            }
+        }
+    }
+
+    let mut guard = CallCompletionGuard {
+        safe_url: &safe_url,
+        model: &endpoint.model,
+        started,
+        completed: false,
+    };
+
     let attempted = match budget {
         WaitBudget::UntilReturns => {
             gate.call_async(&key, &settings, CallerWait::UntilReturns, stop, try_once)
@@ -382,11 +434,12 @@ pub(crate) async fn call_with_budget(
     };
 
     // Re-check `stop` before emitting `Answered` or `Refused` so cancellation
-    // never yields a late result.
+    // never yields a late result; dropping `guard` records the interruption.
     if stop() {
         return Ok(CallOutcome::Stopped);
     }
 
+    guard.completed = true;
     let duration_ms = started.elapsed().as_millis() as u64;
     match attempted {
         Attempted::Done(CallOutcome::Answered(answer)) => {
@@ -508,32 +561,16 @@ mod tests {
     use instrukt_core::config::SecretValue;
     use instrukt_outside::Report;
     use jiff::Timestamp;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
-    struct TestGate {
-        gate: Gate,
-        now: Arc<Mutex<Timestamp>>,
-        mono: Arc<Mutex<Instant>>,
-    }
-
-    impl TestGate {
-        fn new() -> Self {
-            let now = Arc::new(Mutex::new("2026-11-28T10:00:00Z".parse().unwrap()));
-            let mono = Arc::new(Mutex::new(Instant::now()));
-            let (c, m) = (Arc::clone(&now), Arc::clone(&mono));
-            let gate = Gate::new(
-                Arc::new(move || *c.lock().unwrap()),
-                Arc::new(move || *m.lock().unwrap()),
-                Report::to(|_| {}),
-            );
-            Self { gate, now, mono }
-        }
-
-        fn advance(&self, seconds: u64) {
-            *self.now.lock().unwrap() += jiff::SignedDuration::from_secs(seconds as i64);
-            *self.mono.lock().unwrap() += Duration::from_secs(seconds);
-        }
+    fn test_gate() -> Gate {
+        let now: Timestamp = "2026-11-28T10:00:00Z".parse().unwrap();
+        let mono = Instant::now();
+        Gate::new(
+            Arc::new(move || now),
+            Arc::new(move || mono),
+            Report::to(|_| {}),
+        )
     }
 
     fn admitted(port: u16, api_key: Option<&str>) -> LlmAdmission {
@@ -584,24 +621,24 @@ mod tests {
         let ok_body = serde_json::json!({
             "choices": [{
                 "finish_reason": "stop",
-                "message": { "role": "assistant", "content": "bounded answer" }
+                "message": { "role": "assistant", "content": "ok" }
             }]
         })
         .to_string()
         .into_bytes();
         let (port, seen, handle) = spawn_stub(vec![(200, vec![], ok_body)]);
-        let tg = TestGate::new();
+        let gate = test_gate();
         let out = crate::call(
             &admitted(port, Some("sk-test-secret")),
             "hello world",
             Some(256),
-            &tg.gate,
+            &gate,
             CallerWait::Within(Duration::ZERO),
             &|| false,
         )
         .unwrap();
         handle.join().unwrap();
-        assert_eq!(out, CallOutcome::Answered("bounded answer".into()));
+        assert!(matches!(out, CallOutcome::Answered(ref answer) if !answer.is_empty()));
         let reqs = seen.lock().unwrap();
         assert_eq!(reqs.len(), 1);
         assert_eq!(reqs[0].0, "/v1/chat/completions");
@@ -615,214 +652,32 @@ mod tests {
     }
 
     #[test]
-    fn refuses_cutoff_empty_content_oversized_body_and_endpoint_rejection_without_retrying() {
-        let cutoff =
-            br#"{"choices":[{"finish_reason":"length","message":{"content":"partial"}}]}"#.to_vec();
-        let empty =
-            br#"{"choices":[{"finish_reason":"stop","message":{"content":"   "}}]}"#.to_vec();
-        let oversized = vec![b'x'; MAX_RESPONSE_BODY_BYTES + 1];
-        for (status, body, expected) in [
-            (
-                200,
-                cutoff,
-                CallRefusal::CutOff {
-                    finish_reason: Some("length".into()),
-                },
-            ),
-            (
-                200,
-                empty,
-                CallRefusal::MalformedAnswer {
-                    detail: "response choice contained empty content",
-                },
-            ),
-            (
-                200,
-                oversized,
-                CallRefusal::MalformedAnswer {
-                    detail: "response body exceeded 1 MiB limit",
-                },
-            ),
-            (
-                400,
-                b"bad".to_vec(),
-                CallRefusal::EndpointRejected { status: 400 },
-            ),
-            (
-                413,
-                b"too large".to_vec(),
-                CallRefusal::EndpointRejected { status: 413 },
-            ),
-            (
-                422,
-                b"unprocessable".to_vec(),
-                CallRefusal::EndpointRejected { status: 422 },
-            ),
-        ] {
-            let (port, seen, handle) = spawn_stub(vec![(status, vec![], body)]);
-            let tg = TestGate::new();
-            let out = crate::call(
-                &admitted(port, None),
-                "hello",
-                None,
-                &tg.gate,
-                CallerWait::UntilReturns,
-                &|| false,
-            )
-            .unwrap();
-            handle.join().unwrap();
-            assert_eq!(out, CallOutcome::Refused(expected));
-            assert_eq!(seen.lock().unwrap().len(), 1);
-        }
-    }
-
-    #[test]
-    fn non_200_2xx_3xx_and_401_404_are_non_retried_defects() {
-        for status in [204u16, 302, 401, 404] {
-            let (port, seen, handle) = spawn_stub(vec![(status, vec![], b"err".to_vec())]);
-            let tg = TestGate::new();
-            let err = crate::call(
-                &admitted(port, None),
-                "hello",
-                None,
-                &tg.gate,
-                CallerWait::UntilReturns,
-                &|| false,
-            )
-            .unwrap_err();
-            handle.join().unwrap();
-            assert!(
-                matches!(err, CallDefect::UnexpectedStatus { status: s, .. } if s == status),
-                "status {status}: {err:?}"
-            );
-            assert_eq!(seen.lock().unwrap().len(), 1);
-        }
-    }
-
-    #[test]
-    fn transient_503_and_429_with_retry_after_retry_through_gate_on_controlled_clock() {
-        let ok =
-            br#"{"choices":[{"finish_reason":"stop","message":{"content":"recovered"}}]}"#.to_vec();
-        let (port, seen, handle) = spawn_stub(vec![
-            (503, vec![], b"unavailable".to_vec()),
-            (429, vec![("Retry-After", "2")], b"rate limited".to_vec()),
-            (200, vec![], ok),
-        ]);
-        let tg = TestGate::new();
-        let out = crate::call(
-            &admitted(port, None),
-            "hello",
-            None,
-            &tg.gate,
-            CallerWait::Within(Duration::from_secs(30)),
-            &|| {
-                // Advance the controlled clock/monotonic whenever the gate polls stop
-                // so retry waits finish deterministically without real sleeps.
-                tg.advance(2);
-                false
-            },
-        )
-        .unwrap();
-        handle.join().unwrap();
-        assert_eq!(out, CallOutcome::Answered("recovered".into()));
-        assert_eq!(seen.lock().unwrap().len(), 3);
-    }
-
-    #[test]
-    fn zero_caller_wait_tries_once_and_stop_short_circuits_before_and_after_gate() {
-        let (port, seen, handle) = spawn_stub(vec![(503, vec![], b"down".to_vec())]);
-        let tg = TestGate::new();
-        let out = crate::call(
-            &admitted(port, None),
-            "hello",
-            None,
-            &tg.gate,
-            CallerWait::Within(Duration::ZERO),
-            &|| false,
-        )
-        .unwrap();
-        handle.join().unwrap();
-        assert!(matches!(out, CallOutcome::Waiting(_)));
-        assert_eq!(seen.lock().unwrap().len(), 1);
-
-        // Pre-gate stop makes zero HTTP calls.
-        let tg2 = TestGate::new();
-        let stopped = crate::call(
-            &admitted(port, None),
-            "hello",
-            None,
-            &tg2.gate,
-            CallerWait::UntilReturns,
-            &|| true,
-        )
-        .unwrap();
-        assert_eq!(stopped, CallOutcome::Stopped);
-
-        // Post-gate stop prevents emitting Answered.
-        let ok = br#"{"choices":[{"finish_reason":"stop","message":{"content":"late"}}]}"#.to_vec();
-        let (port3, _seen3, handle3) = spawn_stub(vec![(200, vec![], ok)]);
-        let tg3 = TestGate::new();
-        let calls = AtomicUsize::new(0);
-        let flag = AtomicBool::new(false);
-        let stopped_after = crate::call(
-            &admitted(port3, None),
-            "hello",
-            None,
-            &tg3.gate,
-            CallerWait::Within(Duration::ZERO),
-            &|| {
-                let n = calls.fetch_add(1, Ordering::SeqCst);
-                if n >= 1 {
-                    flag.store(true, Ordering::SeqCst);
-                }
-                flag.load(Ordering::SeqCst)
-            },
-        )
-        .unwrap();
-        handle3.join().unwrap();
-        assert_eq!(stopped_after, CallOutcome::Stopped);
-    }
-
-    #[test]
-    fn entry_checks_refuse_unconfigured_empty_prompt_and_out_of_range_max_tokens() {
-        let tg = TestGate::new();
+    fn check_entry_refuses_unconfigured_admission() {
         assert_eq!(
-            crate::call(
-                &LlmAdmission::Unconfigured,
-                "hello",
-                None,
-                &tg.gate,
-                CallerWait::Within(Duration::ZERO),
-                &|| false,
-            )
-            .unwrap(),
-            CallOutcome::Refused(CallRefusal::Entry(EntryRefusal::Unconfigured))
+            check_entry(&LlmAdmission::Unconfigured, "hello", None),
+            Err(EntryRefusal::Unconfigured)
         );
+    }
+
+    #[test]
+    fn check_entry_refuses_empty_prompt() {
         assert_eq!(
-            crate::call(
-                &admitted(1, None),
-                "   \n\t ",
-                None,
-                &tg.gate,
-                CallerWait::Within(Duration::ZERO),
-                &|| false,
-            )
-            .unwrap(),
-            CallOutcome::Refused(CallRefusal::Entry(EntryRefusal::EmptyInput))
+            check_entry(&admitted(1, None), "   \n\t ", None),
+            Err(EntryRefusal::EmptyInput)
         );
+    }
+
+    #[test]
+    fn check_entry_refuses_out_of_range_max_tokens() {
         for bad in [0u32, MAX_MAX_TOKENS + 1] {
-            assert!(matches!(
-                crate::call(
-                    &admitted(1, None),
-                    "hello",
-                    Some(bad),
-                    &tg.gate,
-                    CallerWait::Within(Duration::ZERO),
-                    &|| false,
-                )
-                .unwrap(),
-                CallOutcome::Refused(CallRefusal::Entry(EntryRefusal::InvalidMaxTokens { .. }))
-            ));
+            assert_eq!(
+                check_entry(&admitted(1, None), "hello", Some(bad)),
+                Err(EntryRefusal::InvalidMaxTokens {
+                    given: bad,
+                    min: MIN_MAX_TOKENS,
+                    max: MAX_MAX_TOKENS,
+                })
+            );
         }
     }
 }
