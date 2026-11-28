@@ -177,6 +177,17 @@ fn a_held_todo_shows_why_it_waits_and_keeps_its_recorded_work() {
     let shown = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!("held", redact(&format!("{held}---\n{shown}")));
+
+    let refused = refused_unchanged(
+        &project,
+        "nested-lists",
+        &[
+            "--hold",
+            "--reason",
+            "restating why it waits on the renderer rewrite",
+        ],
+    );
+    insta::assert_snapshot!("second-hold-refused", refused);
 }
 
 /// The time a `todo show` line beginning with `prefix` ends its field

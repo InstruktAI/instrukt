@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
+expression: refused
+---
+instrukt: `nested-lists` is already on hold; a hold's reason is a record and is never restated — release it only when its condition is met or the work is meant to move

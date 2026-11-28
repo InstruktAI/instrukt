@@ -101,11 +101,10 @@ Nothing was filed. Face each question before filing this defect:
   the behaviour is wanted, and otherwise file nothing. A report whose premise
   is that nothing followed up first establishes whether the sanctioned
   recovery was attempted.
-- Validity: have the intended outcome and every contract it rests on
-  converged, with no pending authoring, review or commit still expected to
-  change them? A todo enters the lifecycle valid
-  (sdlc/policy/todo-creation-discipline); work that has not converged is not
-  filed through this door yet.
+- Validity: has the intended outcome converged? A todo enters the lifecycle
+  once its outcome has converged (sdlc/policy/todo-creation-discipline);
+  contracts still to be written or reviewed are preparation work and never
+  delay filing. An outcome still forming is not filed through this door yet.
 - Evidence: an occurrence or a dangerous path in hand
   (sdlc/concept/defect-evidence). Put the observations and their addresses
   first, and keep any causal account apart from them: each transition with
