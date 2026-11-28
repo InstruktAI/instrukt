@@ -57,8 +57,10 @@ every visit with it.
   (`project/instrukt/spec/feature/runner/session-continuity`); status
   reports that judgment and adds none of its own.
 <!-- change:thin-live-runtime-boundary -->
-- Which capabilities a feature needs is the runtime adapter's contract
-  (`project/instrukt/spec/feature/runtime/adapter`); status
+- Which capabilities a feature needs is declared by each consuming context
+  (`project/instrukt/spec/feature/runner/session-continuity`,
+  `project/instrukt/spec/feature/company/conversations`) in the capability
+  vocabulary of `project/instrukt/spec/feature/runtime/adapter`; status
   reports that judgment and adds none of its own.
 <!-- /planned-change:thin-live-runtime-boundary -->
 

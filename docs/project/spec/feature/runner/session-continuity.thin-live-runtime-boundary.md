@@ -386,16 +386,7 @@ Then configuration accepts those supported requirements
 And an existing phase worktree remains available for native terminal succession
 ```
 
-### UC-SS6: A developer who has chosen no runtime works with the compiled one, never a detected one
-
-```gherkin
-Given the developer has not set `runner.runtime`
-When the developer enables work dispatch or standing agents
-Then the one runtime compiled into instrukt is selected and named
-And nothing about installed tools or the caller's session changes that choice
-But when `runner.runtime` names no compiled adapter
-Then instrukt refuses naming the unknown runtime
-```
+### UC-SS6
 
 ### UC-SS7
 
