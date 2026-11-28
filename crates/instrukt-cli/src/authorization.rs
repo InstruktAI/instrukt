@@ -29,23 +29,8 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<Recorded>> {
 pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<Recorded>)> {
     let inspection = ctx.home.for_inspection();
     let env = wiring::environment(ctx)?;
-    let (session, global_broken) = match Configuration::load_global(&inspection) {
-        Ok(config) => (config.caller(&env)?, false),
-        Err(load_err) => {
-            let caller = crate::runtimes::DECLARATIONS
-                .iter()
-                .find_map(|decl| {
-                    crate::runtimes::adapter(decl.name, &env)
-                        .ok()
-                        .and_then(|adapter| adapter.lookup_caller(&env))
-                })
-                .map(|c| c.session);
-            match caller {
-                Some(session) => (Some(session), true),
-                None => return Err(load_err.into()),
-            }
-        }
-    };
+    let config = Configuration::load_global(&inspection)?;
+    let session = config.caller(&env)?;
     let Some(session) = session else {
         return Ok((None, None));
     };
@@ -57,11 +42,7 @@ pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<
     )?;
     let recorded = assignment
         .map(|assignment| {
-            let agents = if global_broken {
-                Agents::load_agents_only(&inspection)?
-            } else {
-                Agents::load(&inspection)?
-            };
+            let agents = Agents::load(&inspection)?;
             let grants = agents.capabilities(assignment.role.as_str())?;
             Ok::<_, anyhow::Error>((assignment, grants))
         })

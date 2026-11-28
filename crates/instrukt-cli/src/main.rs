@@ -154,12 +154,8 @@ fn run() -> ExitCode {
         Err(error) => error.exit(),
     };
     // A machine configuration that cannot be loaded stops every command;
-    // `config validate --global` names the file's own problem. Active company
-    // sessions replying or updating status (`instrukt company`) continue under
-    // the runner's already-admitted generation.
-    if !matches!(&cli.command, Command::Company(_))
-        && let Some(code) = unloadable_machine_layer(&matches)
-    {
+    // `config validate --global` names the file's own problem.
+    if let Some(code) = unloadable_machine_layer(&matches) {
         return code;
     }
     if let Command::Status(args) = &cli.command {

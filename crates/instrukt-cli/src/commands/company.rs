@@ -49,28 +49,10 @@ enum Command {
 
 pub fn run(args: CompanyArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let env = wiring::environment(ctx)?;
-    let (runtime_name, session) = match Configuration::load_global(&ctx.home.for_inspection()) {
-        Ok(config) => {
-            let runtime = config.runner_runtime()?;
-            let session = config.caller(&env)?;
-            (runtime.name().to_owned(), session)
-        }
-        Err(load_err) => {
-            let caller = crate::runtimes::DECLARATIONS
-                .iter()
-                .find_map(|decl| {
-                    crate::runtimes::adapter(decl.name, &env)
-                        .ok()
-                        .and_then(|adapter| adapter.lookup_caller(&env))
-                })
-                .map(|c| c.session);
-            match caller {
-                Some(session) => (session.runtime.as_str().to_owned(), Some(session)),
-                None => return Err(load_err.into()),
-            }
-        }
-    };
-    let adapter = crate::runtimes::adapter(&runtime_name, &env)?;
+    let config = Configuration::load_global(&ctx.home.for_inspection())?;
+    let runtime = config.runner_runtime()?;
+    let session = config.caller(&env)?;
+    let adapter = crate::runtimes::adapter(runtime.name(), &env)?;
     match args.command {
         Command::Reply {
             conversation,

@@ -34,20 +34,7 @@ pub fn caller_lookup(
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::CallerIdentityLookup>>> {
     let inspection = ctx.home.for_inspection();
     let process_env = instrukt_core::config::Env::from_process();
-    let config = match instrukt_core::config::Configuration::load_global(&inspection) {
-        Ok(config) => config,
-        Err(load_err) => {
-            for decl in crate::runtimes::DECLARATIONS {
-                if let Ok(adapter) = crate::runtimes::adapter(decl.name, &process_env)
-                    && adapter.lookup_caller(&process_env).is_some()
-                {
-                    let caller: Arc<dyn instrukt_core::interfaces::CallerIdentityLookup> = adapter;
-                    return Ok(Some(caller));
-                }
-            }
-            return Err(load_err.into());
-        }
-    };
+    let config = instrukt_core::config::Configuration::load_global(&inspection)?;
     match config.runner_runtime() {
         Ok(runtime) => {
             let adapter = crate::runtimes::adapter(runtime.name(), &process_env)?;
