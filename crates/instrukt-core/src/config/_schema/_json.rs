@@ -437,5 +437,6 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
             super::super::_thread_retention::WINDOW_CONTRACT,
         ),
         Shape::Backup => super::super::_backup::json_schema(),
+        Shape::Llm => super::super::_llm::json_schema(),
     }
 }

@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn collect_includes_irreplaceable_scope_and_excludes_regenerable_and_git_checkouts() {
         let (_dir, home) = make_home();
-        std::fs::write(home.global_config(), "schema_version: 8\n").unwrap();
+        std::fs::write(home.global_config(), "schema_version: 9\n").unwrap();
         std::fs::write(home.agents_file(), "schema_version: 4\n").unwrap();
         std::fs::write(home.secrets_file(), "KEY=val\n").unwrap();
         std::fs::write(home.machine_id_file(), "0123456789abcdef\n").unwrap();

@@ -253,7 +253,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf()).for_writing();
         std::fs::create_dir_all(home.state_dir()).unwrap();
-        std::fs::write(home.global_config(), "schema_version: 8\n").unwrap();
+        std::fs::write(home.global_config(), "schema_version: 9\n").unwrap();
         std::fs::write(home.secrets_file(), "TOP_SECRET=value123\n").unwrap();
         let db_path = home.state_dir().join("instrukt.db");
         let conn = Connection::open(&db_path).unwrap();

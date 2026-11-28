@@ -25,6 +25,7 @@ mod _github_org;
 mod _identity;
 mod _interpolate;
 mod _layer;
+mod _llm;
 mod _mcp;
 mod _merge;
 mod _migrate;
@@ -80,6 +81,10 @@ pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, document_lock_path, init, inspect_layer, migrate,
     parse_patch, patch, review_switch, review_target, revision, unloadable_machine_layer,
+};
+pub use _llm::{
+    DEFAULT_LLM_TIMEOUT_SECS, LLM_KEY, LLM_SCREENING_KEY, LlmAdmission, LlmEndpointConfig,
+    MAX_LLM_TIMEOUT_SECS, MIN_LLM_TIMEOUT_SECS, inspect_global_screening, withholds_llm,
 };
 pub use _mcp::{
     CompanyIssuerConfig, DEFAULT_ISSUER_SIGNING_KEY_NAME, McpClient, McpServer, McpSignIn,

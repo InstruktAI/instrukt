@@ -1221,7 +1221,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         std::fs::create_dir_all(home.state_dir()).unwrap();
-        std::fs::write(home.global_config(), "schema_version: 8\n").unwrap();
+        std::fs::write(home.global_config(), "schema_version: 9\n").unwrap();
         std::fs::write(home.secrets_file(), "TOKEN=original\n").unwrap();
         let mid = instrukt_core::machine::machine_id(&home).unwrap();
 

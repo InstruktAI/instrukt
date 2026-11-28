@@ -90,7 +90,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         fs::create_dir_all(env.instrukt_home()).unwrap();
         fs::write(
             env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 8\nrunner: {runtime: t3}\nmodules: {history: true}\n",
+            "schema_version: 9\nrunner: {runtime: t3}\nmodules: {history: true}\n",
         )
         .unwrap();
         let mut overlay_env = TestEnv::new();
@@ -127,7 +127,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         fs::create_dir_all(overlay_env.instrukt_home()).unwrap();
         fs::write(
             overlay_env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 8\nrunner: {runtime: t3}\n",
+            "schema_version: 9\nrunner: {runtime: t3}\n",
         )
         .unwrap();
         manifest["operation"] =

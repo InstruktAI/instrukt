@@ -383,10 +383,66 @@ github:
         assert_eq!(cfg.runner_runtime().unwrap(), crate::config::Runtime::T3);
         assert!(cfg.backup().unwrap().is_none());
         let upcycled = upcycle(yaml(golden_v7), 7, LayerKind::Global);
-        assert_eq!(upcycled["schema_version"].as_u64(), Some(8));
+        assert_eq!(
+            upcycled["schema_version"].as_u64(),
+            Some(GLOBAL_SCHEMA_VERSION)
+        );
         assert_eq!(
             upcycled["runner"]["archive_finished_after"].as_str(),
             Some("14d")
         );
+    }
+
+    #[test]
+    fn golden_v8_global_document_migrates_losslessly_to_v9_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::home::Home::at_user_home(dir.path().to_path_buf()).for_inspection();
+        let recipient = age::x25519::Identity::generate().to_public().to_string();
+        let golden_v8 = format!(
+            "\
+schema_version: 8
+ticks: 'off'
+modules:
+  todos: true
+  events: false
+  history: true
+runner:
+  runtime: t3
+  notify: echo notify
+  archive_finished_after: 14d
+github:
+  api_url: https://api.github.com
+backup:
+  endpoint: https://s3.example.test
+  region: auto
+  bucket: machine-backups
+  access_key_id: ${{BACKUP_KEY}}
+  secret_access_key: ${{BACKUP_SECRET}}
+  age_recipient: {recipient}
+"
+        );
+        crate::fsx::atomic_write(&home.global_config(), golden_v8.as_bytes()).unwrap();
+        let view = crate::config::inspect_layer(&home, &crate::config::Layer::Global).unwrap();
+        assert_eq!(view.schema_version, Some(8));
+        assert!(view.migration.is_some());
+        let cfg = crate::config::Configuration::load_global(&home).unwrap();
+        assert!(!cfg.ticks_enabled().unwrap());
+        assert!(cfg.module_enabled(crate::config::Module::Todos).unwrap());
+        assert_eq!(cfg.runner_runtime().unwrap(), crate::config::Runtime::T3);
+        assert!(cfg.llm_screening().unwrap().is_none());
+        assert!(matches!(
+            crate::config::inspect_global_screening(&home).unwrap(),
+            crate::config::LlmAdmission::Unconfigured
+        ));
+        let upcycled = upcycle(yaml(&golden_v8), 8, LayerKind::Global);
+        assert_eq!(
+            upcycled["schema_version"].as_u64(),
+            Some(GLOBAL_SCHEMA_VERSION)
+        );
+        assert_eq!(
+            upcycled["backup"]["endpoint"].as_str(),
+            Some("https://s3.example.test")
+        );
+        assert!(upcycled.get("llm").is_none());
     }
 }

@@ -15,7 +15,7 @@ pub(super) use _json::{non_blank_pattern, secret_reference};
 
 /// The schema version of the global layer (`~/.instrukt/instrukt.yaml`)
 /// this instrukt writes. The first is 1.
-pub const GLOBAL_SCHEMA_VERSION: u64 = 8;
+pub const GLOBAL_SCHEMA_VERSION: u64 = 9;
 
 /// The schema version of a project layer (`instrukt.yaml` at a repository
 /// root) this instrukt writes. The first is 1.
@@ -195,6 +195,8 @@ enum Shape {
     RetentionWindow,
     /// Machine-wide encrypted home backup (`backup`).
     Backup,
+    /// Purpose-scoped capability-free LLM endpoints (`llm`).
+    Llm,
 }
 
 enum Node {
@@ -305,6 +307,7 @@ fn schema() -> Node {
         ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
         (super::_backup::BACKUP_KEY, Leaf(GlobalOnly, Shape::Backup)),
+        (super::_llm::LLM_KEY, Leaf(GlobalOnly, Shape::Llm)),
         (
             "blueprint",
             map(vec![("engine", Leaf(ShippedAdapterInProject, Shape::Str))]),
@@ -675,6 +678,7 @@ fn check_shape(
         Shape::Regenerable => super::_regenerable::check(value, path, out),
         Shape::RetentionWindow => super::_thread_retention::check(value, path, out),
         Shape::Backup => super::_backup::check(value, path, out),
+        Shape::Llm => super::_llm::check(value, path, out),
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {

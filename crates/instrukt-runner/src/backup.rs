@@ -512,7 +512,7 @@ mod tests {
         std::fs::create_dir_all(home.root()).unwrap();
         let notify_log = dir.path().join("notified.txt");
         let global_yaml = [
-            "schema_version: 8".to_owned(),
+            "schema_version: 9".to_owned(),
             "runner:".to_owned(),
             format!("  notify: 'echo \"$1\" >> {}'", notify_log.display()),
         ]
