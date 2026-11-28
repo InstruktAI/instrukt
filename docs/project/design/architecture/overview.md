@@ -10,11 +10,18 @@ instrukt is a context-engineering module: a single
 CLI that makes documentation the way agents are instructed and, when switched
 on, runs the work those docs describe. It has no consumer daemon beside its runner; with a company's connector declared, an owned service keeps the runner running. Core operations are commands; enabled events also
 have a narrow standalone loopback webhook receiver on the designated ingress.
+<!-- planned-change:thin-live-runtime-boundary -->
 Commands, independent event readers and the conversation-link stream reader
 work against files, git, GitHub, scoped
 Redis and the chosen runtime. Later work is triggered by git hooks, the OS
 scheduler or retained events. Doctrine
 comes from adopted docs repositories, not from instrukt.
+<!-- change:thin-live-runtime-boundary -->
+Commands, independent event readers and the company conversation relay work
+against files, git, GitHub, scoped Redis and the chosen runtime's public
+interfaces. Later work is triggered by git hooks, the OS scheduler or retained
+events. Doctrine comes from adopted docs repositories, not from instrukt.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 The modules and their bounded contexts are listed in
 `project/instrukt/spec/domain/context-map`; each context's model is its
@@ -36,6 +43,7 @@ runtime adapter and consumed as facts by publication.
 
 ### Modules and crates
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Module | Contexts | Switch | Needs |
 | --- | --- | --- | --- |
 | `core` | docs, configuration, publication, repository, specs | always on | files, git |
@@ -105,6 +113,107 @@ Recognising a caller does not select a runtime. Missing known assignment
 provenance is not a roleless bypass. A bot-role commit resolves its author from
 the verified App actor even without native provider-agent identity; other
 unverified agent identity remains unresolved.
+<!-- change:thin-live-runtime-boundary -->
+| Module | Contexts | Switch | Needs |
+| --- | --- | --- | --- |
+| `core` | docs, configuration, publication, repository, specs | always on | files, git; compiled runtime declarations wired by CLI |
+| `blueprint` | blueprint | on/off | a graph engine adapter |
+| `todos` | work, workflow; runner dispatching todos; runtime | on/off; `runner.autostart` | GitHub, a runtime adapter |
+| `history` | runner history extraction, retained search and merged queries; runtime cold text source | on by default | runtime non-live `ColdTextSource` for extraction; cluster Redis for merged search only, independently of events |
+| `events` | runner sources, scoped transport, independent consumers and procedure activation; runtime | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
+| `conversations` | company: connectors, conversation sessions, explicit replies, curated working status and company hosting; runtime | a company home's declared connector | selected runtime adapter; the long-lived runner, kept running by an owned service |
+
+One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
+`instrukt-core`, `instrukt-blueprint`, `instrukt-runtime` (the runtime
+context's vendor-neutral `RuntimeAdapter` trait, structured turn/state types,
+capability catalog, and neutral errors), one crate per concrete runtime
+adapter, `instrukt-runtime-t3` first (holding the T3 adapter, `t3.version`, and
+provider-free contract test wiring), `instrukt-runner` (the runner context,
+shared by `todos`, `events` and `history`), `instrukt-todos`,
+`instrukt-company` (the company context's conversation core, explicit reply
+outbox, curated status, connector host, and company hosting/containers),
+`instrukt-connector` (the connector interface and each kind's declaration
+data), one crate per connector, `instrukt-connector-slack` first, and
+`instrukt-outside`, the outside gate
+(`project/instrukt/design/architecture/outside-gate`). Dependencies point
+strictly one way:
+
+- `instrukt-cli` → all workspace crates (the **sole** crate importing
+  `instrukt-runtime-t3`, `instrukt-company`, or any connector crate)
+- `instrukt-todos` → `instrukt-runner`, `instrukt-runtime`, `instrukt-core`
+- `instrukt-company` → `instrukt-runner`, `instrukt-runtime`, `instrukt-core`,
+  `instrukt-connector`, `instrukt-outside`
+- `instrukt-runner` → `instrukt-runtime`, `instrukt-core`, `instrukt-blueprint`,
+  `instrukt-outside`
+- `instrukt-runtime-t3` → `instrukt-runtime`, `instrukt-core`, `instrukt-outside`
+- `instrukt-runtime` → `instrukt-core`
+- `instrukt-blueprint` → `instrukt-core`
+- `instrukt-core` → `instrukt-connector` (for connector declaration data)
+- `instrukt-connector-slack` → `instrukt-connector`, `instrukt-outside`
+- `instrukt-connector` → `instrukt-outside`
+- `instrukt-outside` → nothing of instrukt
+
+No domain crate (`instrukt-core`, `instrukt-blueprint`, `instrukt-runner`,
+`instrukt-todos`, `instrukt-company`) ever depends on `instrukt-runtime-t3` or
+any other concrete runtime adapter crate; this compile-time boundary enforces
+zero vendor leakage. Where core needs runtime metadata (`RuntimeDeclaration`:
+runtime name, native/workflow capabilities, archive support, shipped
+instruction catalog), core declares the data type and `instrukt-cli` installs
+each compiled runtime's declaration once at startup alongside connector
+declarations. `instrukt-cli` likewise injects the concrete `RuntimeAdapter`
+registry/factory into `instrukt-runner`, `instrukt-company`, `instrukt-todos`,
+and `instrukt-core`'s caller-identity and configured-agent-runtimes hooks.
+Legacy history-record sanitization in `instrukt-runner::history` delegates to
+`ColdTextSource` on `instrukt-runtime`, and dead review-conversation stream
+code in `instrukt-runner` is retired.
+
+Where core needs an answer only an optional module has (whether a todo slug
+named by a pending doc exists), core declares the interface and the CLI wires
+the module's implementation in only when that module is on. Eval is not a
+module: stamps always carry model, version and eval fingerprint, and reporting
+is `instrukt eval report`, which builds an HTML report from the record,
+together with the flavor's activatable report procedure that tells an agent
+when and how to run it and what to say about it.
+
+The runner declares interfaces for reading and mutating work items through
+work’s command contract: recording claims, flushing pending reflection and
+reading people's controls on ticks, recording last-fired stamps, setting
+automatic holds, purging expired retained records, and reading and writing
+per-role session bindings. It also declares an interface for reading workflow
+state. The todos crate implements these contracts; the CLI wires them into the
+runner. Todo dispatch is realized in the runner against those interfaces,
+preserving todos → runner → runtime → core. The runner likewise declares
+conversation hosting in `instrukt run` and the conversation assignment lookup;
+`instrukt-company` implements them (along with explicit reply queueing for
+`instrukt company reply`, curated status updates for `instrukt company status`,
+and company container operations) and the CLI wires them, preserving
+company → runner → runtime → core. Blueprint supplies its release-owned tool
+lifecycle to runner's module installation; runner consumes that API rather than
+defining tool policy. Core likewise declares the hook-generation interface;
+the CLI wires blueprint into it when enabled. Core declares the todo-existence
+and flavor-role lookup interfaces, wired by the CLI to todos only when enabled
+(`docs validate --no-todo-lookup` leaves todo-existence unwired for
+service-free structural checks, and work's todo-existence lookup reads local
+state without taking the writer lock or creating state files).
+
+Core declares a caller-identity lookup interface for configuration interpolation
+and commit composition, and a configured-agent-runtimes interface for
+publication. The CLI wires the selected concrete runtime adapter into both; the
+caller-identity lookup reads caller context without runtime I/O. Core never
+imports `instrukt-runner` or any concrete runtime adapter crate. The CLI also
+wires owner-supplied work/standing assignment lookup into command admission.
+The native caller identifies the recorded assignment whose role, todo, home and
+workspace determine scoped grants; configuration supplies class, bundles and
+model/App selection from the single `roles` map. The code-owned catalog maps
+instrukt operations to actions and objects. Focused roles are enforced,
+standing/agent roles use awareness help and briefing, and all callers pass
+object checks under
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
+Recognising a caller does not select a runtime. Missing known assignment
+provenance is not a roleless bypass. A bot-role commit resolves its author from
+the verified App actor even without native provider-agent identity; other
+unverified agent identity remains unresolved.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Core likewise declares the local-only, lock-free home backup standing query
 interface (`HomeBackupStanding`) consumed by publication's `instrukt status`,
@@ -176,6 +285,21 @@ write-isolation unit, taken only by that command
 (`project/instrukt/spec/feature/runner/requested-review`, Requested review
 records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
+
+<!-- planned:thin-live-runtime-boundary -->
+Company conversation writes follow the same split-by-writer-and-waiter
+isolation as review state (`sdlc/policy/state-storage`) so synchronous
+agent-waited commands (`instrukt company reply`, `instrukt company status`,
+`instrukt mcp`, admin-DM `instrukt config`, and `post-commit` knowledge
+proposals) never contend with background relay or runner writers on
+`state/writer.lock`:
+
+| Path | Nature & owner | Loss cost | Medium, write-isolation unit, scope & bound |
+| --- | --- | --- | --- |
+| `state/company-replies.db` | Authoritative explicit reply outbox; written exclusively by synchronous `instrukt company reply` (`company` context). Holds ordered explicit reply pieces before the background relay copies them idempotently into `conversation_answers` in `state/instrukt.db` | Lost explicit reply pieces not yet copied into `conversation_answers`; must be preserved | Dedicated SQLite WAL store (`-wal` and `-shm` beside it); write-isolation unit `state/company-replies.lock` (registered in `home-backup`'s `FIXED_STATE_LOCKS` alongside dynamic `*.db` backup discovery). Background company relay reads lock-free via WAL snapshot and never writes this DB; `instrukt company reply` opportunistically prunes confirmed-posted rows older than 7 days via lock-free WAL check of `conversation_answers`. Scope: per-home |
+| `state/company-replies.lock` | Lock file serializing synchronous `instrukt company reply` writes to `state/company-replies.db` | Taken again by the next `instrukt company reply` | Exclusive advisory lock; never shared with `state/writer.lock` or `state/runner.lock`. Scope: per-home |
+| `state/company-turn-status/<binding-digest>.json` | Authoritative latest curated working status for one active addressed turn (`company` context); written by `instrukt company status` and best-effort unlinked by company relay on turn close | Low: working indicator degrades to the default calm line | Bounded single-record JSON file (`< 1 KiB`, `0600`), written whole via atomic temp+fsync+rename with symlink refusal; zero database or writer lock. Matched by `(session, input_id)` so stale files are ignored. Scope: per-home; at most one file per active conversation binding |
+<!-- /planned:thin-live-runtime-boundary -->
 
 Home backup adds two bounded single-writer state files under `state/`, kept
 outside `state/instrukt.db` and `state/writer.lock` (`sdlc/policy/state-storage`),
@@ -261,6 +385,7 @@ the command-line parser's own text and exit status 2.
 
 ### External surfaces
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Surface | Used by | How |
 | --- | --- | --- |
 | git | publication, repository, blueprint, work, workflow, runner, company | the `git` CLI; hooks; work publishes a todo's work branch to the remote the default branch tracks |
@@ -276,16 +401,47 @@ the command-line parser's own text and exit status 2.
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 | Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository: the company's skill under `skills/<key>/` and its plugin's entry, which is the plugin's manifest, in `.claude-plugin/marketplace.json`, created where the repository holds none (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
+<!-- change:thin-live-runtime-boundary -->
+| Surface | Used by | How |
+| --- | --- | --- |
+| git | publication, repository, blueprint, work, workflow, runner, company | the `git` CLI; hooks; work publishes a todo's work branch to the remote the default branch tracks |
+| GitHub | work, workflow, runner; configuration and repository through work's GitHub boundary | its API (address configurable, `github.api_url`) through one writer per computer; for adding a company, whether a login names an organisation, and the company repository's creation, administrator and default branch under the project identity; for a company's knowledge proposals, the readiness of the proposal pull-request credential, whether any pull request has a commit as its head and opening the proposal's pull request as the identity the `company-agent` role selects (`project/instrukt/spec/feature/work/github-apps`) |
+| Configured agent runtimes | publication (via runtime) | rendered global files in each configured runtime's home, written whole on every sync and never removed, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter (`project/instrukt/spec/domain/runtime`) |
+| Configured runtime | runtime (consumed by runner, company, publication, configuration, work, workflow) | vendor-neutral `RuntimeAdapter` trait in `instrukt-runtime` with concrete adapter crates wired solely by `instrukt-cli`; `instrukt-runtime-t3` implements all live start, send, state, turn-correlation, and start/send/input/assignment observation over authenticated T3 RPC (`orchestration.launchThread`, `orchestration.dispatchCommand`, `orchestration.getThreadProjection`) and supported T3 CLI/HTTP surfaces with **zero live reads of T3's `statev2.sqlite`**; internal projection-database reads stay isolated inside `instrukt-runtime-t3` strictly for non-live `ColdTextSource` (`history`) and `Archive` (`thread-retention`); `runner.runtime` selects among compiled declarations, never detected |
+| Configured graph engine | blueprint | an adapter emitting the node-link contract |
+| Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
+| OS scheduler | runner | `instrukt tick` each minute; when global `backup` is validly configured, one owned daily timer invoking `instrukt backup run` at the configured local time (`project/instrukt/spec/feature/runner/module-installation`) |
+| S3-compatible object storage | runner | one-shot CLI commands (`instrukt backup run\|list\|restore`) speaking provider-neutral S3 APIs directly through the S3 client with plain upload framing (without `aws-chunked` streaming-trailer checksums), built-in bounded retries, and single-object and multipart upload and server-side copy over credential-free `https` (or loopback `http` for local verification); never wrapped through `instrukt-outside` (`project/instrukt/design/architecture/outside-gate`, `project/instrukt/spec/feature/runner/home-backup`) |
+| OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
+| Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history, curated working status, and explicit-reply posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
+| GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
+| Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
+| Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository: the company's skill under `skills/<key>/` and its plugin's entry, which is the plugin's manifest, in `.claude-plugin/marketplace.json`, created where the repository holds none (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 
 ## Invariants
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Explicit execution lifetimes.** `run` hosts long-lived independent readers;
   scheduled `tick` drains pending then new instrukt-event entries within a
   bounded invocation. Conversation links have a native-thread stream reader
   in `run`, with ordinary restart from durable per-link positions.
   The separately installed ingress receiver outlives runner downtime. There is
   no additional consumer daemon; scheduled-only reactions wait for the next wake.
+<!-- change:thin-live-runtime-boundary -->
+- **Explicit execution lifetimes.** `run` hosts long-lived independent readers
+  and the company conversation relay (driven by connector intake, explicit
+  reply outbox reads, and bounded live `read_state` polling while addressed
+  turns are in flight); scheduled `tick` drains pending then new instrukt-event
+  entries within a bounded invocation. The separately installed ingress
+  receiver outlives runner downtime. There is no additional consumer daemon;
+  scheduled-only reactions wait for the next wake.
+- **Zero live runtime-database reads.** No live runner, company, or CLI command
+  reads a runtime's private database. All live session and turn state crosses
+  `RuntimeAdapter`'s authenticated live interfaces, and compile-time crate
+  boundaries isolate every concrete runtime adapter behind `instrukt-cli`.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Each project publishes only its own part.** Publication never reads
   another project's repository; the global index is patched by owner, never
   rebuilt from all sources. `docs get` reads project snippets from
@@ -741,9 +897,20 @@ reading runner's files or contacting remote storage.
 - **Runtime identity or delivery is uncertain:** preserve the event and captured native launch request/IDs; recover through
   native fixed-key receipt replay. A failed
   observation or send never requests a replacement session.
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Conversation stream or relay fails:** the runner retains its link, position
   and pending handover evidence and exposes the failure through
   `instrukt events status` and logs under the conversation-link contract.
+<!-- change:thin-live-runtime-boundary -->
+- **Company relay or addressed turn fails:** the company relay retains its
+  in-flight delivery state, retries failed turns up to
+  `FAILED_RETRY_MAX_ATTEMPTS = 3` retries (4 total failed attempts with
+  exponential backoff `2m`/`4m`/`8m`, capped at `FAILED_RETRY_LIMIT = 15m`),
+  and upon exhaustion (or terminal completion without an explicit reply) queues
+  one standard member-facing error reply idempotently, records the real failure
+  cause on `instrukt events status`, and emits one operator anomaly alert
+  (`project/instrukt/spec/feature/company/conversations`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **A checkout has no runtime project of its own:** launch adds one at exactly
   that checkout and starts there; it never runs in a project rooted at an
   ancestor, such as the person's home folder, where it would read that folder's
@@ -790,6 +957,7 @@ reading runner's files or contacting remote storage.
   still shows the todos' issues, artifacts and pull requests to people, but
   no command rebuilds the record from them
   (`project/instrukt/spec/feature/work/state-database`).
+<!-- planned-change:thin-live-runtime-boundary -->
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
 - **A turn's commit becomes readable after the read its notification triggered:**
   that read finds nothing new and ends successfully, and no native notification
@@ -799,6 +967,14 @@ reading runner's files or contacting remote storage.
   with outstanding work reads again on the company relay's own retry
   (`project/instrukt/spec/feature/company/conversations`). A history search or
   an explicit extraction catches up history only.
+<!-- change:thin-live-runtime-boundary -->
+- **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runtime/t3`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runtime/t3-contract`) do not exercise live provider option descriptors.
+- **A cold history commit becomes readable after an extraction notification:**
+  history extraction reads again on the next history search or explicit
+  extraction request (`project/instrukt/spec/feature/runner/history`); live
+  company conversations never depend on native database change notifications
+  and observe turn progress directly through `runtime`'s live `read_state`.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 - **A reviewer's turn ends without a verdict for a head it was handed:** the
   head stays owed. While it is still current the runner asks again at growing

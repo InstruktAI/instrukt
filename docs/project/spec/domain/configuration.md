@@ -83,10 +83,19 @@ removes a key, any other value replaces.
 : Expanding a value's references when it is read: `{other.key}`, `${VAR}`, and
 the derived `runtime.session_id` and selected `runtime.<operation>`.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Selected runtime**
 : The compiled adapter chosen by global `runner.runtime`, initially `t3`.
 Absent, it is the one runtime compiled into this instrukt; an unknown name is a
 finding. No runtime is detected from installed tools or the caller's environment.
+<!-- change:thin-live-runtime-boundary -->
+**Selected runtime**
+: The compiled runtime adapter chosen by global `runner.runtime`, validated
+against the runtime declarations (`RuntimeDeclaration`) installed once by the
+CLI at startup (`project/instrukt/spec/domain/runtime`). Absent, it is the
+default compiled runtime registered by the CLI; an unknown name is a finding.
+No runtime is detected from installed tools or the caller's environment.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **Caller identity**
 : The selected adapter's recognition of the current native session. It may
@@ -141,10 +150,19 @@ be absent outside that runtime and does not change runtime selection.
   configuration schema type the editor schema of `instrukt.yaml` is generated
   from (`project/instrukt/spec/feature/publication/editor-schemas`); the runtime selection and adapter caller-identity lookup used by
   commit composition.
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Allowed dependencies** — the company context's connector declarations, as
   published data; configuration depends on no other context's behavior.
   It declares the caller-identity lookup interface; CLI wiring supplies the
   selected adapter's environment-only recognition without importing runner.
+<!-- change:thin-live-runtime-boundary -->
+- **Allowed dependencies** — the company context's connector declarations and
+  the runtime context's `RuntimeDeclaration` catalog (`project/instrukt/spec/domain/runtime`),
+  each installed once at CLI startup as published data; configuration depends
+  on no other context's behavior. It declares the caller-identity lookup
+  interface; CLI wiring supplies the selected adapter's environment-only
+  recognition without importing `runner` or any concrete runtime adapter crate.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Implementation roots** — the configuration module of the `instrukt-core`
   crate; its module layout is set by the architecture design.
 
@@ -345,9 +363,21 @@ This context emits no events.
   (`project/instrukt/spec/feature/configuration/company-homes`), enforcing
   symlink confinement across company settings documents before conversion.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except
 the connector declarations, which it consumes.
+<!-- change:thin-live-runtime-boundary -->
+- **Runtime** — published language: configuration consumes each compiled
+  runtime's `RuntimeDeclaration` (name, native and workflow capabilities,
+  archive support for thread-retention validation, and shipped instruction
+  catalog) installed once at CLI startup, plus environment-only caller-identity
+  lookup wired by the CLI (`project/instrukt/spec/domain/runtime`).
+
+These are context relationships; module switches determine enablement, not
+semantic ownership. Configuration is the supplier in each relationship except
+the connector declarations and runtime declarations, which it consumes.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ## Known caveats
 
