@@ -93,6 +93,7 @@ configuration; they retain their named repair doors.
 
 ### Agent profiles and readiness
 
+<!-- planned-change:capability-free-model-call -->
 Read the effective selection with `instrukt config get --agents [--json]` and
 its revision with `instrukt config get --agents --revision`, and show the
 current role/profile order before changing model selection. Detect ACP
@@ -111,6 +112,33 @@ Write instrukt-owned signing and Redis secrets only through `instrukt secrets
 set` or `instrukt secrets generate`, without echoing values. Every computer's
 interactive and scheduled paths read its one protected machine-local file
 (`project/instrukt/spec/feature/configuration/owned-files`).
+<!-- change:capability-free-model-call -->
+Read the effective selection with `instrukt config get --agents [--json]` and
+its revision with `instrukt config get --agents --revision`, and show the
+current role/profile order before changing model selection. Detect ACP
+instances already configured in T3, ask where the developer wants them in that
+order, and record their profiles and order changes with
+`instrukt config patch --agents --revision <rev>`. A stale revision requires a
+fresh read and recomputed difference. For a supported harness not ready, guide
+login or key setup and wait for readiness. Keep agent runtimes' model-provider
+keys with T3. instrukt creates no T3 provider instance and implements no ACP.
+Selection and upgrade semantics belong to
+`project/instrukt/spec/feature/configuration/agent-selection`; editing the
+agents file belongs to
+`project/instrukt/spec/feature/configuration/configuration-editing`.
+
+For untrusted-text screening (`llm.screening` in the global layer,
+`project/instrukt/spec/feature/configuration/layered-configuration`), record
+`url`, `model`, optional `${NAME}` `api_key` (omitted for local servers such as
+LM Studio that need no key), and optional `timeout`. Tell the operator to bring
+a plain model with no built-in search or browsing; instrukt performs no runtime
+check on which model is configured.
+
+Write instrukt-owned signing, Redis, and `llm.*` API key secrets only through
+`instrukt secrets set` or `instrukt secrets generate`, without echoing values.
+Every computer's interactive and scheduled paths read its one protected
+machine-local file (`project/instrukt/spec/feature/configuration/owned-files`).
+<!-- /planned-change:capability-free-model-call -->
 
 ### Roles and GitHub Apps
 

@@ -121,12 +121,24 @@ runtime instructions where its native operation supports the options.
 
 ### Configuration skill and ACP
 
+<!-- planned-change:capability-free-model-call -->
 The configuration skill discovers ACP instances the user already has in T3,
 shows the current order, asks where to place them, and writes the corresponding
 profiles and order changes. For a supported harness that is not ready, it guides
 login or key setup and waits for readiness. instrukt creates no provider
 instances and carries no ACP implementation. Model-provider keys remain with
 T3, outside instrukt's secrets file.
+<!-- change:capability-free-model-call -->
+The configuration skill discovers ACP instances the user already has in T3,
+shows the current order, asks where to place them, and writes the corresponding
+profiles and order changes. For a supported harness that is not ready, it guides
+login or key setup and waits for readiness. instrukt creates no provider
+instances and carries no ACP implementation. Agent runtimes' model-provider
+keys remain with T3, outside instrukt's secrets file; API keys for instrukt's
+direct capability-free model endpoints under global `llm.*` live in
+`~/.instrukt/secrets.env`
+(`project/instrukt/spec/feature/configuration/owned-files`).
+<!-- /planned-change:capability-free-model-call -->
 
 ## Use cases
 

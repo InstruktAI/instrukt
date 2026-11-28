@@ -55,7 +55,7 @@ unconfigured, incomplete or invalid endpoint entry (including a malformed
 address, an address embedding credentials, or a non-loopback plaintext `http`
 endpoint carrying an API key), or a referenced API key secret that cannot be
 resolved under `project/instrukt/spec/feature/configuration/owned-files` is
-`refused` at entry (`project/instrukt/policy/checks-and-guards`), naming the
+`refused` at entry (`general/principle/trust-and-guardrails`), naming the
 refusal and its door without disclosing secret or embedded credential material. A call is also
 `refused`, and returns no answer, when the model stopped before finishing its
 answer because the size bound ran out, or when the endpoint rejects the request
@@ -63,7 +63,7 @@ as one it cannot serve, such as one too large for the model. An answer is never
 repaired, truncated or partly returned. A failure that is neither an entry
 refusal, an unavailable endpoint nor one of these post-call refusals — such as
 a malformed request or a client or protocol failure — is a defect
-(`project/instrukt/policy/checks-and-guards`): the call fails without retrying
+(`sdlc/principle/design-fundamentals`): the call fails without retrying
 and returns no answer.
 
 ### The endpoint
@@ -81,7 +81,7 @@ unavailability, paces retries and reports waits. While the endpoint is
 unavailable, the call is `waiting`: an unbounded caller waits until the
 endpoint answers, while a caller with a bounded wait retries within that bound
 and receives the wait, a bound of nothing being a single try
-(`project/instrukt/policy/checks-and-guards`), with no `answered` outcome.
+(`project/instrukt/design/architecture/outside-gate`), with no `answered` outcome.
 
 ## Use cases
 
