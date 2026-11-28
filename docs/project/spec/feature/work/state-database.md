@@ -300,10 +300,12 @@ live turn correlation:
 - `connected_conversations` drops `reply_mode`, `source_identity`, and
   `position_json`, and adds `needs_explicit_rollover` (`INTEGER NOT NULL DEFAULT 0`).
   Existing rows with `reply_mode = 'turn_output'` and `session IS NOT NULL` are
-  marked `needs_explicit_rollover = 1` for demand-driven one-time present-idle
-  successor rollover; unstarted `reply_mode = 'turn_output'` rows with
-  `session IS NULL` and `request IS NOT NULL` clear cached `request`, `opening`,
-  and `opening_conversation` so their first start builds a fresh
+  marked `needs_explicit_rollover = 1` for demand-driven one-time
+  explicit-frontstage successor rollover (present-idle rollover or
+  terminal-presence `Absent`/`Archived` succession); unstarted
+  `reply_mode = 'turn_output'` rows with `session IS NULL` and
+  `request IS NOT NULL` clear cached `request`, `opening`, and
+  `opening_conversation` so their first start builds a fresh
   explicit-frontstage opening brief.
 - `conversation_messages` drops `turn_update`, adds nullable `observed_run_id`,
   `turn_started_at`, and `terminal_error_queued_at`, and backfills
@@ -1096,7 +1098,7 @@ the shared standing session of a `session_scope: company` connector).
 | `semantic_key` | The key its one session is started and woken by (`instrukt:conversation:<company>:<connector>:<conversation>` for `conversation` scope; `instrukt:conversation:<company>:<connector>` for `company` scope). |
 | `role` | The role recorded from the connector declaration when the binding was created (default `'company-agent'`); caller assignment lookup reads this column to grant the connector's role. |
 | `session_scope` | `'conversation'` (default) or `'company'`. |
-| `needs_explicit_rollover` | Boolean (`0` or `1`, default `0`). Set to `1` by migration 43 for live pre-upgrade `turn_output` bindings; cleared to `0` atomically once a present-idle successor generation with the explicit-frontstage opening brief is adopted. |
+| `needs_explicit_rollover` | Boolean (`0` or `1`, default `0`). Set to `1` by migration 43 for live pre-upgrade `turn_output` bindings; cleared to `0` atomically once a successor generation carrying the freshly rendered explicit-frontstage opening brief is adopted (either via present-idle rollover or via terminal-presence `Absent`/`Archived` succession). |
 | `opening`, `opening_conversation`, `request` | The addressed message (and its originating conversation when `session_scope = 'company'`) whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. |
 | `display_title` | Readable title captured for the session. |
@@ -1206,8 +1208,10 @@ ingested idempotently from `state/company-replies.db` under `turn = 'reply:<id>'
 and terminal error replies under `turn = 'error:<message>'`). Key: the address,
 `turn` and `piece`. Columns: `text`, `admission_position`, `source_message`
 (nullable link to the originating `conversation_messages.message` for
-addressed-turn replies and terminal errors, `NULL` for direct-operator explicit
-replies), `attempted_at`, `provider_post_id`, `posted_at` and `failure`. Every
+same-conversation addressed-turn replies and terminal errors; `NULL` for
+direct-operator explicit replies and for cross-conversation explicit replies
+under `session_scope: company`), `attempted_at`, `provider_post_id`, `posted_at`
+and `failure`. Every
 relay pass ingests all un-ingested rows from `state/company-replies.db` into
 `conversation_answers` before evaluating turn completion or idle-without-reply
 (failing closed on outbox read errors while allowing already-ingested pieces to
