@@ -213,8 +213,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
   (`project/instrukt/spec/feature/runner/home-backup`,
   `project/instrukt/spec/feature/runner/module-installation`); the
   runner's per-worker failure files (`state/runner-workers/` and
-  `state/computer-fleet.json`) and its per-Redis reachability store
-  (`state/redis-reachability.db` and `state/redis-reachability.lock`).
+  `state/computer-fleet.json`), its wake-loop state files
+  (`state/runner-skipped-wake.json` and `state/runner-admission.json`), and its
+  per-Redis reachability store (`state/redis-reachability.db` and
+  `state/redis-reachability.lock`).
 
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -293,8 +295,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
   (`project/instrukt/spec/feature/runner/home-backup`,
   `project/instrukt/spec/feature/runner/module-installation`); the runner's
   per-worker failure files (`state/runner-workers/` and
-  `state/computer-fleet.json`) and its per-Redis reachability store
-  (`state/redis-reachability.db` and `state/redis-reachability.lock`).
+  `state/computer-fleet.json`), its wake-loop state files
+  (`state/runner-skipped-wake.json` and `state/runner-admission.json`), and its
+  per-Redis reachability store (`state/redis-reachability.db` and
+  `state/redis-reachability.lock`).
 
 - **Does not own:** The vendor-neutral runtime adapter boundary, concrete
   runtime adapters, runtime capability declarations, and T3 wire/compatibility
@@ -888,10 +892,12 @@ and plain upload framing, never routed through `instrukt-outside`
 
 ### Runner background state
 
-Background worker failure files and the per-Redis reachability store live
-outside the state database so no interactive command ever waits behind
-background writers on `state/writer.lock` or `state/redis-reachability.lock`
-(`sdlc/policy/state-storage`).
+
+Background worker failure files, the run loop's wake-loop state files, and the
+per-Redis reachability store live outside the state database so no interactive
+command ever waits behind background writers on `state/writer.lock` or
+`state/redis-reachability.lock` (`sdlc/policy/state-storage`).
+
 
 Each failing worker outside `computer-fleet` (`history-extraction`,
 `history-search`, `readiness`, deferred consumer source transitions and
@@ -951,6 +957,51 @@ transition state.
 | Scope | One home (`~/.instrukt`). |
 | Durability | Persisted across restarts and invocations (`instrukt run`, `instrukt tick`, `instrukt webhooks serve`) so repeated passes do not repeat transition logs. |
 | Bound and retirement | Bounded by the currently configured logical Redis endpoints (typically 1–2 rows; 0 when unconfigured), transiently plus any superseded endpoint until the next runner wake or tick retires unconfigured rows while keeping current endpoints' transition state. |
+
+
+The run loop keeps its last skipped wake in `state/runner-skipped-wake.json`
+(`{at, cause}`) and its last configuration admission outcome in
+`state/runner-admission.json` (`{at, outcome}`, where `outcome` is `replaced`
+or `kept`). Each file is written whole beside its previous version and renamed
+over it with symlink refusal; the next non-skipped wake removes
+`state/runner-skipped-wake.json` with symlink refusal (treating absence as a
+no-op). `instrukt events status` reads both files without taking any lock or
+creating files, refusing symbolic links and surfacing unreadable or corrupt
+files as errors rather than healthy state. Existing rows left in an older state
+database's `runner_skipped_wake` and `runner_admission` tables move forward
+into `state/runner-skipped-wake.json` and `state/runner-admission.json` without
+overwriting newer files before both legacy tables are dropped, and read-only
+inspection of an older database keeps those legacy rows visible without writing
+to disk (`project/instrukt/spec/feature/work/state-database`).
+
+`state/runner-skipped-wake.json` is durable operational state
+(`sdlc/policy/state-storage`):
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative operational state for the run loop's last skipped wake (timestamp and cause). |
+| Owner | The runner (`instrukt run`'s main wake loop). |
+| Loss cost | Losing it hides the last skipped wake in `instrukt events status` until the next skipped wake; the next non-skipped wake removes it anyway. No work, intent, or external effect is lost. |
+| Medium | One bounded atomic JSON state file (`state/runner-skipped-wake.json`, `< 1 KiB`), written whole via temp-file + fsync + rename with symlink refusal. |
+| Write isolation | Single writer (`instrukt run`'s main wake loop, serialized across processes by `state/runner.lock`); readers take no lock; `state/writer.lock` is never acquired outside the one-time legacy table removal. |
+| Scope | One home (`~/.instrukt`). |
+| Durability | Persisted across wakes and restarts until the next non-skipped wake clears it. |
+| Bound and retirement | Absent while wakes succeed; at most one ~200-byte file while the latest wake was skipped, removed on the next non-skipped wake; excluded from home backups. |
+
+`state/runner-admission.json` is durable operational state
+(`sdlc/policy/state-storage`):
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative operational state for what the running `instrukt run` last did with admitted configuration (`at` and `outcome`: `replaced` or `kept`). |
+| Owner | The runner (`instrukt run`'s main wake loop). |
+| Loss cost | Losing it leaves `admission.runner` null in `instrukt events status` until the next runner wake overwrites it. No work, intent, configuration generation, or external effect is lost. |
+| Medium | One bounded atomic JSON state file (`state/runner-admission.json`, `< 256 B`), written whole via temp-file + fsync + rename with symlink refusal. |
+| Write isolation | Single writer (`instrukt run`'s main wake loop, serialized across processes by `state/runner.lock`); readers take no lock; `state/writer.lock` is never acquired outside the one-time legacy table removal. |
+| Scope | One home (`~/.instrukt`). |
+| Durability | Persisted across wakes and restarts until overwritten on the next startup or wake admission. |
+| Bound and retirement | At most one ~100-byte file, overwritten in place on startup and every wake; never grows; excluded from home backups. |
+
 
 ### Event naming and producer declarations
 

@@ -34,33 +34,19 @@ implementation mechanism, and concrete proof to downstream phases.
 
 ## Steps
 
-### Configured runtime operations
-
-Apply these configured action values to the identified assignment and session.
-
-<!-- @config: runtime.read_thread -->
-
 1. Discover the todo's artifacts, then read the `input`, the drafted `prd`, and
    any `log` or deferral material that bears on product intent. Load the relevant
-   product and domain snippets. Check whether the current `input` digest has
-   an intent-checked stamp that names the human's actual originating conversation
-   (`sdlc/policy/todo-creation-discipline`). If you are the first non-author
-   recipient and the input has no valid check, read the human's originating
-   conversation with the configured runtime instruction, tracing past any
-   relaying or splitting session (`general/policy/human-contract`). Compare
-   outcome-level substance. Confirm fidelity and record
-   `instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`.
-   Clarification returns to the author for a new version; a mistaken
-   interpretation returns to the human. If the originating conversation is permanently
-   unavailable, return the intent to the human in the responsible thread; a new `input`
-   version from that conversation becomes the checkable basis.
-   An author never checks their own input. Take the checked `input` as the
-   behavioral scope basis — fidelity to the conversation establishes neither
-   the soundness of factual or quantitative claims nor exemption from standing
-   principles (`general/policy/human-contract`, `general/policy/grounding`,
-   `general/policy/conflict-resolution`). Verify checkable premises against
-   substrate and reject self-inflicted failure modes left under Risks
-   (`sdlc/policy/preparation-artifact-quality`).
+   product and domain snippets. Take `input` as the behavioral scope basis
+   (`sdlc/policy/todo-creation-discipline`), and surface any concrete
+   contradiction or unresolved human-owned choice as a publishable finding
+   (keeping conversation content in the runtime per
+   `sdlc/policy/todo-creation-discipline`) so `todo-orchestrator` returns it to
+   the originating conversation (`general/policy/human-contract`). Fidelity to
+   recorded intent establishes neither the soundness of factual or quantitative
+   claims nor exemption from standing principles (`general/policy/human-contract`,
+   `general/policy/grounding`, `general/policy/conflict-resolution`). Verify
+   checkable premises against substrate and reject self-inflicted failure modes
+   left under Risks (`sdlc/policy/preparation-artifact-quality`).
    Distinguish observable current behavior, credible intended state,
    implementation detail, prior art, and assumptions.
 2. Re-run the shaping questions from the preparation-artifact-quality policy

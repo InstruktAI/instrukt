@@ -1,5 +1,5 @@
 ---
-description: 'Prose is judged by intelligence, not validators; code grading free text substitutes automation for judgment, and the impulse to build a validator is the warning sign.'
+description: 'Judge prose by intelligence, not validators; code grading free text replaces judgment — wanting a validator is the warning sign.'
 visibility: 'public'
 ---
 

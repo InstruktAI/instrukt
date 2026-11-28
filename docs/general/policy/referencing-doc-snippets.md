@@ -1,5 +1,5 @@
 ---
-description: 'Name snippets by id, never path, in Required reads, See Also, and briefs; references run upward only.'
+description: 'Cite snippets by id (never path) in Required reads, See Also, briefs; refs run upward only.'
 visibility: 'public'
 ---
 

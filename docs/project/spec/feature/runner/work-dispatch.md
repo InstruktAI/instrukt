@@ -55,6 +55,7 @@ as it changes. Adding a connector starts it, changing its settings or tokens
 renews its connection, and withdrawing it ends that connection. The
 connector checks its provider permissions before taking member questions.
 
+
 **Parts that depend on a service outside instrukt.** The conversation relay (on
 T3's conversation source), the connectors (on the provider), the event readers (on
 Redis) and history's extraction (on T3's database) and query responder (on cluster
@@ -62,13 +63,17 @@ Redis) each retry inside themselves until their service returns, and report thei
 state in `instrukt events status`; a part never ends the runner because its
 service is away. A wake that cannot take the runtime-dispatch lock within its wait
 is skipped and the next wake tries again; `instrukt events status` shows the last
-skipped wake with its time and cause until a wake that is not skipped. Lock waits are measured on the clock that
-measures the limits of started programs
+skipped wake with its time and cause until a wake that is not skipped. The run
+loop records its last configuration admission outcome and last skipped wake
+outside the state database (`project/instrukt/spec/domain/runner`, Runner
+background state), so wake-loop updates never wait on `state/writer.lock`. Lock
+waits are measured on the clock that measures the limits of started programs
 (`project/instrukt/spec/feature/configuration/layered-configuration`). The
 runner ends only when it cannot start: no home, the runner lock held by another
 runner, a state database it cannot open or one newer than it knows
 (`project/instrukt/design/architecture/outside-gate`: transient outside outages
 are retried while code defects are fixed in code).
+
 
 | Capability | Runner responsibility |
 | --- | --- |
@@ -157,7 +162,7 @@ Time determines whether an authorized task is due; due status does not replace
 the todo pickup policy. Task timing belongs to
 `project/instrukt/spec/feature/runner/task-timing`.
 
-### Agent selection and intent checks
+### Agent selection
 
 Dispatch resolves the procedure's role through `agents.yaml`, with per-task
 overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
@@ -178,12 +183,6 @@ have no flag there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
-
-The responsible orchestrator delegates the intent checker natively on the
-computer where the originating conversation is readable, using the configured
-native instruction. Work records the attempt and native child id through
-`todo attempt` and `todo bind`. The runtime delivers its result to its parent;
-the work record carries the checked record and stamp, not the conversation.
 
 ### Dispatch evidence
 
@@ -277,6 +276,17 @@ When their project has a todo ready for pickup
 Then the todo is picked up
 And the developer sees in status that the project's event responses are not admitted, with the setting they need
 ```
+
+
+### UC-RD4: A developer sees runner admission and skipped-wake updates while local work writes are in progress
+
+```gherkin
+Given a developer has a running runner on their computer while a local work write is in progress
+When the runner evaluates configuration on a wake, skips a wake while dispatch is busy, and completes the next unblocked wake
+Then the runner's configuration admission outcome and skipped-wake status update without waiting for the local work write to finish
+And the developer inspecting runner status sees the updated admission outcome, the skipped wake while it stands, and no skipped wake after the unblocked wake, with inspection making no local changes
+```
+
 
 ## Known caveats
 

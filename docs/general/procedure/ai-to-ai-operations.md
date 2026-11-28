@@ -1,7 +1,7 @@
 ---
-description: 'Dispatch delegated sessions and assess child attention from native evidence and live inspection within the existing mandate.'
+description: 'Dispatch delegated sessions and assess child attention from native evidence within mandate.'
 visibility: internal
-activation_trigger: 'Dispatching a session, collaborating with a peer, or receiving completion, notification, or failure evidence about a session you govern.'
+activation_trigger: 'Dispatching a session, collaborating with a peer, or receiving completion/notification/failure evidence for a session you govern.'
 ---
 
 # AI-to-AI Operations — Procedure

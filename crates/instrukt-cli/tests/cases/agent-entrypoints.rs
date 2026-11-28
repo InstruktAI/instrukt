@@ -901,13 +901,16 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
     home.write("docs/index.yaml", index)
         .write(
             "docs/company.md",
-            "# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- people.md\n",
+            "---\ndescription: Who Acme is.\nvisibility: internal\n---\n\n# Acme\n\nAcme builds bicycles to order.\n\n## Required reads\n\n- people.md\n",
         )
         .write(
             "docs/people.md",
-            "# People\n\nWho works at Acme.\n\n## Required reads\n\n- roles.md\n",
+            "---\ndescription: Who works at Acme.\nvisibility: internal\n---\n\n# People\n\nWho works at Acme.\n\n## Required reads\n\n- roles.md\n",
         )
-        .write("docs/roles.md", "# Roles\n\nWhat each role at Acme does.\n")
+        .write(
+            "docs/roles.md",
+            "---\ndescription: What each role at Acme does.\n---\n\n# Roles\n\nWhat each role at Acme does.\n",
+        )
         .write(
             "docs/systems.md",
             "---\ndescription: The systems Acme works with.\n---\n\n# Systems\n\nThe workshop runs on ERPNext.\n",

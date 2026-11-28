@@ -3,7 +3,7 @@
 //! merged status JSON.
 
 use instrukt_core::config::{Configuration, Module};
-use instrukt_core::state_db::rusqlite::{OptionalExtension as _, params};
+use instrukt_core::state_db::rusqlite::params;
 
 use super::{
     _demand, _proposals, _redis, InstallationError, Report, Request, converge, inspection_error,
@@ -130,41 +130,15 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         .collect();
     workers.extend(crate::computer_fleet::failure_status(request.home));
     workers.sort_by(|a, b| a["worker"].as_str().cmp(&b["worker"].as_str()));
-    // The run loop's last skipped wake, until a wake is not skipped.
-    let skipped_wake = state
-        .read(|conn, path| {
-            conn.query_row(
-                "SELECT at,cause FROM runner_skipped_wake WHERE id=1",
-                [],
-                |row| {
-                    Ok(serde_json::json!({
-                        "at": row.get::<_, String>(0)?,
-                        "cause": row.get::<_, String>(1)?,
-                    }))
-                },
-            )
-            .optional()
-            .map_err(crate::state::sql(path))
-        })?
-        .flatten();
+    // The run loop's last skipped wake, read lock-free from
+    // `Home::runner_skipped_wake_file` (or an un-migrated legacy row).
+    let skipped_wake =
+        crate::state::read_skipped_wake(request.home)?.map(crate::state::SkippedWake::into_json);
     // What the running runner last did with the configuration it admitted:
-    // replaced its generation, or kept the one in force.
-    let runner = state
-        .read(|conn, path| {
-            conn.query_row(
-                "SELECT at,outcome FROM runner_admission WHERE id=1",
-                [],
-                |row| {
-                    Ok(serde_json::json!({
-                        "at": row.get::<_, String>(0)?,
-                        "outcome": row.get::<_, String>(1)?,
-                    }))
-                },
-            )
-            .optional()
-            .map_err(crate::state::sql(path))
-        })?
-        .flatten();
+    // replaced its generation, or kept the one in force, read lock-free from
+    // `Home::runner_admission_file` (or an un-migrated legacy row).
+    let runner = crate::state::read_runner_admission(request.home)?
+        .map(crate::state::RunnerAdmission::into_json);
     let conversations = request
         .company
         .map(|company| company.status(request.home, request.now))

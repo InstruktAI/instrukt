@@ -1,6 +1,6 @@
 ---
 description: 'Onboard a company end-to-end (repo, home, knowledge, messaging, services, live proof).'
-activation_trigger: 'Onboarding a company, bringing an onboarded setup in line or finding one of its steps, connecting or repairing its services, or enabling software building.'
+activation_trigger: 'Onboarding a company, bringing an onboarded setup in line, finding a step, connecting/repairing its services, or enabling software building.'
 role: company-operator
 visibility: public
 ---

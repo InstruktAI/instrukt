@@ -125,22 +125,24 @@ person.
     input) and a lock-free WAL snapshot of the state database
     (`project/instrukt/spec/feature/company/conversations`,
     `project/instrukt/spec/feature/runner/mcp-access`):
-    1. *Verified active addressed turn:* present, active session whose live
-       turn input identity matches an in-flight addressed message on this
-       active binding returns that message's recorded member speaker, surviving
-       restarts and remaining intact after explicit replies.
+    1. *Verified active addressed turn:* present, active session (`running` or
+       `needs-input`) whose live turn input identity matches an in-flight
+       addressed message on this active binding returns that message's recorded
+       member speaker, surviving restarts and remaining intact after explicit
+       replies.
     2. *Fail-closed refusal:* any observation or store error, any non-present
-       or non-running state, absent active turn or input identity, unavailable
-       opening input, mismatched addressed turn, unknown input whose opening
-       text carries a company member envelope, or any retired conversation
-       generation (`runtime_generations`) refuses with a company-owned
-       `SpeakerError` rather than falling back to a service login.
-    3. *Confirmed direct operator / technical-owner turn:* confirmed running
-       turn on the active generation whose input identity matches no
-       company-delivered message and whose available opening text carries no
-       company member envelope yields no addressed member speaker (never
-       inheriting any prior member's identity, admin privilege, or credentials,
-       and refused by `instrukt company status`).
+       or non-active state (`input-ready`, `failed`, or `gone`), absent active
+       turn or input identity, unavailable opening input, mismatched addressed
+       turn, unknown input whose opening text carries a company member envelope,
+       or any retired conversation generation (`runtime_generations`) refuses
+       with a company-owned `SpeakerError` rather than falling back to a service
+       login.
+    3. *Confirmed direct operator / technical-owner turn:* confirmed active
+       turn (`running` or `needs-input`) on the active generation whose input
+       identity matches no company-delivered message and whose available opening
+       text carries no company member envelope yields no addressed member
+       speaker (never inheriting any prior member's identity, admin privilege,
+       or credentials, and refused by `instrukt company status`).
   - Live turn completion and failure reconcile against `runtime`'s bounded
     recent turn history using neutral input identity so an overtaken turn is
     not lost between polls, keeping pre-start preparing/queued turns in flight

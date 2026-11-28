@@ -501,7 +501,7 @@ pub(super) fn held_texts(
         .iter()
         .filter_map(|path| match units.get(path) {
             Some(unit) => {
-                let body = docs::company_document(&unit.body).body;
+                let body = docs::company_body(&unit.body).body;
                 Some(frame(path, &body).trim().to_owned())
             }
             None => selection
@@ -778,6 +778,18 @@ mod tests {
         let mut plan = RenderPlan::default();
         render(&tree, false, &mut plan);
         plan
+    }
+
+    #[test]
+    fn an_expanded_company_document_in_prose_omits_its_frontmatter() {
+        let with_fm = company_plan("company.md", &[]);
+        assert_eq!(with_fm.findings, []);
+        let without_fm = company_plan(
+            "company.md",
+            &[("docs/company.md", docs::split_frontmatter(COMPANY_DOC).1)],
+        );
+        assert_eq!(without_fm.findings, []);
+        assert_eq!(with_fm.writes[0].text, without_fm.writes[0].text);
     }
 
     #[test]

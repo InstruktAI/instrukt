@@ -1,5 +1,5 @@
 ---
-description: 'List and call declared MCP servers via `instrukt mcp`, reading tools on demand and using results as evidence.'
+description: 'List/call declared MCP servers via `instrukt mcp`, reading tools on demand as evidence.'
 visibility: public
 ---
 

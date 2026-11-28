@@ -1,5 +1,5 @@
 ---
-description: 'Pre-claim grounding obligations for consequential assertions/records and what counts as a grounding violation.'
+description: 'Pre-claim grounding for consequential assertions/records and grounding violations.'
 ---
 
 # Grounding — Policy

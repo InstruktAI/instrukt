@@ -51,12 +51,15 @@ meaning and the writes of the conversation tables.
   records).
 
 
-- **Runner background worker failures and Redis reachability stay outside it:**
+
+- **Runner background worker failures, wake-loop state, and Redis reachability stay outside it:**
   per-worker failure files live under `state/runner-workers/` (beside
-  `state/computer-fleet.json`) and per-Redis reachability lives in
-  `state/redis-reachability.db` under `state/redis-reachability.lock`, each
-  isolated from `state/writer.lock` (`project/instrukt/spec/domain/runner`,
-  Runner background state).
+  `state/computer-fleet.json`), wake-loop state files live in
+  `state/runner-skipped-wake.json` and `state/runner-admission.json`, and
+  per-Redis reachability lives in `state/redis-reachability.db` under
+  `state/redis-reachability.lock`, each isolated from `state/writer.lock`
+  (`project/instrukt/spec/domain/runner`, Runner background state).
+
 
 <!-- planned:thin-live-runtime-boundary -->
 - **Company explicit reply outbox and curated turn status stay outside it:**
@@ -293,27 +296,42 @@ disk. Every work, runner and conversation row in the remaining tables is kept.
 Version 42 adds `review_asks` (Runner tables), the runner's record of each ask
 to a held integration candidate's authoring session. It starts empty.
 
+Version 43 retires `runner_skipped_wake` and `runner_admission` once their rows
+have left the state database (`project/instrukt/spec/domain/runner`, Runner
+background state). Each table is dropped immediately when it holds no row; while
+either holds a row, it stays in place until the runner moves its row into
+`state/runner-skipped-wake.json` or `state/runner-admission.json` and drops both
+tables. Recorded skipped-wake and admission state are therefore preserved across
+upgrades, and read-only inspection of an older database keeps them visible
+without modifying the database on disk. Every work, runner, and conversation row
+in the remaining tables is kept.
+
 <!-- planned:thin-live-runtime-boundary -->
-Version 43 moves company conversations to unconditional explicit frontstage and
+Version 44 moves company conversations to unconditional explicit frontstage and
 live turn correlation:
 
 - `connected_conversations` drops `reply_mode`, `source_identity`, and
   `position_json`, and adds `needs_explicit_rollover` (`INTEGER NOT NULL DEFAULT 0`).
-  Existing rows with `reply_mode = 'turn_output'` and `session IS NOT NULL` are
-  marked `needs_explicit_rollover = 1` for demand-driven one-time
-  explicit-frontstage successor rollover (present-idle rollover or
+  Existing rows with `reply_mode = 'turn_output'` and either
+  `session IS NOT NULL` or a matching `runtime_bindings` row for the same
+  `semantic_key` are marked `needs_explicit_rollover = 1` for demand-driven
+  one-time explicit-frontstage successor rollover (present-idle rollover or
   terminal-presence `Absent`/`Archived` succession); unstarted
-  `reply_mode = 'turn_output'` rows with `session IS NULL` and
-  `request IS NOT NULL` clear cached `request`, `opening`, and
-  `opening_conversation` so their first start builds a fresh
+  `reply_mode = 'turn_output'` rows with `session IS NULL`, no matching
+  `runtime_bindings` row, and `request IS NOT NULL` clear cached `request`,
+  `opening`, and `opening_conversation` so their first start builds a fresh
   explicit-frontstage opening brief.
 - `conversation_messages` drops `turn_update`, adds nullable `observed_run_id`,
   `turn_started_at`, and `terminal_error_queued_at`, and backfills
   `dispatch_command_id` for existing `state = 'sent'` opening rows whose
-  `dispatch_command_id IS NULL` from `runtime_bindings.start_key`.
+  `dispatch_command_id IS NULL` from `runtime_bindings.start_key` (joined on
+  `semantic_key`, `session`, non-null `start_key`, and
+  `conversation = COALESCE(opening_conversation, conversation)` with
+  `message = opening`).
 - `conversation_answers` adds nullable `source_message` linking explicit reply
   and terminal error pieces back to their originating `conversation_messages.message`.
 <!-- /planned:thin-live-runtime-boundary -->
+
 
 
 ### Work tables
@@ -735,6 +753,13 @@ version 41 once moved to `state/runner-workers/` and
 (`project/instrukt/spec/domain/runner`, Runner background state).
 
 
+**Wake-loop skipped wake and admission** — retired from this database in version
+43 once moved to `state/runner-skipped-wake.json` and
+`state/runner-admission.json` outside `state/writer.lock`
+(`project/instrukt/spec/domain/runner`, Runner background state).
+
+
+
 A `review-presence:<project>` row names the sessions the runtime could not say
 about in that project's latest held-candidate derivation
 (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
@@ -1098,7 +1123,7 @@ the shared standing session of a `session_scope: company` connector).
 | `semantic_key` | The key its one session is started and woken by (`instrukt:conversation:<company>:<connector>:<conversation>` for `conversation` scope; `instrukt:conversation:<company>:<connector>` for `company` scope). |
 | `role` | The role recorded from the connector declaration when the binding was created (default `'company-agent'`); caller assignment lookup reads this column to grant the connector's role. |
 | `session_scope` | `'conversation'` (default) or `'company'`. |
-| `needs_explicit_rollover` | Boolean (`0` or `1`, default `0`). Set to `1` by migration 43 for live pre-upgrade `turn_output` bindings; cleared to `0` atomically once a successor generation carrying the freshly rendered explicit-frontstage opening brief is adopted (either via present-idle rollover or via terminal-presence `Absent`/`Archived` succession). |
+| `needs_explicit_rollover` | Boolean (`0` or `1`, default `0`). Set to `1` by migration 44 for live pre-upgrade `turn_output` bindings; cleared to `0` atomically once a successor generation carrying the freshly rendered explicit-frontstage opening brief is adopted (either via present-idle rollover or via terminal-presence `Absent`/`Archived` succession). |
 | `opening`, `opening_conversation`, `request` | The addressed message (and its originating conversation when `session_scope = 'company'`) whose delivery starts the session, and the start request captured for that message before the runtime is called. |
 | `session` | The bound session; `NULL` until a start is bound. |
 | `display_title` | Readable title captured for the session. |
@@ -1170,12 +1195,18 @@ Superseded failed rows are retained for at least seven days from
 relay pass prunes at most 100 eligible rows older than that bound, oldest first.
 Only rows in state `failed` with a recorded `superseded_at` are eligible.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 Migration retires the former source-uncertainty flag while preserving message
 states, boundaries, command ids, attempts and failures. An old unmatched-input
 finding is retained in the message failure record and its binding identity is
 made unavailable without clearing its session or position. The original source
 identity cannot be reconstructed from that flag; ordinary bindings keep their
 identity and position.
+<!-- change:thin-live-runtime-boundary -->
+Migration 44 drops the retired `source_identity`, `position_json`, `reply_mode`,
+and `turn_update` columns while preserving message states, boundaries, command
+ids, attempts, and failures.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **`conversation_context_receipts`** — the messages the agent has already
 received, with one row per conversation address and provider message ID.
@@ -1248,10 +1279,17 @@ and admission coverage; an old unattempted notice remains eligible.
 `(company, connector)`. Columns: `state`, one of `connecting`, `connected`,
 `failed` or `stopped`; `failure`, its cause; `updated_at`.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **`conversation_relay`** — one row: `failure`, the cause while the relay that
 serves conversations is not running or cannot acquire its source, `NULL` while it
 reads; `updated_at`, the start of the current failure, kept while the failure
 persists across retries.
+<!-- change:thin-live-runtime-boundary -->
+**`conversation_relay`** — one row: `failure`, the cause while the relay that
+serves conversations is not running or cannot resolve the runtime adapter / run
+a relay pass, `NULL` while healthy; `updated_at`, the start of the current
+failure, kept while the failure persists across retries.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **`connector_read_back_seed`** — migration 26 records the earliest
 retained message time for each existing connector. It supplies a first

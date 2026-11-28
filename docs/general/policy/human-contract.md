@@ -1,5 +1,5 @@
 ---
-description: How an agent understands what the human wants, what it decides on its own, what only the human supplies, and how the human's intent is captured once, checked once, and then carried unchanged.
+description: How an agent understands what the human wants, what it decides on its own, what only the human supplies, and how human intent is recorded at its origin, compared once at work entry, and carried unchanged.
 ---
 
 # Human Contract — Policy
@@ -32,21 +32,36 @@ description: How an agent understands what the human wants, what it decides on i
   forbids authoring refuses with the door to one that can.
 - A question to the human asks for the new intent itself — never for
   confirmation of what is settled, never for a technical choice.
-- The agent in conversation with the human records their intent as it
-  understood it, as an outcome, where the next agent will read it.
-- Before that intent enters work, one agent that was not in the conversation
-  reads the conversation and checks the record against it. It confirms the
-  record, rewrites it where it was captured unclearly, or brings it back to the
-  human where it was captured wrongly. No wrong interpretation enters the work.
-  When an agent relays, reformulates, or splits work from an earlier
-  conversation, that agent is a relay, not the intent's origin: the entry check
-  reads the human's actual originating conversation — tracing past any relaying
-  or splitting session — and every split piece carries the human's constraints
-  and originating-conversation pointer verbatim rather than dropping them behind
-  a reference to a parent holder.
-- After that check, every agent takes the recorded behavioral intent as given
-  and passes it on unchanged — never re-interpreted, never re-verified. Naming
-  the human adds no authority beyond the recorded intent.
+- The session holding the human's conversation records their settled intent
+  directly as an outcome, carrying the human's material constraints and the
+  originating-conversation reference where the next agent will read it
+  (`general/principle/origin-routing`). Keep human-attended filing in an
+  eligible session holding that conversation rather than handing it off to a
+  separate cold thread; when the current session cannot record or amend the
+  filing, stop before writing, surface the ineligibility, and direct filing to
+  an eligible human-attended session that preserves the origin. Work originated
+  by an agent with no human lineage stays agent-originated and needs no human
+  origin. When a later session splits already-recorded work into children, it
+  is a splitter, not the origin: every split piece carries the human's
+  constraints and originating-conversation pointer verbatim rather than hiding
+  them behind a parent holder reference.
+- When recorded intent with human lineage first enters work, the first
+  non-author receiving session checks the recorded outcome, material
+  constraints, and final direction once against the relevant turns of the
+  human's actual originating conversation — tracing past any splitting or
+  relaying session. When that check finds a concrete discrepancy — a dropped
+  restriction, a revived rejected direction, a contradiction with what was
+  agreed, or an unresolved human-owned choice — it pauses only the affected
+  work and returns the discrepancy with evidence and a recommended resolution
+  to the originating conversation, or to the platform operator when no origin
+  is reachable (`general/principle/origin-routing`). Each work lane's own entry
+  contract governs how that check is recorded and how unavailable sources are
+  handled (`sdlc/policy/todo-creation-discipline` for todos;
+  `general/procedure/scratchpad-workspace` for shared scratchpads).
+- After that entry check, later recipients take the recorded behavioral intent
+  as given and carry it unchanged — never re-interpreting it, repeating the
+  source comparison, or silently rewriting it. Naming the human adds no
+  authority beyond the recorded intent.
 - Facts cited in recorded intent are evidence to verify against their source,
   and technical mechanisms named in it are leads to evaluate
   (`general/principle/grounding`); grounding or replacing either is technical
@@ -60,12 +75,17 @@ description: How an agent understands what the human wants, what it decides on i
 
 Agents hold the knowledge; the human holds the intent. Asking the human for
 anything else hands work to the one least equipped for it, and guessing new
-intent puts words in their mouth. Intent re-interpreted at every hop drifts
-from what the human meant; one check where it enters the work, by an agent that
-was not part of the conversation, catches a wrong reading before anything is
-built on it. Treating cited facts as evidence to ground and named mechanisms as
-leads keeps fidelity to behavioral intent from shielding unverified claims or
-standing-principle violations.
+intent puts words in their mouth. Recording human-attended intent directly in
+the originating conversation keeps ownership and future escalations attached
+to the person who commissioned the work; handing filing to a cold thread
+severs that link. One entry comparison against the originating conversation
+catches dropped restrictions or contradictions before execution builds on them,
+without inventing authority from a brief acknowledgement or letting a
+downstream agent rewrite the human's intent; returning discrepancies to the
+origin keeps corrections with the conversation that holds the human's context. Treating
+cited facts as evidence to ground and named mechanisms as leads keeps fidelity
+to behavioral intent from shielding unverified claims or standing-principle
+violations.
 
 ## Scope
 
@@ -75,10 +95,8 @@ agent that receives it.
 
 ## Enforcement
 
-Three violations: an agent deciding new intent itself, an agent asking the
-human for what their intent already settles, and an agent re-interpreting or
-re-verifying intent after its entry check. The procedures that require this
-policy check for them at their own steps.
+Procedures and independent review enforce these rules at authoring, work entry,
+and commit review.
 
 ## Exceptions
 
@@ -88,4 +106,5 @@ None.
 
 - [general/principle/stewardship](../principle/stewardship.md)
 - [general/principle/autonomy](../principle/autonomy.md)
+- [general/principle/origin-routing](../principle/origin-routing.md)
 - [general/policy/leadership](leadership.md)

@@ -122,20 +122,17 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      `--finalize-ready` + `--unclaim` → `integrate`.
 
 - **Feature (`kind: feature`):**
-  1. Verify `input` intent per `sdlc/policy/todo-creation-discipline` —
-     record the current digest and verified human origin with
-     `instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`.
-  2. Dispatch `intaker` (`sdlc/procedure/lifecycle/prepare/intake`) to author
+  1. Dispatch `intaker` (`sdlc/procedure/lifecycle/prepare/intake`) to author
      `prd` (and pending feature-spec scenarios when applicable), then
      independent `prd-reviewer`
      (`sdlc/procedure/lifecycle/prepare/review-prd`).
-  3. Obtain configured PRD approval (`approvals.prd`). When human approval is
+  2. Obtain configured PRD approval (`approvals.prd`). When human approval is
      required, present the reviewed PRD clearly, unclaim
      (`instrukt todo update <slug> --unclaim`), and stop — the runner wakes you
      automatically when the approval arrives.
-  4. Dispatch optional `architect` + `architecture-reviewer` (or skip when
+  3. Dispatch optional `architect` + `architecture-reviewer` (or skip when
      unneeded), then `planner` + `plan-reviewer`.
-  5. Proceed to `builder` → independent `build-reviewer` and live verification
+  4. Proceed to `builder` → independent `build-reviewer` and live verification
      (Step 4b, pushing `origin/<slug>/work` first when CI-hosted) →
      `fix-review-findings` remediation on `changes_requested` or `FAIL`, and
      Step 4b substrate/prerequisite resolution on `BLOCKED` → `deferrer` →
@@ -192,19 +189,33 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
 
 <!-- @config: runtime.message_child -->
 
+<!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.message_peer -->
+
 <!-- @config: runtime.inspect_thread -->
 
 <!-- @config: runtime.finish_thread -->
 
-1. **Read current facts and claim the todo.** Run `instrukt todo work {slug}`
-   (or `instrukt todo show {slug} --json` to inspect). For deliberate entry
-   outside `<slug>/work`, follow the returned native placement instruction and
-   re-enter with `--placement-evidence`. On resumption after interruption,
-   kickback, or human approval, read the factual ledger first so your next move
-   matches ground truth.
-2. **Check prerequisites, holds, published fill currency, and pre-planning
-   substrate readiness.** If prerequisites are undelivered or a hold is active,
-   preserve state and stop without guessing. Resolve the repository's canonical
+1. **Read current facts and claim the todo.** Run
+   `instrukt todo work {slug}` (or `instrukt todo show {slug} --json` to
+   inspect). For deliberate entry outside `<slug>/work`, follow the returned
+   native placement instruction and re-enter with `--placement-evidence`. On
+   resumption after interruption, kickback, or human approval, read the factual
+   ledger first so your next move matches ground truth.
+2. **Check prerequisites and holds, run the preparation-entry audit, and verify
+   pre-planning substrate readiness.** If prerequisites are undelivered or a
+   hold is active, preserve state and stop without guessing. Once prerequisites
+   are satisfied and no hold is active, before deriving or dispatching work on
+   an `input` version that has not yet cleared preparation entry — including
+   initial entry, an unchanged `input` returning after an earlier unresolved
+   entry stop (such as after an operator confirmation), or a materially revised
+   `input` — apply the preparation-entry audit in
+   `sdlc/policy/todo-creation-discipline` — including, for human-lineage work
+   across every kind (`feature`, `change`, `bug`, `task`), the one read-only
+   comparison against the authorizing human conversation via
+   `runtime.read_thread` and origin return via `runtime.message_peer`. For
+   repository work, then resolve the repository's canonical
    default branch `<default-branch>` and `<canonical-ref>`, and handle all Git
    lookups and ancestry exit codes (`0` = ancestor, `1` = confirmed
    non-ancestor, other non-zero = fatal lookup error), using the exact rules in

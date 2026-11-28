@@ -42,12 +42,6 @@ it without guessing and a reviewer finds no surprises.
 
 ## Steps
 
-### Configured runtime operations
-
-Apply these configured action values to the identified assignment and session.
-
-<!-- @config: runtime.read_thread -->
-
 Use `instrukt <command> -h` for individual commands.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
@@ -204,22 +198,12 @@ artifact quality policy. Do not add an intent-formation lane to the delivery
 review catalogue; build and commit review validate delivery against already
 approved intent and must not re-litigate it.
 
-`input` is the basis for this comparison. Check whether the current digest has
-an intent-checked stamp that names the human's actual originating conversation
-(`sdlc/policy/todo-creation-discipline`). The current check survives a plan
-rewrite. If you are the first non-author recipient and the input has no valid
-check, read the human's originating conversation through the configured runtime
-instruction, tracing past any relaying or splitting session
-(`general/policy/human-contract`). Confirm fidelity and record
-`instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`.
-If expression needs
-clarifying, return it to its author for a new input version; reviewer
-separation still applies. A mistaken interpretation returns to the human in the
-responsible session's thread as one intent question. A conversation required
-for this check is read where it is available; its absence supplies no check.
-If the originating conversation is permanently unavailable, return the intent to the
-human in the responsible thread; a new `input` version from that conversation becomes
-the checkable basis.
+`input` is the basis for this comparison (`sdlc/policy/todo-creation-discipline`).
+If a concrete discrepancy in `input` or an unresolved human-owned choice
+surfaces, record a publishable summary in findings (keeping conversation
+content in the runtime per `sdlc/policy/todo-creation-discipline`) so
+`todo-orchestrator` pauses only the affected work and returns it to the
+originating conversation (`general/policy/human-contract`).
 Additional corroborative conversation gaps follow the shared review contract.
 
 ### 4. Plan-specific quality
@@ -506,10 +490,8 @@ Classify each violation by the severity tiers in
 
 Plan reviewers evaluate; they do not author. A plan reviewer must not edit the
 `implementation-plan`, upstream prepare artifacts, documentation snippets, source
-files, tests, config, or generated files. The only writes a plan reviewer owns
-are the complete `plan-review-findings` artifact for every pass, the
-`plan_review` verdict stamp, and the position-based intent-check stamp when
-this reviewer is its first non-author recipient.
+files, tests, config, or generated files. The only writes a plan reviewer owns are the complete `plan-review-findings`
+artifact for every pass and the `plan_review` verdict stamp.
 
 When the plan has a localized defect, record it as a finding and stamp
 `needs_work`. The plan drafter owns the corrective edit, and `todo-orchestrator`

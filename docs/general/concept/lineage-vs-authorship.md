@@ -1,5 +1,5 @@
 ---
-description: 'Identity on a record is the authority the work ran under, never who did the work. Attribution questions are answered from creation records and session evidence, not account identity.'
+description: 'Record identity is execution authority, not authorship; prove attribution from creation records and session evidence.'
 visibility: 'public'
 ---
 
