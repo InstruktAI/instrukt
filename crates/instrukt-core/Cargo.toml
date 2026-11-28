@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 age.workspace = true
+backon.workspace = true
 dotenvy.workspace = true
 hex.workspace = true
 instrukt-connector.workspace = true

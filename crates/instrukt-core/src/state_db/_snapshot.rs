@@ -6,6 +6,7 @@
 //! ([`crate::fsx::outside_sqlite`]).
 //! WAL framing/checksums: https://www.sqlite.org/fileformat2.html#walformat
 use super::{Connection, StoreError};
+use backon::{BlockingRetryable, BlockingSleeper, ExponentialBuilder};
 use rustix::io::Errno;
 use rustix::process::{Flock, FlockOffsetType, FlockType, fcntl_getlk};
 use std::path::{Path, PathBuf};
@@ -25,15 +26,32 @@ const SQLITE_LOCK_LEN: u64 = 512;
 const SQLITE_SHM_WRITE_LOCK_START: u64 = 120;
 const SQLITE_SHM_WRITE_LOCK_LEN: u64 = 3;
 
-const INITIAL_RETRY_PAUSE: Duration = Duration::from_millis(2);
-const MAX_RETRY_PAUSE: Duration = Duration::from_millis(50);
-
 const ROLLBACK_PENDING_MESSAGE: &str =
     "rollback recovery is pending; inspect after the writing operation completes";
 const STATE_CHANGED_MESSAGE: &str = "state changed during inspection; retry the read";
 const INVALID_SNAPSHOT_MESSAGE: &str =
     "invalid SQLite/WAL snapshot; retry after the writer completes recovery";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotFile {
+    Main,
+    Wal,
+    Journal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LockTarget {
+    Main,
+    Shm,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotImage {
+    Empty,
+    Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LockProbe {
     /// Another process holds `F_WRLCK` in the probed byte range.
     ActiveWriter,
@@ -41,6 +59,31 @@ enum LockProbe {
     Unlocked,
     /// The probed file did not exist.
     Missing,
+}
+
+enum AttemptError {
+    Retryable(StoreError),
+    Terminal(StoreError),
+}
+
+impl AttemptError {
+    fn is_retryable(&self) -> bool {
+        matches!(self, Self::Retryable(_))
+    }
+
+    fn into_inner(self) -> StoreError {
+        match self {
+            Self::Retryable(err) | Self::Terminal(err) => err,
+        }
+    }
+}
+
+fn snapshot_backoff() -> ExponentialBuilder {
+    ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(2))
+        .with_max_delay(Duration::from_millis(50))
+        .without_max_times()
+        .with_total_delay(Some(super::BUSY_TIMEOUT))
 }
 
 pub(super) fn sidecar(path: &Path, suffix: &str) -> PathBuf {
@@ -102,14 +145,103 @@ fn open_memory_connection(store: &'static str, path: &Path) -> Result<Connection
         .map_err(&sql)?;
     Ok(conn)
 }
-fn sleep_before_retry(limit: &crate::process::Limit, pause: &mut Duration) -> bool {
-    let remaining = limit.remaining();
-    if remaining.is_zero() {
-        return false;
-    }
-    std::thread::sleep((*pause).min(remaining));
-    *pause = (*pause * 2).min(MAX_RETRY_PAUSE);
-    true
+fn acquire_image(
+    store: &'static str,
+    path: &Path,
+    backoff: ExponentialBuilder,
+    sleeper: impl BlockingSleeper,
+    mut read_file: impl FnMut(SnapshotFile) -> Result<Vec<u8>, StoreError>,
+    mut probe_lock: impl FnMut(LockTarget) -> Result<LockProbe, StoreError>,
+) -> Result<SnapshotImage, StoreError> {
+    let mut invalid_retries: u8 = 0;
+    let attempt = || -> Result<SnapshotImage, AttemptError> {
+        let mut ticket_3883_retried = false;
+        loop {
+            let main = read_file(SnapshotFile::Main).map_err(AttemptError::Terminal)?;
+            let wal = read_file(SnapshotFile::Wal).map_err(AttemptError::Terminal)?;
+            let rollback = read_file(SnapshotFile::Journal).map_err(AttemptError::Terminal)?;
+            if main != read_file(SnapshotFile::Main).map_err(AttemptError::Terminal)?
+                || wal != read_file(SnapshotFile::Wal).map_err(AttemptError::Terminal)?
+                || rollback != read_file(SnapshotFile::Journal).map_err(AttemptError::Terminal)?
+            {
+                invalid_retries = 0;
+                return Err(AttemptError::Retryable(StoreError::invalid(
+                    store,
+                    path,
+                    STATE_CHANGED_MESSAGE,
+                )));
+            }
+            if has_nonzero(&rollback) {
+                invalid_retries = 0;
+                match probe_lock(LockTarget::Main).map_err(AttemptError::Terminal)? {
+                    LockProbe::ActiveWriter | LockProbe::Missing => {
+                        return Err(AttemptError::Retryable(StoreError::invalid(
+                            store,
+                            path,
+                            ROLLBACK_PENDING_MESSAGE,
+                        )));
+                    }
+                    LockProbe::Unlocked => {
+                        // SQLite Ticket #3883: a writer may unlink or zero `-journal`
+                        // and release its lock between our read and `F_GETLK`, or a
+                        // new writer may start a fresh journal. Re-check `-journal`
+                        // before concluding an orphaned hot journal.
+                        let recheck =
+                            read_file(SnapshotFile::Journal).map_err(AttemptError::Terminal)?;
+                        if !has_nonzero(&recheck) || recheck != rollback {
+                            if !ticket_3883_retried {
+                                ticket_3883_retried = true;
+                                continue;
+                            }
+                            return Err(AttemptError::Retryable(StoreError::invalid(
+                                store,
+                                path,
+                                STATE_CHANGED_MESSAGE,
+                            )));
+                        }
+                        return Err(AttemptError::Terminal(StoreError::invalid(
+                            store,
+                            path,
+                            ROLLBACK_PENDING_MESSAGE,
+                        )));
+                    }
+                }
+            }
+            if main.is_empty() && wal.is_empty() && rollback.is_empty() {
+                return Ok(SnapshotImage::Empty);
+            }
+            match fold(store, path, main, &wal) {
+                Ok(image) => return Ok(SnapshotImage::Bytes(image)),
+                Err(err) => {
+                    let main_active = matches!(
+                        probe_lock(LockTarget::Main).map_err(AttemptError::Terminal)?,
+                        LockProbe::ActiveWriter | LockProbe::Missing
+                    );
+                    let wal_active = !main_active
+                        && matches!(
+                            probe_lock(LockTarget::Shm).map_err(AttemptError::Terminal)?,
+                            LockProbe::ActiveWriter
+                        );
+                    if main_active || wal_active {
+                        invalid_retries = 0;
+                        return Err(AttemptError::Retryable(err));
+                    }
+                    if invalid_retries == 0 {
+                        invalid_retries = 1;
+                        return Err(AttemptError::Retryable(err));
+                    }
+                    return Err(AttemptError::Terminal(err));
+                }
+            }
+        }
+    };
+
+    attempt
+        .retry(backoff)
+        .when(AttemptError::is_retryable)
+        .sleep(sleeper)
+        .call()
+        .map_err(AttemptError::into_inner)
 }
 /// The store at `path` as an in-memory image; `None` when this process has
 /// opened it through SQLite and reads it live instead.
@@ -120,87 +252,28 @@ fn copy(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
     let wal_path = sidecar(path, "-wal");
     let shm_path = sidecar(path, "-shm");
     let journal = sidecar(path, "-journal");
-    let limit = crate::process::Limit::start(super::BUSY_TIMEOUT);
-    let mut pause = INITIAL_RETRY_PAUSE;
-    let mut invalid_retries: u8 = 0;
-
-    loop {
-        let main = bytes(store, path)?;
-        let wal = bytes(store, &wal_path)?;
-        let rollback = bytes(store, &journal)?;
-        if main != bytes(store, path)?
-            || wal != bytes(store, &wal_path)?
-            || rollback != bytes(store, &journal)?
-        {
-            invalid_retries = 0;
-            if !sleep_before_retry(&limit, &mut pause) {
-                return Err(StoreError::invalid(store, path, STATE_CHANGED_MESSAGE));
-            }
-            continue;
-        }
-        if has_nonzero(&rollback) {
-            invalid_retries = 0;
-            match probe_write_lock(store, path, SQLITE_LOCK_START, SQLITE_LOCK_LEN)? {
-                LockProbe::ActiveWriter | LockProbe::Missing => {
-                    if !sleep_before_retry(&limit, &mut pause) {
-                        return Err(StoreError::invalid(store, path, ROLLBACK_PENDING_MESSAGE));
-                    }
-                    continue;
-                }
-                LockProbe::Unlocked => {
-                    // SQLite Ticket #3883: a writer may unlink or zero `-journal`
-                    // and release its lock between our read and `F_GETLK`, or a
-                    // new writer may start a fresh journal. Re-check `-journal`
-                    // before concluding an orphaned hot journal.
-                    let recheck = bytes(store, &journal)?;
-                    if !has_nonzero(&recheck) || recheck != rollback {
-                        if limit.remaining().is_zero() {
-                            return Err(StoreError::invalid(store, path, STATE_CHANGED_MESSAGE));
-                        }
-                        continue;
-                    }
-                    return Err(StoreError::invalid(store, path, ROLLBACK_PENDING_MESSAGE));
-                }
-            }
-        }
-        if main.is_empty() && wal.is_empty() && rollback.is_empty() {
-            return open_memory_connection(store, path);
-        }
-        let image = match fold(store, path, main, &wal) {
-            Ok(image) => image,
-            Err(err) => {
-                let main_active = matches!(
-                    probe_write_lock(store, path, SQLITE_LOCK_START, SQLITE_LOCK_LEN)?,
-                    LockProbe::ActiveWriter | LockProbe::Missing
-                );
-                let wal_active = !main_active
-                    && matches!(
-                        probe_write_lock(
-                            store,
-                            &shm_path,
-                            SQLITE_SHM_WRITE_LOCK_START,
-                            SQLITE_SHM_WRITE_LOCK_LEN,
-                        )?,
-                        LockProbe::ActiveWriter
-                    );
-                if main_active || wal_active {
-                    invalid_retries = 0;
-                    if !sleep_before_retry(&limit, &mut pause) {
-                        return Err(err);
-                    }
-                    continue;
-                }
-                if invalid_retries == 0 {
-                    invalid_retries = 1;
-                    if !sleep_before_retry(&limit, &mut pause) {
-                        return Err(err);
-                    }
-                    continue;
-                }
-                return Err(err);
-            }
-        };
-        let mut conn = open_memory_connection(store, path)?;
+    let image = acquire_image(
+        store,
+        path,
+        snapshot_backoff(),
+        std::thread::sleep,
+        |file| match file {
+            SnapshotFile::Main => bytes(store, path),
+            SnapshotFile::Wal => bytes(store, &wal_path),
+            SnapshotFile::Journal => bytes(store, &journal),
+        },
+        |target| match target {
+            LockTarget::Main => probe_write_lock(store, path, SQLITE_LOCK_START, SQLITE_LOCK_LEN),
+            LockTarget::Shm => probe_write_lock(
+                store,
+                &shm_path,
+                SQLITE_SHM_WRITE_LOCK_START,
+                SQLITE_SHM_WRITE_LOCK_LEN,
+            ),
+        },
+    )?;
+    let mut conn = open_memory_connection(store, path)?;
+    if let SnapshotImage::Bytes(image) = image {
         conn.deserialize_read_exact(
             super::rusqlite::MAIN_DB,
             image.as_slice(),
@@ -208,8 +281,8 @@ fn copy(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
             false,
         )
         .map_err(StoreError::sqlite(store, path))?;
-        return Ok(conn);
     }
+    Ok(conn)
 }
 fn be(bytes: &[u8]) -> u32 {
     u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
