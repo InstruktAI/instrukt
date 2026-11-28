@@ -43,6 +43,7 @@ bundles:
     - {action: eval-read, scope: any}
     - {action: repository-read, scope: any}
     - {action: installation-read, scope: any}
+    - {action: safety-check, scope: any}
   worker:
     - {action: artifact-write, scope: own}
     - {action: stamp, scope: own}
@@ -110,6 +111,7 @@ bundles:
     - {action: mcp-access, scope: any}
     - {action: company-reply, scope: any}
     - {action: attention-raise, scope: any}
+    - {action: safety-check, scope: any}
 profiles:
   codex:
     instance: codex

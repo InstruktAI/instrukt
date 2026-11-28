@@ -24,6 +24,7 @@ actions! {
     Publication => "publication", CodeCheck => "code-check", EvalRead => "eval-read", EventsRead => "events-read",
     InstallationRead => "installation-read", InstallationWrite => "installation-write", RunnerExecute => "runner-execute",
     McpAccess => "mcp-access", CompanyReply => "company-reply", AttentionRaise => "attention-raise",
+    SafetyCheck => "safety-check",
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

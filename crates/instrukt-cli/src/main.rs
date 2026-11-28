@@ -26,8 +26,8 @@ use std::sync::OnceLock;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, backup, blueprint, bugs, company, config, docs, eval, events, history, mcp, repository,
-    review, runner, secrets, specs, sync, todo, webhooks,
+    agents, backup, blueprint, bugs, company, config, docs, eval, events, history, is_safe, mcp,
+    repository, review, runner, secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -96,6 +96,8 @@ enum Command {
     Install(runner::InstallArgs),
     /// Encrypted offsite backup, generation listing and guarded restore of this instrukt home.
     Backup(backup::BackupArgs),
+    /// Check whether untrusted text is safe (free of prompt injection) before reading it.
+    IsSafe(is_safe::IsSafeArgs),
 }
 
 /// The log source of this run, once tracing writes to it: the panic hook
@@ -208,7 +210,7 @@ fn run() -> ExitCode {
         Ok(ctx)
     } else if deferred_patch
         || company_init
-        || matches!(&cli.command, Command::Backup(_))
+        || matches!(&cli.command, Command::Backup(_) | Command::IsSafe(_))
         || authorization::strict_inspection(&matches)
         || authorization::untraced(&matches)
     {
@@ -229,7 +231,10 @@ fn run() -> ExitCode {
     };
     if authorization::read_only(&matches)
         && !authorization::repository_local(&matches)
-        && !matches!(&cli.command, Command::Install(_) | Command::Backup(_))
+        && !matches!(
+            &cli.command,
+            Command::Install(_) | Command::Backup(_) | Command::IsSafe(_)
+        )
     {
         let notice_result = (|| -> anyhow::Result<()> {
             let mut layers = vec![instrukt_core::config::Layer::Global];
@@ -329,6 +334,7 @@ fn run() -> ExitCode {
         Command::Sessions(args) => runner::run_sessions(args, &mut ctx),
         Command::Install(args) => runner::run_install(args, &mut ctx),
         Command::Backup(args) => backup::run(args, &mut ctx),
+        Command::IsSafe(args) => is_safe::run(args, &mut ctx),
     };
     match outcome.and_then(|code| ctx.out.flush().map(|()| code)) {
         Ok(code) => code,
@@ -461,6 +467,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Sessions(_) => "sessions",
         Command::Install(_) => "install",
         Command::Backup(_) => "backup",
+        Command::IsSafe(_) => "is-safe",
     };
     // The logger creates its directory and file itself: under a fence, both
     // are admitted where the library names them, before it does.
@@ -482,8 +489,12 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         "instrukt_connector",
         "instrukt_connector_slack",
         "instrukt_outside",
+        "instrukt_screening",
     ];
-    let suppress_third_party = matches!(command, Command::Mcp(_) | Command::Backup(_));
+    let suppress_third_party = matches!(
+        command,
+        Command::Mcp(_) | Command::Backup(_) | Command::IsSafe(_)
+    );
     let builder = || {
         APP_TARGETS.iter().fold(
             instrukt_ai_logging::Builder::new("instrukt").source(source),
