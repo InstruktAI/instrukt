@@ -313,12 +313,74 @@ fn keeps_write_ahead_log(path: &Path, wal: &Path) -> bool {
 pub enum FsError {
     #[error("cannot write {path}: {source}")]
     Write { path: PathBuf, source: io::Error },
+    #[error("cannot read {path}: {source}")]
+    Read { path: PathBuf, source: io::Error },
+    #[error("{} is a symbolic link or escapes its owning root", path.display())]
+    Unconfined { path: PathBuf },
     #[error("cannot lock {path}: {source}")]
     Lock { path: PathBuf, source: io::Error },
     #[error("{path} is held by another instrukt process; gave up after {} s", crate::process::whole_seconds(*waited))]
     LockTimeout { path: PathBuf, waited: Duration },
     #[error("{path} has no parent directory")]
     NoParent { path: PathBuf },
+}
+
+/// The path `root/rel` with `root` resolved and every component of `rel` —
+/// including the leaf — confined below `root`.
+///
+/// Refused when `root` is a dangling symbolic link, when `rel` contains any
+/// non-normal component (`.`, `..`, root or prefix), or when any existing
+/// component below `root` (including the leaf itself) is a symbolic link.
+/// A `root` that itself resolves through a symbolic link to an existing
+/// directory (for example a symlinked `INSTRUKT_HOME` or `state/`) is
+/// accepted once resolved.
+pub fn confined(root: &Path, rel: &Path) -> Result<PathBuf, FsError> {
+    let base = match root.canonicalize() {
+        Ok(base) => base,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            match std::fs::symlink_metadata(root) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(FsError::Unconfined {
+                        path: root.to_path_buf(),
+                    });
+                }
+                Ok(_) => root.to_path_buf(),
+                Err(meta_err) if meta_err.kind() == io::ErrorKind::NotFound => root.to_path_buf(),
+                Err(source) => {
+                    return Err(FsError::Read {
+                        path: root.to_path_buf(),
+                        source,
+                    });
+                }
+            }
+        }
+        Err(source) => {
+            return Err(FsError::Read {
+                path: root.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let mut path = base;
+    let mut exists = true;
+    for component in rel.components() {
+        let std::path::Component::Normal(part) = component else {
+            return Err(FsError::Unconfined {
+                path: root.join(rel),
+            });
+        };
+        path.push(part);
+        if !exists {
+            continue;
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => return Err(FsError::Unconfined { path }),
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => exists = false,
+            Err(source) => return Err(FsError::Read { path, source }),
+        }
+    }
+    Ok(path)
 }
 
 /// Writes `contents` to `path` atomically: a temporary file in the same
@@ -557,5 +619,67 @@ mod tests {
         );
         drop(held);
         assert!(SharedLockGuard::acquire(&lock, Duration::from_secs(5)).is_ok());
+    }
+
+    #[test]
+    fn confined_enforces_root_resolution_and_leaf_inclusive_symlink_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let real_root = dir.path().join("real-root");
+        std::fs::create_dir_all(real_root.join("sub")).unwrap();
+        std::fs::write(real_root.join("sub/file.txt"), b"ok").unwrap();
+        let canonical_root = real_root.canonicalize().unwrap();
+
+        // Normal existing and absent paths succeed under real root.
+        assert_eq!(
+            confined(&real_root, Path::new("sub/file.txt")).unwrap(),
+            canonical_root.join("sub/file.txt")
+        );
+        assert_eq!(
+            confined(&real_root, Path::new("sub/new/child.txt")).unwrap(),
+            canonical_root.join("sub/new/child.txt")
+        );
+
+        // Resolved symlinked root (e.g. symlinked INSTRUKT_HOME or state/) is accepted.
+        let linked_root = dir.path().join("linked-root");
+        std::os::unix::fs::symlink(&real_root, &linked_root).unwrap();
+        assert_eq!(
+            confined(&linked_root, Path::new("sub/file.txt")).unwrap(),
+            canonical_root.join("sub/file.txt")
+        );
+
+        // Dangling symlink root is refused.
+        let dangling_root = dir.path().join("dangling-root");
+        std::os::unix::fs::symlink(outside.path().join("missing"), &dangling_root).unwrap();
+        assert!(matches!(
+            confined(&dangling_root, Path::new("file.txt")),
+            Err(FsError::Unconfined { .. })
+        ));
+
+        // Non-normal components (`..`, absolute) are refused.
+        assert!(matches!(
+            confined(&real_root, Path::new("../escape")),
+            Err(FsError::Unconfined { .. })
+        ));
+        assert!(matches!(
+            confined(&real_root, Path::new("/etc/passwd")),
+            Err(FsError::Unconfined { .. })
+        ));
+
+        // Intermediate symlink is refused.
+        std::os::unix::fs::symlink(outside.path(), real_root.join("escape-dir")).unwrap();
+        assert!(matches!(
+            confined(&real_root, Path::new("escape-dir/file.txt")),
+            Err(FsError::Unconfined { .. })
+        ));
+
+        // Leaf symlink is refused.
+        let target = outside.path().join("secret.txt");
+        std::fs::write(&target, b"secret").unwrap();
+        std::os::unix::fs::symlink(&target, real_root.join("sub/leaf-link")).unwrap();
+        assert!(matches!(
+            confined(&real_root, Path::new("sub/leaf-link")),
+            Err(FsError::Unconfined { .. })
+        ));
     }
 }

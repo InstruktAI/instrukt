@@ -254,9 +254,11 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             serde_json::json!({"error": error.to_string(), "runner": runner, "projects": [], "findings": []})
         }
     };
+    let backup = crate::backup::events_status_json(request.home, request.now);
     if candidate.is_err() {
-        // Nothing read from the configuration can be shown: what depends on
-        // it is absent, and the admission error says why.
+        // Nothing read from the full configuration can be shown: what depends
+        // on it is absent, while local backup standing and the admission error
+        // still surface.
         return Ok(merge_status(
             status,
             serde_json::json!({
@@ -269,6 +271,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
                 "admission": admission,
                 "notification_configured": notification_configured,
                 "runner_service": null,
+                "backup": backup,
             }),
         ));
     }
@@ -324,6 +327,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             "admission": admission,
             "notification_configured": notification_configured,
             "runner_service": runner_service,
+            "backup": backup,
         }),
     ))
 }

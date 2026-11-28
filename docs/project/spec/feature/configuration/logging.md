@@ -41,10 +41,12 @@ instrukt logs through the shared InstruktAI logging library, following its
   `INSTRUKT_THIRD_PARTY_LOGGERS`, `INSTRUKT_MUTED_LOGGERS`); the default level
   is the contract's production level. The `INSTRUKT_` level variables behave
   as the InstruktAI logging contract defines them, implemented by the crate;
-  instrukt adds no validation of its own. One command departs from them:
-  `instrukt mcp` writes no third-party record below WARNING and gives no
-  third-party logger a spotlight, whatever these variables say
+  instrukt adds no validation of its own. Two commands depart from them:
+  `instrukt mcp` and `instrukt backup` write no third-party record below
+  WARNING and give no third-party logger a spotlight, whatever these variables
+  say, in both file logging and stderr fallback
   (`project/instrukt/spec/feature/runner/mcp-access`,
+  `project/instrukt/spec/feature/runner/home-backup`,
   `sdlc/policy/security-awareness`).
 - instrukt initialises logging before the command runs. When the file writer
   cannot open its destination, instrukt switches diagnostics to standard error,

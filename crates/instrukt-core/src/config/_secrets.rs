@@ -59,6 +59,11 @@ impl SecretSource {
             SecretSource::Company(name) => format!("secrets-company-{name}.lock"),
         }
     }
+
+    /// The lock file path serializing writes to this secrets file under `home`.
+    pub fn lock_path(&self, home: &Home) -> PathBuf {
+        home.locks_dir().join(self.lock())
+    }
 }
 
 fn error(source: &SecretSource, reference: &str, cause: &str) -> ConfigError {

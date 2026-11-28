@@ -1,8 +1,10 @@
 ---
 source: crates/instrukt-cli/tests/cases/harness.rs
+assertion_line: 40
 expression: help
 ---
-Converge/check module infrastructure across adopted projects; repair with the same command
+Converge/check machine backup timer and module infrastructure across adopted projects; repair with
+the same command
 
 Usage: instrukt install [OPTIONS]
 
@@ -10,8 +12,8 @@ Options:
       --check            Compare desired and actual infrastructure without changing packages,
                          services or data
       --module <MODULE>  Limit convergence to an enabled module's dependencies. Full demand still
-                         protects shared resources [possible values: todos, events, history,
-                         blueprint, conversations]
+                         protects shared resources and leaves the global home backup timer untouched
+                         [possible values: todos, events, history, blueprint, conversations]
       --json             Render per-resource results and findings as JSON
   -h, --help             Print help
   -V, --version          Print version

@@ -223,7 +223,7 @@ pub struct InstallArgs {
     /// Compare desired and actual infrastructure without changing packages, services or data.
     #[arg(long)]
     check: bool,
-    /// Limit convergence to an enabled module's dependencies. Full demand still protects shared resources.
+    /// Limit convergence to an enabled module's dependencies. Full demand still protects shared resources and leaves the global home backup timer untouched.
     #[arg(long, value_parser = ["todos", "events", "history", "blueprint", "conversations"])]
     module: Option<String>,
     /// Render per-resource results and findings as JSON.

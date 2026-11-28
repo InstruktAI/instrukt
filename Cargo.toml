@@ -64,7 +64,15 @@ notify = { version = "=8.2.2", default-features = false, features = ["macos_kque
 rustix = { version = "1", features = ["fs", "process"] }
 nix = { version = "0.31", default-features = false, features = ["fs", "poll"] }
 signal-hook = "0.3"
-rusqlite = { version = "0.41", features = ["bundled", "serialize", "fallible_uint"] }
+rusqlite = { version = "0.41", features = ["bundled", "serialize", "fallible_uint", "backup"] }
+age = "0.11"
+aws-credential-types = "1"
+aws-sdk-s3 = { version = "1", default-features = false, features = ["http-1x", "rt-tokio", "behavior-version-latest"] }
+aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-ring"] }
+rpassword = "7"
+tar = "0.4"
+zeroize = "1"
+zstd = "0.14"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

@@ -103,6 +103,136 @@ fn a_stopped_execution_is_visible_without_a_notification_command() {
         serde_json::json!([])
     );
     check_configured_notification();
+    check_backup_staleness_notification();
+}
+
+fn check_backup_staleness_notification() {
+    let mut project = Tracked::new(true);
+    let home = project.env.instrukt_home();
+    let recipient = age::x25519::Identity::generate().to_public().to_string();
+    let path = home.join("instrukt.yaml");
+    let mut settings: serde_yaml_ng::Value =
+        serde_yaml_ng::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    settings["schema_version"] =
+        serde_yaml_ng::Value::from(instrukt_core::config::GLOBAL_SCHEMA_VERSION);
+    settings["backup"] = serde_yaml_ng::from_str(&format!(
+        "endpoint: https://s3.example.test\nregion: auto\nbucket: bkt\naccess_key_id: '${{BK_KEY}}'\nsecret_access_key: '${{BK_SECRET}}'\nage_recipient: {recipient}\n"
+    ))
+    .unwrap();
+    std::fs::write(&path, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+    std::fs::write(home.join("secrets.env"), "BK_KEY=ak\nBK_SECRET=sk\n").unwrap();
+    std::fs::create_dir_all(home.join("state")).unwrap();
+    let mid = "22223333444455556666777788889999";
+    std::fs::write(home.join("state/machine-id"), format!("{mid}\n")).unwrap();
+    let state_file = home.join("state/backup-state.json");
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-06T03:00:00Z","last_outcome":"ok","last_success_at":"2030-01-06T03:00:00Z","last_generation":"g1","last_error":null}"#,
+    )
+    .unwrap();
+
+    project.tick_at("2030-01-07T15:00:00Z");
+    assert!(project.rt.notifications().is_empty());
+
+    project.tick_at("2030-01-07T15:00:01Z");
+    project.tick_at("2030-01-07T15:05:00Z");
+    assert_eq!(project.rt.notifications(), [format!("backup:stale:{mid}")]);
+
+    project.env.set_env("INSTRUKT_NOW", "2030-01-07T15:05:00Z");
+    let out = project
+        .env
+        .run(project.repo.path(), ["events", "status", "--json"])
+        .success();
+    let report: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    insta::assert_snapshot!(
+        serde_json::to_string_pretty(&report["backup"]).unwrap(),
+        @r#"
+    {
+      "standing": "stale",
+      "admitted": true,
+      "stale": true,
+      "last_attempt_at": "2030-01-06T03:00:00Z",
+      "last_success_at": "2030-01-06T03:00:00Z",
+      "last_generation": "g1",
+      "last_error": null,
+      "repair_door": "run `instrukt backup run` to publish a fresh generation, and run `instrukt install --check` to verify the daily backup timer"
+    }
+    "#
+    );
+
+    // Failed backup with an admission error on the machine layer still surfaces
+    // the backup failure alongside its repair door without exposing secrets.
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-07T15:05:00Z","last_outcome":"failed","last_success_at":"2030-01-06T03:00:00Z","last_generation":"g1","last_error":"upload failed"}"#,
+    )
+    .unwrap();
+    let saved_global = std::fs::read_to_string(&path).unwrap();
+    let mut broken = saved_global.clone();
+    broken.push_str("unknown_top_level_key: true\n");
+    std::fs::write(&path, &broken).unwrap();
+    let out_err = project
+        .env
+        .run(project.repo.path(), ["events", "status", "--json"])
+        .success();
+    let report_err: serde_json::Value =
+        serde_json::from_slice(&out_err.get_output().stdout).unwrap();
+    assert!(report_err["admission"]["error"].is_string());
+    assert!(
+        !serde_json::to_string(&report_err["backup"])
+            .unwrap()
+            .contains("BK_SECRET")
+    );
+    assert!(
+        !serde_json::to_string(&report_err["backup"])
+            .unwrap()
+            .contains("sk")
+    );
+    insta::assert_snapshot!(
+        serde_json::to_string_pretty(&report_err["backup"]).unwrap(),
+        @r#"
+    {
+      "standing": "failed",
+      "admitted": true,
+      "stale": true,
+      "last_attempt_at": "2030-01-07T15:05:00Z",
+      "last_success_at": "2030-01-06T03:00:00Z",
+      "last_generation": "g1",
+      "last_error": "upload failed",
+      "repair_door": "resolve the error in `last_error` and run `instrukt backup run` to publish a fresh generation; run `instrukt install --check` if scheduled runs are failing"
+    }
+    "#
+    );
+    std::fs::write(&path, saved_global).unwrap();
+
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-07T16:00:00Z","last_outcome":"ok","last_success_at":"2030-01-07T16:00:00Z","last_generation":"g2","last_error":null}"#,
+    )
+    .unwrap();
+    project.tick_at("2030-01-07T16:01:00Z");
+    assert!(!home.join("state/backup-staleness-notified.json").exists());
+    project.env.set_env("INSTRUKT_NOW", "2030-01-07T16:01:00Z");
+    let out_ok = project
+        .env
+        .run(project.repo.path(), ["events", "status", "--json"])
+        .success();
+    let report_ok: serde_json::Value = serde_json::from_slice(&out_ok.get_output().stdout).unwrap();
+    insta::assert_snapshot!(
+        serde_json::to_string_pretty(&report_ok["backup"]).unwrap(),
+        @r#"
+    {
+      "standing": "ok",
+      "admitted": true,
+      "stale": false,
+      "last_attempt_at": "2030-01-07T16:00:00Z",
+      "last_success_at": "2030-01-07T16:00:00Z",
+      "last_generation": "g2",
+      "last_error": null,
+      "repair_door": null
+    }
+    "#
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3

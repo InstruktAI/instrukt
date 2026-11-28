@@ -34,6 +34,7 @@
 
 pub mod agents;
 pub mod anomaly;
+pub mod backup;
 pub mod ci;
 pub mod computer_fleet;
 pub mod consumers;

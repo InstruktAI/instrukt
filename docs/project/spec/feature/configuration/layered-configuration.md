@@ -112,12 +112,65 @@ output is removed without an admitted declaration; the release of a delivered
 todo's worktree does not depend on it
 (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
+### Home backup configuration
+
+`backup` is allowed in the global layer only; a project layer or company home
+never configures machine backup (`project/instrukt/spec/feature/runner/home-backup`).
+When absent, home backup is unconfigured and creates no scheduling or alerting
+demand.
+
+When present, `backup` declares:
+
+- **Required:**
+  - `endpoint` — S3-compatible endpoint URL: an `https` URL (or loopback
+    `http` for local verification, as in
+    `project/instrukt/spec/feature/runner/mcp-access`) with no embedded
+    credentials or userinfo (`sdlc/policy/security-awareness`);
+  - `region` — non-empty S3 region name;
+  - `bucket` — non-empty target bucket name;
+  - `access_key_id` and `secret_access_key` — exact `${NAME}` secret references
+    resolved exclusively from the selected home's protected `secrets.env`
+    (`project/instrukt/spec/feature/configuration/owned-files`); literal
+    credentials are findings and expanded values are never disclosed in reads
+    or diagnostics;
+  - `age_recipient` — valid public `age` recipient string for client-side
+    encryption.
+- **Optional:**
+  - `prefix` — optional key prefix (no path-traversal segments) under which
+    each computer stores its machine-ID namespace; omitted stores
+    `<machine-id>/...` at the bucket root;
+  - `keep` — positive integer generation retention count (default `14`);
+  - `time` — daily local schedule time in `HH:MM` 24-hour form (default
+    declared by the global schema).
+
+A `backup` declaration in a project layer or company home, a missing required
+field, an invalid `endpoint`, `region`, `bucket`, or `prefix`, a literal
+credential instead of a `${NAME}` reference, a missing, blank, unreadable, or
+insufficiently protected secret value for `access_key_id` or
+`secret_access_key` in `~/.instrukt/secrets.env` (naming the key, reference,
+and `instrukt secrets set` door without disclosing values), an invalid `age`
+recipient, an invalid schedule time, a non-positive retention count, or an
+unknown subkey is a validation finding at `backup` naming the offending key
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where configuration enters). `config patch` refuses a write that introduces such a
+finding; `config validate --global`, `config validate`, and
+`config validate --company <name>` report it in their respective documents
+without changing anything.
+
+An invalid `backup` declaration in a loaded global layer withholds only home
+backup admission on that computer: backup commands refuse with the finding and
+its configuration door, installation inspection reports the withheld backup
+timer without withdrawing an existing owned unit
+(`project/instrukt/spec/feature/runner/module-installation`), and every other
+capability the global layer admits runs unchanged.
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
 | `agents.<name>.git_author` | global only | commit composition |
+| `backup` (required `endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`, `age_recipient`; optional `prefix`, `keep`, `time`) | global only | runner home backup |
 | `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
 | `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
 | `events.watch: [{remote, ref}]` | project only | runner |
@@ -431,7 +484,8 @@ file, the reason and `instrukt config validate --global`; that command fails
 with the file's own problem and where it is. A layer that loads is never
 judged again by the commands that read it: its validation findings, an
 unknown key among them, are `instrukt config validate`'s, and stop no other
-command.
+command, except where a feature's own admission-withholding rule applies (such
+as an invalid `backup` declaration withholding only home backup).
 
 ### Schema versions and migration
 
@@ -540,6 +594,7 @@ And the configuration is unchanged
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
+| `backup` | global-only mapping with required `endpoint` (`https` URL, or loopback `http`, without credentials), `region`, `bucket`, `access_key_id` and `secret_access_key` (`${NAME}` references resolving to non-blank values in `~/.instrukt/secrets.env`), `age_recipient` (public `age` recipient); optional `prefix`, `keep` (positive integer), `time` (`HH:MM` 24-hour local time) | absent (unconfigured); when present, `keep` defaults to `14`, `prefix` defaults to empty, and `time` follows the published global schema default (`instrukt config schema --global`). |
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
@@ -590,6 +645,16 @@ Then the declaration is accepted
 But when the declaration names a location outside the project's checkout
 Then validation reports that entry
 And the project is not admitted for reclaiming that output on the computer
+```
+
+### UC-CL10: Configure machine home backup globally with protected credentials
+
+```gherkin
+Given an operator configures encrypted offsite home backup in the machine's global configuration with a secure credential-free endpoint, secret references whose non-blank values exist in the machine's protected secrets file, and a valid public encryption recipient
+When the operator validates or writes the global configuration
+Then the backup declaration is accepted and secret values remain undisclosed
+But when a project configuration or company home declares home backup, or the global declaration uses an insecure or credential-bearing endpoint, embeds literal credentials, references missing or blank secrets, or supplies an invalid recipient, schedule time, bucket, region, prefix or retention count
+Then validation reports the offending setting and configuration writes refuse it
 ```
 
 ## Known caveats

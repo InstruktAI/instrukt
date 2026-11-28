@@ -17,8 +17,14 @@ use crate::state::{self, StateError};
 /// The launchd label and systemd unit stem of the default home's wake-up.
 pub const LABEL: &str = "ai.instrukt.tick";
 const SYSTEMD_UNIT: &str = "instrukt-tick";
-/// Marks the default home's line in a crontab.
+/// Marks the default home's wake-up line in a crontab.
 pub(crate) const CRON_MARKER: &str = "# instrukt-tick";
+
+/// The launchd label, systemd unit stem, and crontab marker of the default
+/// home's daily encrypted backup timer.
+pub const BACKUP_LABEL: &str = "ai.instrukt.backup";
+pub(crate) const BACKUP_SYSTEMD_UNIT: &str = "instrukt-backup";
+pub(crate) const BACKUP_CRON_MARKER: &str = "# instrukt-backup";
 
 /// What a home other than `~/.instrukt` adds to instrukt's service names:
 /// the start of its canonical path's digest. `None` for the default home,
@@ -62,6 +68,29 @@ pub(crate) fn label(home: &instrukt_core::home::Home) -> String {
 /// The wake-up's systemd timer for `home`.
 pub(crate) fn timer(home: &instrukt_core::home::Home) -> String {
     format!("{}.timer", systemd_stem(SYSTEMD_UNIT, home))
+}
+
+/// The daily backup timer's launchd label for `home`.
+pub(crate) fn backup_label(home: &instrukt_core::home::Home) -> String {
+    launchd_label(BACKUP_LABEL, home)
+}
+
+/// The daily backup timer's systemd unit stem for `home`.
+pub(crate) fn backup_systemd_stem(home: &instrukt_core::home::Home) -> String {
+    systemd_stem(BACKUP_SYSTEMD_UNIT, home)
+}
+
+/// The daily backup timer's systemd timer unit name for `home`.
+pub(crate) fn backup_timer(home: &instrukt_core::home::Home) -> String {
+    format!("{}.timer", backup_systemd_stem(home))
+}
+
+/// The marker of `home`'s daily backup line in a crontab.
+pub(crate) fn backup_cron_marker(home: &instrukt_core::home::Home) -> String {
+    home_suffix(home).map_or_else(
+        || BACKUP_CRON_MARKER.to_owned(),
+        |suffix| format!("{BACKUP_CRON_MARKER}-{suffix}"),
+    )
 }
 
 /// How long the scheduler's command may take.
@@ -331,36 +360,95 @@ pub fn registration_files(scheduler: Scheduler, wake: &WakeUp<'_>) -> Vec<Regist
     files
 }
 
+/// Replaces any line in `current` ending with `marker` with `line`, keeping
+/// all other lines intact.
+pub(crate) fn crontab_with_marked_line(current: &str, marker: &str, line: &str) -> String {
+    let mut lines: Vec<String> = current
+        .lines()
+        .filter(|existing| !existing.trim_end().ends_with(marker))
+        .map(str::to_owned)
+        .collect();
+    lines.push(line.to_owned());
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text
+}
+
+/// Removes any line in `current` ending with `marker`, keeping all other lines
+/// intact.
+pub(crate) fn remove_marked_line(current: &str, marker: &str) -> String {
+    let kept: Vec<&str> = current
+        .lines()
+        .filter(|existing| !existing.trim_end().ends_with(marker))
+        .collect();
+    let mut text = kept.join("\n");
+    text.push('\n');
+    text
+}
+
+/// Registers one marked crontab line, preserving every other line in the table.
+pub(crate) fn register_crontab_line(
+    file: Option<&Path>,
+    marker: &str,
+    line: &str,
+) -> Result<(), InstallError> {
+    let current = read_crontab(file)?;
+    let updated = crontab_with_marked_line(&current, marker, line);
+    write_crontab(file, &updated)
+}
+
+/// Escapes `%` as `\%` for Vixie/BSD cron, where unescaped `%` terminates the
+/// command line and sends subsequent bytes as stdin.
+pub(crate) fn escape_crontab_percent(text: &str) -> String {
+    text.replace('%', "\\%")
+}
+
+/// Rejects control characters that could inject lines or split scheduler
+/// definitions (`\n`, `\r`, `\0`).
+pub(crate) fn validate_no_control_chars(label: &str, value: &str) -> Result<(), InstallError> {
+    if value.contains(['\n', '\r', '\0']) {
+        return Err(InstallError::Location {
+            setting: label.to_owned(),
+            reason: "must not contain newline, carriage return, or NUL bytes".into(),
+        });
+    }
+    Ok(())
+}
+
 /// The crontab with this home's line replaced by one for `wake`. Lines
 /// marked for another home, and every unmarked line, are kept.
 pub fn crontab_with_wakeup(current: &str, wake: &WakeUp<'_>) -> String {
     let marker = cron_marker(wake.home);
-    let mut lines: Vec<String> = current
-        .lines()
-        .filter(|line| !line.trim_end().ends_with(&marker))
-        .map(str::to_owned)
-        .collect();
-    lines.push(format!(
+    let mut line = format!(
         "* * * * * PATH={} HOME={} INSTRUKT_HOME={} INSTRUKT_DEVELOPMENT={} {} tick {marker}",
-        crate::process::shell_quote(wake.path_env),
-        crate::process::shell_quote(&wake.home.machine_user_home().display().to_string()),
-        crate::process::shell_quote(&wake.home.root().display().to_string()),
+        escape_crontab_percent(&crate::process::shell_quote(wake.path_env)),
+        escape_crontab_percent(&crate::process::shell_quote(
+            &wake.home.machine_user_home().display().to_string()
+        )),
+        escape_crontab_percent(&crate::process::shell_quote(
+            &wake.home.root().display().to_string()
+        )),
         u8::from(wake.home.is_development()),
-        crate::process::shell_quote(&wake.executable.display().to_string())
-    ));
-    if let Some(line) = lines.last_mut() {
+        escape_crontab_percent(&crate::process::shell_quote(
+            &wake.executable.display().to_string()
+        ))
+    );
+    if !wake.locations.environment.is_empty() {
         let extra = wake
             .locations
             .environment
             .iter()
-            .map(|(k, v)| format!("{k}={}", crate::process::shell_quote(v)))
+            .map(|(k, v)| {
+                format!(
+                    "{k}={}",
+                    escape_crontab_percent(&crate::process::shell_quote(v))
+                )
+            })
             .collect::<Vec<_>>()
             .join(" ");
-        *line = line.replacen("* * * * * ", &format!("* * * * * {extra} "), 1);
+        line = line.replacen("* * * * * ", &format!("* * * * * {extra} "), 1);
     }
-    let mut text = lines.join("\n");
-    text.push('\n');
-    text
+    crontab_with_marked_line(current, &marker, &line)
 }
 
 /// Registers the wake-up with `scheduler`.
@@ -592,15 +680,19 @@ fn plist(wake: &WakeUp<'_>) -> String {
     )
 }
 
-fn xml_escape(text: &str) -> String {
+pub(crate) fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
 
-fn systemd_quote(text: &str) -> String {
+pub(crate) fn systemd_quote(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+pub(crate) fn systemd_escape_percent(text: &str) -> String {
+    text.replace('%', "%%")
 }
 
 fn on_path(program: &str, path_env: Option<&str>) -> bool {

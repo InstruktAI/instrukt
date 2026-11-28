@@ -233,6 +233,9 @@ pub fn tick(
     // tick that finds it taken still keeps its membership entry and answers
     // waiting evaluation requests within their life.
     crate::computer_fleet::tick_step(cx.home, admitted.global(), cx.wiring, clock());
+    // Evaluate local home backup staleness under the runner lock independently
+    // of event-platform or wake failures.
+    crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, now);
     let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
         tracing::info!(event = "tick_runner_busy");
         return Ok(TickOutcome::Busy);
@@ -473,6 +476,9 @@ pub fn run(
             connections.check();
         }
         let admitted = current.get();
+        // Evaluate local home backup staleness under the runner lock on every
+        // wake independently of RuntimeInvocation::acquire.
+        crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, woke_at);
         if let Some(readiness) = &readiness {
             readiness.wake();
         }

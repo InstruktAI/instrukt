@@ -21,6 +21,7 @@
 //! protection, WAL, migration, refusal and snapshot reading; [`StateDb`] and
 //! [`StateRead`] are the state database's users of it.
 
+mod _backup;
 mod _schema;
 mod _snapshot;
 
@@ -29,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+pub use _backup::{integrity_check, online_backup, quick_check};
 pub use _schema::Migration;
 pub use rusqlite;
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};

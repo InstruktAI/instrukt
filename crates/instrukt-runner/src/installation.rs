@@ -2,6 +2,7 @@
 //! shares the demand model and executes no infrastructure mutation steps.
 //! instrukt's services are found by the names this home gives them; nothing
 //! records what installation wrote.
+mod _backup;
 mod _demand;
 mod _event_status;
 pub(crate) mod _launch;
@@ -52,6 +53,8 @@ fn inspection_error(resource: &'static str, error: impl std::fmt::Display) -> In
 pub enum ResourceKind {
     #[serde(rename = "wake-up")]
     WakeUp,
+    #[serde(rename = "backup timer")]
+    BackupTimer,
     #[serde(rename = "redis")]
     Redis,
     #[serde(rename = "receiver")]
@@ -69,6 +72,7 @@ impl ResourceKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::WakeUp => "wake-up",
+            Self::BackupTimer => "backup timer",
             Self::Redis => "redis",
             Self::Receiver => "receiver",
             Self::LocalRedis => "local Redis",
@@ -296,6 +300,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     if request.module.is_none() && !request.conversations {
         admission_findings(request, &mut report);
+        _backup::converge(request, &mut report);
     }
     if request.module.is_none() {
         runner_service(request, &demand, &mut report);
@@ -470,11 +475,12 @@ fn runtime_projects(request: &Request<'_>, demand: &Demand, report: &mut Report)
 
 /// The admission findings that withhold a responsibility on this computer
 /// though the rest of the layer is admitted: event responses switched on
-/// without the event transport they are carried on (`modules.events`), and
-/// automatic review switched on without what it needs
-/// (`review.automatic`), and a declaration of regenerable output that is not
-/// admitted, which withholds worktree reclamation for its project. On a
-/// check, the two identities' readiness is asked for every project admitted
+/// without the event transport they are carried on (`modules.events`),
+/// automatic review switched on without what it needs (`review.automatic`),
+/// a declaration of regenerable output that is not admitted (which withholds
+/// worktree reclamation for its project), and thread retention or global home
+/// backup withholding (`backup` is reported directly by [`_backup::converge`]). On
+/// a check, the two identities' readiness is asked for every project admitted
 /// for automatic review.
 fn admission_findings(request: &Request<'_>, report: &mut Report) {
     use instrukt_core::config::FindingKind;
@@ -571,8 +577,8 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
 
 /// On Linux every owned unit is a systemd user unit that has to run without
 /// a login; one finding names those that need the user's service manager to
-/// start at boot when it does not. A wake-up registered with cron needs no
-/// such setting, and instrukt never changes it.
+/// start at boot when it does not. A wake-up or daily backup timer registered
+/// with cron needs no such setting, and instrukt never changes it.
 fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &mut Report) {
     if request.scheduler != Scheduler::SystemdUser {
         return;
@@ -582,6 +588,7 @@ fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &m
         (ResourceKind::Receiver, "the receiver's socket and service"),
         (ResourceKind::Redis, "the private local Redis service"),
         (ResourceKind::WakeUp, "the minute timer"),
+        (ResourceKind::BackupTimer, "the daily home backup timer"),
     ]
     .into_iter()
     .filter(|(kind, _)| {

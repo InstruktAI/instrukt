@@ -88,6 +88,8 @@ fn registered(env: &TestEnv, calls: &str) -> Registered {
         @r"
     crontab -l
     crontab -l
+    crontab -l
+    crontab -l
     launchctl unload <plist>
     launchctl load -w <plist>
     "

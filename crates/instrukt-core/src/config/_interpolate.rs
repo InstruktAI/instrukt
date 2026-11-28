@@ -15,9 +15,9 @@ pub(crate) enum Mode<'a> {
 }
 
 /// Whether the value at `path` keeps its stored `${NAME}` references: webhook
-/// signing material, App keys, and a company home's member logins and
-/// connector tokens resolve only through their typed accessors.
-fn stored_reference(path: &str) -> bool {
+/// signing material, App keys, home backup credentials, and a company home's
+/// member logins and connector tokens resolve only through their typed accessors.
+pub(super) fn stored_reference(path: &str) -> bool {
     [
         "webhooks",
         "github.apps",
@@ -26,6 +26,7 @@ fn stored_reference(path: &str) -> bool {
         "mcp",
         "mcp_clients",
         "issuer",
+        "backup",
     ]
     .iter()
     .any(|root| {

@@ -376,3 +376,125 @@ pub trait CompanyRepositories: Send + Sync {
 pub trait GitHubActors: Send + Sync {
     fn actor(&self, role: &str) -> Result<crate::github::Bot, crate::github::AppError>;
 }
+
+/// The most recent validated home backup generation recorded locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupSuccess {
+    pub at: jiff::Timestamp,
+    pub generation: String,
+}
+
+/// Runner's local-only home backup standing judgment
+/// (`project/instrukt/spec/feature/runner/home-backup`).
+///
+/// Discriminated so contradictory states (such as `ok` without a validated
+/// generation, or `failed` without an error message) cannot be represented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupStanding {
+    Unconfigured,
+    NeverRun {
+        admitted: bool,
+    },
+    Ok {
+        admitted: bool,
+        last_attempt_at: jiff::Timestamp,
+        last_success: BackupSuccess,
+    },
+    Stale {
+        admitted: bool,
+        last_attempt_at: jiff::Timestamp,
+        last_success: BackupSuccess,
+    },
+    Failed {
+        admitted: bool,
+        stale: bool,
+        last_attempt_at: jiff::Timestamp,
+        last_success: Option<BackupSuccess>,
+        last_error: String,
+    },
+}
+
+impl BackupStanding {
+    /// Flat JSON projection for `instrukt status` and `instrukt events status`.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Unconfigured => serde_json::json!({
+                "standing": "unconfigured",
+                "admitted": false,
+                "stale": false,
+                "last_attempt_at": null,
+                "last_success_at": null,
+                "last_generation": null,
+                "last_error": null,
+            }),
+            Self::NeverRun { admitted } => serde_json::json!({
+                "standing": "never_run",
+                "admitted": admitted,
+                "stale": false,
+                "last_attempt_at": null,
+                "last_success_at": null,
+                "last_generation": null,
+                "last_error": null,
+            }),
+            Self::Ok {
+                admitted,
+                last_attempt_at,
+                last_success,
+            } => serde_json::json!({
+                "standing": "ok",
+                "admitted": admitted,
+                "stale": false,
+                "last_attempt_at": last_attempt_at.to_string(),
+                "last_success_at": last_success.at.to_string(),
+                "last_generation": last_success.generation,
+                "last_error": null,
+            }),
+            Self::Stale {
+                admitted,
+                last_attempt_at,
+                last_success,
+            } => serde_json::json!({
+                "standing": "stale",
+                "admitted": admitted,
+                "stale": true,
+                "last_attempt_at": last_attempt_at.to_string(),
+                "last_success_at": last_success.at.to_string(),
+                "last_generation": last_success.generation,
+                "last_error": null,
+            }),
+            Self::Failed {
+                admitted,
+                stale,
+                last_attempt_at,
+                last_success,
+                last_error,
+            } => serde_json::json!({
+                "standing": "failed",
+                "admitted": admitted,
+                "stale": stale,
+                "last_attempt_at": last_attempt_at.to_string(),
+                "last_success_at": last_success.as_ref().map(|s| s.at.to_string()),
+                "last_generation": last_success.as_ref().map(|s| s.generation.as_str()),
+                "last_error": last_error,
+            }),
+        }
+    }
+}
+
+/// Local backup standing could not be read (unreadable, malformed, or newer-schema bookkeeping).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{}: {reason}", path.display())]
+pub struct BackupStandingError {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+/// Runner-owned local-only, lock-free home backup standing query consumed by
+/// `publication::status` (`runner -> publication` inversion seam).
+pub trait HomeBackupStanding: Send + Sync {
+    fn standing(
+        &self,
+        home: &crate::home::Home,
+        now: jiff::Timestamp,
+    ) -> Result<BackupStanding, BackupStandingError>;
+}

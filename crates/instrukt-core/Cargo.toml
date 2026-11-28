@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+age.workspace = true
 dotenvy.workspace = true
 hex.workspace = true
 instrukt-connector.workspace = true
@@ -27,6 +28,7 @@ thiserror.workspace = true
 tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
