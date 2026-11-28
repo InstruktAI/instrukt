@@ -1,4 +1,4 @@
-//! One fixed waiting message shared by instrukt event, approval, recovery and verdict producers.
+//! One fixed waiting message shared by instrukt event, approval, recovery, author-ask (`review_ask`) and verdict producers.
 use crate::keyed::{KeyGuard, RuntimeInvocation};
 use crate::runtime::RuntimeAdapter;
 use crate::sessions::{SessionState, SessionsError};
