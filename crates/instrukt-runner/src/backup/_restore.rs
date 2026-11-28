@@ -9,6 +9,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead as _, BufReader, IsTerminal as _, Read as _, Write as _};
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Component, Path, PathBuf};
+use std::time::Instant;
 
 use instrukt_core::config::BackupConfig;
 use instrukt_core::fsx;
@@ -86,6 +87,8 @@ fn restore_with_storage(
     options: &RestoreOptions,
     headroom_floor_bytes: u64,
 ) -> Result<RestoreReport, BackupError> {
+    let started = Instant::now();
+
     // 1. Validate explicit `--from` archive extension before any S3 call or staging.
     if let Some(ref key) = options.from {
         validate_archive_extension(key)?;
@@ -265,6 +268,18 @@ fn restore_with_storage(
         separate_state_volume,
         &planned_swaps,
     )?;
+
+    let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    tracing::info!(
+        event = "backup_restore_completed",
+        generation = %selected_key,
+        target = %final_dest.display(),
+        live_home,
+        restored_files = planned_swaps.len(),
+        verified_databases,
+        elapsed_ms,
+        "home backup restore completed"
+    );
 
     Ok(RestoreReport {
         generation: selected_key,
