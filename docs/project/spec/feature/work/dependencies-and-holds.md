@@ -87,8 +87,8 @@ computer refuses entry.
 `instrukt todo update <slug> --hold --reason <reason>` sets a hold with its
 source, causal reason, time and recording session. A missing or blank reason
 is refused. Placing a second hold on an already-held todo is refused without
-pointing at release: a hold's reason is a record and is never restated, and a
-hold is released only when its condition is met or the work is meant to move.
+pointing callers at release and leaves the recorded hold intact (hold reasons
+stay immutable under `sdlc/policy/todo-creation-discipline`).
 An automatic hold records the cause that produced it, such as a
 failed task or unresolved diagnosis. `instrukt todo show` exposes the hold's
 reason and source.

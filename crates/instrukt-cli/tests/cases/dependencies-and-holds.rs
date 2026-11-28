@@ -177,24 +177,6 @@ fn a_held_todo_shows_why_it_waits_and_keeps_its_recorded_work() {
     let shown = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!("held", redact(&format!("{held}---\n{shown}")));
-}
-
-// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH2
-#[test]
-fn a_second_hold_is_refused_without_pointing_at_release_and_leaves_the_original_hold() {
-    let project = Project::new();
-    project.create(
-        "nested-lists",
-        "feature",
-        "Keep the depth of nested lists when parsing Markdown.",
-    );
-    project.ok([
-        "update",
-        "nested-lists",
-        "--hold",
-        "--reason",
-        "waiting for the renderer rewrite to land",
-    ]);
 
     let refused = refused_unchanged(
         &project,
@@ -205,7 +187,6 @@ fn a_second_hold_is_refused_without_pointing_at_release_and_leaves_the_original_
             "restating why it waits on the renderer rewrite",
         ],
     );
-
     insta::assert_snapshot!("second-hold-refused", refused);
 }
 
