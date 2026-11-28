@@ -729,9 +729,9 @@ own trigger below, additionally flag the coherence anti-patterns
    on another computer" variant whose `Then` clauses, read without actor and
    surface words, assert outcomes another context's spec decides
    (`general/policy/snippet-value-contract`: an outcome another context decides is
-   cited, not restated). Open the
-   owning context's spec — live, and pending via
-   `instrukt docs get <id> --target <slug>`; an owner that is pending still
+   cited, not restated). Read the
+   owning context's spec — both live and, when pending, its
+   `--target <slug>` view; an owner that is pending still
    exists — and apply the test: delete each `Then` clause the owner decides;
    what remains is this context's rule or nothing. The closure is removal (a
    live id retires per `sdlc/procedure/feature-spec-authoring`; a pending

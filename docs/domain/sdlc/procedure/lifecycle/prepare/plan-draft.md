@@ -65,7 +65,7 @@ Apply these configured action values to the identified assignment and session.
 
 Use `instrukt <command> -h` for individual commands.
 
-First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
+First read the sdlc principles that apply to this work, as listed in the `sdlc` domain rendering.
 
 ### 1. Read and ground
 
@@ -288,8 +288,8 @@ Before drafting the tasks in a project that opts into tests, reserve every
 feature-spec scenario the plan will bind so concurrent work does not bind
 the same scenario. Read the
 current scenario inventory on main and in `<slug>/work` for each feature spec the plan touches — the
-live scenarios via `instrukt docs get <id>`, and any pending claims via
-`instrukt docs index --target <slug>` and `instrukt docs get <id> --target <slug>`.
+live scenarios by reading each spec, and any pending claims via
+`instrukt docs index --target <slug>` and each spec's `--target <slug>` view.
 
 Run `instrukt specs coverage` to inspect the inventory and existing bindings.
 For every proposed binding, run
@@ -343,8 +343,8 @@ worktree predating a recently landed bootstrap or substrate extension:
   (`docs/project/spec/verification-substrate.md` and
   `docs/project/spec/verification-substrate.*.md`, including working-tree edits
   or companions in `<slug>/work`, per `general/procedure/doc-snippet-authoring`).
-  When matched, read `{slug}`'s candidate view via
-  `instrukt docs get project/<project>/spec/verification-substrate --target {slug}`;
+  When matched, read `{slug}`'s candidate view of
+  `project/<project>/spec/verification-substrate` (with `--target {slug}`);
   when `{slug}` retires Layer 1 via an empty sibling companion (rendered with an
   empty body) or removes it, treat Layer 1 as absent for `{slug}`, report that
   absence explicitly in the plan, and assess surfaces against the generic
@@ -368,8 +368,8 @@ worktree predating a recently landed bootstrap or substrate extension:
   commit in `log`, and release the attempt with `--role-complete` before
   returning without a plan. The orchestrator retries once publication catches
   up. Once publication is
-  current for that path, read the delivered fill via
-  `instrukt docs get project/<project>/spec/verification-substrate` (without
+  current for that path, read the delivered fill
+  `project/<project>/spec/verification-substrate` (without
   `--target`); only when unlisted on current published canonical docs and absent
   from `{slug}`, report the missing fill in the plan and assess surfaces against
   the generic archetype matrix:

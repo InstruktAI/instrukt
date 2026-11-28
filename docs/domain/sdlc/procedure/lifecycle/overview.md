@@ -281,10 +281,10 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
        directly to normal preparation (`plan-draft` → `plan-reviewer`) or
        fast-track `builder`. Trusted default-branch CI verification executes
        from the CI-host-verified `<default-branch>`, and readers resolve Layer 1
-       / Layer 2 fills per `sdlc/procedure/lifecycle/work/verify` (candidate
-       `--target {slug}` for `{slug}`-owned parent or sibling-companion
+       / Layer 2 fills per `sdlc/procedure/lifecycle/work/verify` (the candidate
+       `--target {slug}` view for `{slug}`-owned parent or sibling-companion
        additions, edits, replacements, or retirements; publication-checked
-       `instrukt docs get <id>` from published canonical docs for untouched
+       reads from published canonical docs for untouched
        fills) without ad hoc merges during preparation.
 3. **Select and route the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
@@ -316,8 +316,8 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
    boundary whenever it satisfies every approved criterion and eliminates the
    failing interaction instead of layering defensive machinery
    (prune-before-patch in `sdlc/procedure/lifecycle/review`).
-   - **4b. Live verification disposition for the exact candidate HEAD.** Load
-     `sdlc/policy/live-verification` (`instrukt docs get sdlc/policy/live-verification`)
+   - **4b. Live verification disposition for the exact candidate HEAD.** Read
+     `sdlc/policy/live-verification`
      and classify every clean candidate HEAD (including any replacement HEAD
      produced by `builder` or `finalizer`). Its disposition is a stamp bound to
      that exact HEAD and the current `verification-findings` report, and

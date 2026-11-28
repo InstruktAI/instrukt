@@ -169,14 +169,13 @@ onboarded company runs step 11, then step 7, then step 10.
    the services.
 6. **Connect the services.** For each service the company uses that needs
    setting up for the company first, run that service's own procedure. Then
-   load `general/procedure/company-onboarding/service-connection` with
-   `instrukt docs get general/procedure/company-onboarding/service-connection`
+   read `general/procedure/company-onboarding/service-connection`
    and run it for the services the intake named. Tell each person to sign in
    to a service with the account whose email address their messaging
    workspace shows for them.
 7. **Install what the company needs.** Make sure this computer publishes the
-   procedure for the role `company-agent`: run `instrukt docs get
-   general/procedure/company-assistance`. When it is not found, clone the docs
+   procedure for the role `company-agent` by reading
+   `general/procedure/company-assistance`. When it is not found, clone the docs
    repository that publishes it, adopt it with `instrukt init` and run
    `instrukt sync` in it. Then run `instrukt install`, then `instrukt install
    --check` and `instrukt events status`. Each names what is unmet or not

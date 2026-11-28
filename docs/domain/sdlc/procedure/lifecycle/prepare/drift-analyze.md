@@ -73,7 +73,7 @@ The drift classes:
     the upstream change and judge whether THIS artifact's claims still
     hold.
   - **owned-snippet** — read each owned snippet's current body through
-    this todo's pending view (`instrukt docs get <snippet-id> --target {slug}`);
+    this todo's `--target {slug}` pending view;
     the default view omits the body of a snippet still pending under a
     todo. Read the edit itself from the snippet source file's history over
     the same window as the code class:
@@ -82,10 +82,9 @@ The drift classes:
     `delivered_by`; judge whether the edit changes anything THIS artifact
     relies on.
   - **upstream-snippet** — read each referenced non-owned snippet's
-    current body with `instrukt docs get <snippet-id>`, adding
-    `--target <owner-slug>` when `instrukt docs index` lists the snippet as
-    delivered by another todo, and read the edit from its source file's
-    history as for owned-snippet. Judge whether the referenced snippet's
+    current body (adding `--target <owner-slug>` when `instrukt docs index`
+    lists the snippet as delivered by another todo), and read the edit from
+    its source file's history as for owned-snippet. Judge whether the referenced snippet's
     edit changes the contract THIS artifact references.
 
   - **dependency-artifact** — read each moved dependency artifact at its

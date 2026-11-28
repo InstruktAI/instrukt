@@ -44,7 +44,7 @@ domain state, and `general/policy/human-contract` to the scope of the work.
    what this event calls for now, including whether its work is already complete
    or has been superseded under the procedure's own rules.
 4. Follow the procedure's route for this event. When the route names a
-   sub-procedure, load it with `instrukt docs get <id>` now and apply it as part
+   sub-procedure, read it now and apply it as part
    of the procedure for this event. Apply the prerequisites, execution steps,
    evidence requirements, and completion criteria to this event. Produce its
    prescribed outputs and advance its progress only when those criteria are
