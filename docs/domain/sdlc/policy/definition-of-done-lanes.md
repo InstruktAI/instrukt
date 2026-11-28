@@ -691,17 +691,12 @@ surface references that owner. Judge the meaning; do not build or rely on a
 keyword scanner.
 
 <!-- planned:doctrine-commands-and-scan -->
-**Snippet command check.** For every changed snippet region (`docs/**`,
-including `docs/project/**`), verify that CLI commands sit inside backticks or
-fenced code blocks (`general/spec/snippet-authoring-schema`), flagging commands
-written in plain prose outside code containers. For changed regions in shared
-doctrine (`docs/general/` and `docs/domain/**`), additionally verify compliance
-with `general/policy/snippet-value-contract`: flag redundant
-`instrukt docs get` invocations outside the retrieval-defining baseline
-snippets and copied `--flag` recipes (local-only doctrine retains
-`instrukt <subcommand>` and multi-target snippets use `<!-- @config: ... -->`
-placeholders). `docs/project/**` snippets are exempt from those shared-doctrine
-retrieval and `--flag` restrictions.
+**Snippet command check.** For every changed snippet region (`docs/**`), verify
+that CLI commands sit inside backticks or fenced code blocks
+(`general/spec/snippet-authoring-schema`). For changed regions in shared
+doctrine (`docs/general/`, `docs/domain/**`), additionally verify compliance
+with the shared-doctrine command rules in
+`general/policy/snippet-value-contract`.
 <!-- /planned:doctrine-commands-and-scan -->
 
 For each changed snippet body, flag the Narration anti-pattern in its four forms
@@ -821,9 +816,8 @@ Severity guidance:
 <!-- planned:doctrine-commands-and-scan -->
 - A CLI command written outside backticks or fenced code blocks in any changed
   snippet (`docs/**`) → **Important**.
-- A redundant `instrukt docs get` outside retrieval-defining baseline snippets
-  or a copied `--flag` recipe introduced in shared doctrine (`docs/general/`,
-  `docs/domain/**`) → **Important**.
+- A shared-doctrine command rule violation (`general/policy/snippet-value-contract`)
+  introduced in `docs/general/` or `docs/domain/**` → **Important**.
 <!-- /planned:doctrine-commands-and-scan -->
 - Pre-existing narration in a region this change did not touch → **drop the
   observation; it is not a finding** (the sweep owns it, not this review).

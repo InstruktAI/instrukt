@@ -222,12 +222,9 @@ this spec does not restate them. Across every type:
 - `<!-- @config: <path> -->` — replaced by the configured value at `<path>` when the snippet is read, resolved in-process through configuration. In the global agent files it is resolved at publication against the publishing project's effective configuration, where a `runtime.*` path is a finding. A committed `AGENTS.md` admits none: a `@config` in anything such a file renders in full is a finding, and a snippet carrying one is listed instead. The format has no directive that runs a command or includes another file: `@exec` and `@include` are validation findings, never run or expanded. Text several snippets need is a snippet of its own, named as a required read.
 <!-- planned:doctrine-commands-and-scan -->
 - **Commands in code containers.** Every CLI command written in a snippet sits
-  inside an inline code span (backticks) or a fenced code block. Shared
-  doctrine (`general` and every domain) omits redundant retrieval commands and
-  copied `--flag` recipes, using `<!-- @config: ... -->` for target-specific
-  steps where a snippet serves multiple targets
-  (`general/policy/snippet-value-contract`); `project` snippets are exempt from
-  those shared-doctrine restrictions.
+  inside an inline code span (backticks) or a fenced code block; what command
+  content shared doctrine permits is governed by
+  `general/policy/snippet-value-contract`.
 <!-- /planned:doctrine-commands-and-scan -->
 
 A procedure's optional `Discipline` section is required once an agent command
