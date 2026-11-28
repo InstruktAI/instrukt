@@ -722,6 +722,8 @@ impl Work {
                 }
                 let encoded =
                     serde_json::to_string(e).map_err(|e| WorkError::refused(e.to_string()))?;
+                instrukt_runner::sessions::Sessions::new(self.home(), &s.config, self.env())
+                    .record_capacity(&e.session);
                 if binding.attempt.released_at.is_some() {
                     if binding.attempt.failure_workspace.as_deref() != Some(&encoded)
                         || binding.attempt.failure_reason.as_deref() != Some(reason)

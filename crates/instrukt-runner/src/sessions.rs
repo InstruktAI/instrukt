@@ -539,12 +539,29 @@ impl<'c> Sessions<'c> {
         });
         Ok(listed)
     }
+    /// Observe execution state and retain terminal capacity evidence when available.
     pub fn alive(&self, session: &SessionRef) -> Result<Observation, SessionsError> {
         Ok(match self.adapter()?.read_state(session) {
-            Ok(thread) => Observation::State(thread.state),
+            Ok(thread) => {
+                if matches!(
+                    thread.state,
+                    SessionState::InputReady | SessionState::EndedFailed
+                ) {
+                    self.record_capacity(session);
+                }
+                Observation::State(thread.state)
+            }
             Err(SessionsError::Gone(_)) => Observation::State(SessionState::Gone),
             Err(e) => Observation::Unobservable(e.to_string()),
         })
+    }
+    /// Best-effort capacity observation never prevents recording the execution's state.
+    pub fn record_capacity(&self, session: &SessionRef) {
+        if let Err(error) = self.adapter().and_then(|adapter| {
+            crate::agents::observe_capacity(self.home, adapter.as_ref(), session)
+        }) {
+            tracing::warn!(event="execution_capacity_unobserved", %session, %error);
+        }
     }
     pub fn model(&self, session: &SessionRef) -> Option<(String, String)> {
         match self.adapter().and_then(|a| a.read_state(session)) {

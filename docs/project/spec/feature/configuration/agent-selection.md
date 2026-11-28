@@ -105,6 +105,9 @@ The runner supplies readiness, capacity and selection-realization outcomes under
 `project/instrukt/spec/feature/runner/session-continuity`. Selection consumes
 those outcomes before a new start, preserving the configured profile order and
 per-tier chains.
+Observed execution quota failures are capacity facts under that same runner
+contract, regardless of provider; they restrict subsequent selections without
+changing an existing execution's selection or recovery.
 Skips and exhaustion retain their reasons and leave work pending through the
 existing anomaly route.
 

@@ -1,6 +1,7 @@
 //! Structured runtime primitives; the selected runtime owns conversations and workspaces.
 mod _diagnostics;
 mod _t3;
+mod _t3_capacity;
 mod _t3_completed;
 mod _t3_conversations;
 mod _t3_diagnostics;
@@ -368,6 +369,23 @@ pub struct UsageWindow {
     /// a window that applies to all of the profile's models.
     pub model_family: Option<String>,
 }
+
+/// Capacity evidence from an actual run, attributed to its execution selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapacityOutcome {
+    pub run: String,
+    pub instance: ProviderInstanceId,
+    pub model: String,
+    /// Failure event time, or the start of a run confirmed successful.
+    pub at: jiff::Timestamp,
+    pub result: CapacityResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapacityResult {
+    Succeeded,
+    QuotaExhausted { resets_at: Option<jiff::Timestamp> },
+}
 #[derive(Debug, Clone, Copy)]
 pub enum SelectionOperation {
     ThreadStart,
@@ -375,6 +393,13 @@ pub enum SelectionOperation {
 }
 
 pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
+    /// The latest run's normalized capacity evidence, when the runtime reports it.
+    fn capacity_outcome(
+        &self,
+        _session: &SessionRef,
+    ) -> Result<Option<CapacityOutcome>, SessionsError> {
+        Ok(None)
+    }
     fn conversation_source(
         &self,
         _home: &instrukt_core::home::Home,

@@ -299,6 +299,9 @@ upgrades, and read-only inspection of an older database keeps them visible
 without modifying the database on disk. Every work, runner, and conversation row
 in the remaining tables is kept.
 
+Version 44 adds `agent_execution_capacity` (Agent capacity), initially empty.
+Snapshot-derived and manual restrictions remain in their existing tables.
+
 
 
 ### Work tables
@@ -1276,6 +1279,12 @@ Migration moves the prior todo preference column and its fast/med/slow values
 to tier light/standard/strong. Absence of capacity marks means available;
 expired marks lapse at the command clock. These are internal storage details;
 agents use `instrukt agents availability|status`, never direct database queries.
+
+`agent_execution_capacity` retains the newest native execution outcome per
+runtime, provider instance and model: run identity, event time, optional
+restriction expiry and reason. A success retains its time with no restriction,
+so an older failure cannot restore it. These observations remain independent
+of the snapshot-derived `agent_quota` and manual `agent_availability` tables.
 
 ## Use cases
 

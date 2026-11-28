@@ -54,7 +54,17 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v41),
     Sql(V42),
     Step(v43),
+    Sql(V44),
 ];
+
+/// Version 44: execution-derived capacity survives quota snapshot refreshes.
+const V44: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_execution_capacity (
+ runtime TEXT NOT NULL, instance TEXT NOT NULL, model TEXT NOT NULL,
+ run_id TEXT NOT NULL, event_at TEXT NOT NULL, status_until TEXT, reason TEXT,
+ PRIMARY KEY(runtime,instance,model)
+);
+"#;
 
 /// Drops the retired `runner_skipped_wake` table once empty or transferred.
 const DROP_RUNNER_SKIPPED_WAKE: &str = "DROP TABLE IF EXISTS runner_skipped_wake;";
