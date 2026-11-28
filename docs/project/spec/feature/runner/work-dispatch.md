@@ -304,14 +304,13 @@ And the developer sees in status that the project's event responses are not admi
 
 <!-- planned:runner-wake-loop-state-isolated -->
 
-### UC-RD4: Runner wake-loop admission and skipped-wake updates proceed while the state-database writer lock is held
+### UC-RD4: A developer sees runner admission and skipped-wake updates while local work writes are in progress
 
 ```gherkin
-Given a computer with a running runner whose state database is at the current schema
-And another command holds the state database's writer lock
-When the runner admits configuration on a wake, skips a wake while the runtime-dispatch lock is held, and clears the skipped wake on the next unblocked wake
-Then each admission outcome and skipped-wake transition succeeds without waiting on the writer lock
-And `instrukt events status` reports the updated admission outcome and skipped wake (and clears `skipped_wake` after the unblocked wake) without creating files or taking locks
+Given a developer has a running runner on their computer while a local work write is in progress
+When the runner evaluates configuration on a wake, skips a wake while dispatch is busy, and completes the next unblocked wake
+Then the runner's configuration admission outcome and skipped-wake status update without waiting for the local work write to finish
+And the developer inspecting runner status sees the updated admission outcome, the skipped wake while it stands, and no skipped wake after the unblocked wake, with inspection making no local changes
 ```
 
 <!-- /planned:runner-wake-loop-state-isolated -->
