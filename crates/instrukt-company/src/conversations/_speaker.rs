@@ -238,19 +238,21 @@ pub(super) fn resolve_active_turn_within(
         if let Some(company) = bound {
             return Err(SpeakerError::Unbound { company });
         }
-        let retired = db
-            .conn()
-            .query_row(
-                "SELECT c.company FROM runtime_generations g
-                 JOIN connected_conversations c ON c.semantic_key=g.semantic_key
-                 WHERE g.session=?1 AND g.generation>0 LIMIT 1",
-                [session.to_string()],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|err| SpeakerError::Store(err.to_string()))?;
-        if let Some(company) = retired {
-            return Err(SpeakerError::RetiredGeneration { company });
+        for key in instrukt_runner::keyed::retired_binding_keys(home, session)
+            .map_err(|err| SpeakerError::Store(err.to_string()))?
+        {
+            let company = db
+                .conn()
+                .query_row(
+                    "SELECT company FROM connected_conversations WHERE semantic_key=?1 LIMIT 1",
+                    [key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|err| SpeakerError::Store(err.to_string()))?;
+            if let Some(company) = company {
+                return Err(SpeakerError::RetiredGeneration { company });
+            }
         }
         return Ok(None);
     };

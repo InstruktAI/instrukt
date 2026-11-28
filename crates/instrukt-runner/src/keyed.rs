@@ -589,13 +589,27 @@ fn capture_legacy(
     Ok(())
 }
 
-fn retired_binding(
-    state: &RunnerState,
-    runtime: &str,
-    key: &str,
-    session: &SessionRef,
-) -> Result<bool, StateError> {
-    state.read(|conn,path|conn.query_row("SELECT EXISTS(SELECT 1 FROM runtime_generations WHERE runtime=?1 AND semantic_key=?2 AND session=?3 AND generation>0)",params![runtime,key,session.to_string()],|row|row.get::<_,bool>(0)).map_err(state::sql(path)))?.ok_or_else(||state::invalid(&state.home().state_db_file(),"runtime state disappeared during key ownership"))
+/// Keys whose prior generations held this session. Consumers use these facts
+/// without interpreting generation storage or retirement predicates.
+pub fn retired_binding_keys(home: &Home, session: &SessionRef) -> Result<Vec<String>, StateError> {
+    RunnerState::new(home)
+        .read(|conn, path| {
+            let mut query = conn
+                .prepare(
+                    "SELECT DISTINCT semantic_key FROM runtime_generations
+                 WHERE runtime=?1 AND session=?2 AND generation>0",
+                )
+                .map_err(state::sql(path))?;
+            query
+                .query_map(
+                    params![session.runtime.as_str(), session.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(state::sql(path))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(state::sql(path))
+        })
+        .map(Option::unwrap_or_default)
 }
 
 /// Adopt an ID already retained by its owning work/standing record, never by title discovery.
@@ -614,12 +628,8 @@ pub(crate) fn recover_binding(
     {
         return Err(conflict(&assignment.request.key, [&thread.session]));
     }
-    if retired_binding(
-        &guard.state,
-        &guard.runtime,
-        &assignment.request.key,
-        &thread.session,
-    )? {
+    if retired_binding_keys(guard.state.home(), &thread.session)?.contains(&assignment.request.key)
+    {
         return Err(SessionsError::Refused("the owner record names a retired native generation; restore its current binding before dispatch".into()));
     }
     adapter.verify_placement(assignment.request, thread)?;
@@ -658,7 +668,10 @@ pub fn succeed(
     let now = assignment.now;
     let guard = KeyGuard::claim(invocation, adapter, key, assignment.project, now)?;
     if record(&guard.state, &guard.runtime, key)?.bound.is_none() {
-        if retired_binding(&guard.state, &guard.runtime, key, assignment.session)? {
+        if retired_binding_keys(guard.state.home(), assignment.session)?
+            .iter()
+            .any(|retired| retired == key)
+        {
             return Err(SessionsError::Refused("the owner record names a retired native generation; restore its current binding before dispatch".into()));
         }
         let mut thread = adapter.read_state(assignment.session)?;
