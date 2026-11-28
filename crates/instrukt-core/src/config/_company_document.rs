@@ -116,11 +116,15 @@ pub fn convert_company_document(home: &Home, name: &ProjectSlug) -> Result<(), C
 pub(crate) fn convert(home: &Home, name: &ProjectSlug) -> Result<(), ConfigError> {
     let rel = PathBuf::from("companies").join(name.as_str());
     let dir = crate::fsx::confined(home.root(), &rel)?;
+    // Confinement resolves home.root(), while diagnostics name the home's own spelling.
+    let reported = home.company_dir(name);
+    let both = || ConfigError::BothCompanyDocuments {
+        company: reported.join(COMPANY_DOCUMENT),
+        legacy: reported.join(CONFIG_FILE_NAME),
+    };
     match resolve_in(&dir)? {
         CompanyDocument::Legacy(_) => {}
-        CompanyDocument::Both { company, legacy } => {
-            return Err(ConfigError::BothCompanyDocuments { company, legacy });
-        }
+        CompanyDocument::Both { .. } => return Err(both()),
         CompanyDocument::Present(_) | CompanyDocument::Absent => return Ok(()),
     }
     ignore_local_material(&dir)?;
@@ -130,9 +134,7 @@ pub(crate) fn convert(home: &Home, name: &ProjectSlug) -> Result<(), ConfigError
     // documents appeared in the meantime, refuse rather than swallowing.
     let legacy = match resolve_in(&dir)? {
         CompanyDocument::Legacy(legacy) => legacy,
-        CompanyDocument::Both { company, legacy } => {
-            return Err(ConfigError::BothCompanyDocuments { company, legacy });
-        }
+        CompanyDocument::Both { .. } => return Err(both()),
         CompanyDocument::Present(_) | CompanyDocument::Absent => return Ok(()),
     };
     crate::fsx::rename(&legacy, &company).map_err(|source| {
@@ -378,6 +380,40 @@ mod tests {
     fn converting_with_both_present_is_refused_and_changes_neither_file() {
         let (_root, home, dir) =
             home_with(&[(COMPANY_DOCUMENT, COMPANY_YAML), (CONFIG_FILE_NAME, LEGACY)]);
+        let error = convert(&home, &acme()).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                ConfigError::BothCompanyDocuments { company, legacy }
+                    if company == &dir.join(COMPANY_DOCUMENT) && legacy == &dir.join(CONFIG_FILE_NAME)
+            ),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),
+            COMPANY_YAML
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(CONFIG_FILE_NAME)).unwrap(),
+            LEGACY
+        );
+        assert!(!dir.join(".gitignore").exists());
+    }
+
+    #[test]
+    fn converting_with_both_present_under_a_symlinked_home_root_names_the_homes_documents() {
+        let scratch = tempfile::tempdir().unwrap();
+        let real_user_home = scratch.path().join("real");
+        let linked_user_home = scratch.path().join("linked");
+        std::fs::create_dir_all(&real_user_home).unwrap();
+        std::os::unix::fs::symlink(&real_user_home, &linked_user_home).unwrap();
+
+        let home = Home::at_user_home(linked_user_home).for_writing();
+        let dir = home.company_dir(&acme());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(COMPANY_DOCUMENT), COMPANY_YAML).unwrap();
+        std::fs::write(dir.join(CONFIG_FILE_NAME), LEGACY).unwrap();
+
         let error = convert(&home, &acme()).unwrap_err();
         assert!(
             matches!(
