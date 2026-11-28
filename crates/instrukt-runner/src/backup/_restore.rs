@@ -76,7 +76,7 @@ enum SwapStep {
 pub fn restore(home: &Home, options: &RestoreOptions) -> Result<RestoreReport, BackupError> {
     let cfg = super::admitted_backup_config(home)?;
     let storage = S3Storage::new(&cfg);
-    restore_with_storage(home, &cfg, &storage, options, HEADROOM_FLOOR_BYTES, None)
+    restore_with_storage(home, &cfg, &storage, options, HEADROOM_FLOOR_BYTES)
 }
 
 fn restore_with_storage(
@@ -85,7 +85,6 @@ fn restore_with_storage(
     storage: &S3Storage,
     options: &RestoreOptions,
     headroom_floor_bytes: u64,
-    swap_fault_after: Option<usize>,
 ) -> Result<RestoreReport, BackupError> {
     // 1. Validate explicit `--from` archive extension before any S3 call or staging.
     if let Some(ref key) = options.from {
@@ -265,7 +264,6 @@ fn restore_with_storage(
         &final_state,
         separate_state_volume,
         &planned_swaps,
-        swap_fault_after,
     )?;
 
     Ok(RestoreReport {
@@ -785,7 +783,6 @@ fn execute_rollback_swap(
     final_state: &Path,
     separate_state_volume: bool,
     swaps: &[PlannedSwap<'_>],
-    fault_after_step: Option<usize>,
 ) -> Result<(), BackupError> {
     let mut dest_rollback = StagingDir::create(final_dest, ".backup-restore-rollback-")?;
     let mut state_rollback = if separate_state_volume {
@@ -806,17 +803,6 @@ fn execute_rollback_swap(
     let mut journal: Vec<SwapStep> = Vec::new();
     let swap_result: Result<(), BackupError> = (|| {
         for (idx, item) in swaps.iter().enumerate() {
-            if let Some(limit) = fault_after_step
-                && idx >= limit
-            {
-                return Err(BackupError::RestoreSwapFailed {
-                    cause: format!("injected swap failure at entry {idx}"),
-                    rolled_back: false,
-                    key: generation_key.to_owned(),
-                    rollback_hint: String::new(),
-                });
-            }
-
             if let Some(parent) = item.dest.parent() {
                 fsx::create_dir_all(parent).map_err(|source| BackupError::Io {
                     path: parent.to_path_buf(),
@@ -1110,7 +1096,7 @@ mod tests {
             yes: true,
         };
         assert!(matches!(
-            restore_with_storage(&home, &cfg, &storage, &bad_ext, 0, None),
+            restore_with_storage(&home, &cfg, &storage, &bad_ext, 0),
             Err(BackupError::UnsupportedArchiveFormat { .. })
         ));
 
@@ -1123,7 +1109,7 @@ mod tests {
             identity: IdentityInput::Path(PathBuf::from(raw_key)),
             yes: true,
         };
-        let err = restore_with_storage(&home, &cfg, &storage, &raw_opts, 0, None).unwrap_err();
+        let err = restore_with_storage(&home, &cfg, &storage, &raw_opts, 0).unwrap_err();
         assert!(!err.to_string().contains(raw_key));
         assert!(matches!(err, BackupError::InvalidIdentity(_)));
     }
@@ -1176,7 +1162,7 @@ mod tests {
             yes: true,
         };
         assert!(matches!(
-            restore_with_storage(&home, &cfg, &storage, &opts, 0, None),
+            restore_with_storage(&home, &cfg, &storage, &opts, 0),
             Err(BackupError::UnsafeArchiveEntry { .. })
         ));
         // Aborted restore must not leave an empty destination directory behind.
@@ -1209,14 +1195,14 @@ mod tests {
             yes: true,
         };
         assert!(matches!(
-            restore_with_storage(&home, &cfg, &storage, &opts_db, 0, None),
+            restore_with_storage(&home, &cfg, &storage, &opts_db, 0),
             Err(BackupError::Database { .. })
         ));
         assert!(!dest.exists());
     }
 
     #[test]
-    fn full_round_trip_live_home_guard_and_mid_swap_rollback() {
+    fn full_round_trip_live_home_guard_and_alternate_restore() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         std::fs::create_dir_all(home.state_dir()).unwrap();
@@ -1274,12 +1260,12 @@ mod tests {
                 yes: true,
             };
             assert!(matches!(
-                restore_with_storage(&home, &cfg, &storage, &opts_alias, 0, None),
+                restore_with_storage(&home, &cfg, &storage, &opts_alias, 0),
                 Err(BackupError::LiveHomeBusy { .. })
             ));
         }
 
-        // 2. Mid-swap failure rolls back original files and pre-existing WAL sidecar intact.
+        // 2. Clean live-home restore commits, removes stale WAL sidecar, and restores 0600 files.
         let opts_live = RestoreOptions {
             from: None,
             machine: None,
@@ -1287,23 +1273,7 @@ mod tests {
             identity: IdentityInput::Path(id_file.clone()),
             yes: true,
         };
-        let rb_err =
-            restore_with_storage(&home, &cfg, &storage, &opts_live, 0, Some(2)).unwrap_err();
-        assert!(matches!(
-            rb_err,
-            BackupError::RestoreSwapFailed {
-                rolled_back: true,
-                ..
-            }
-        ));
-        assert_eq!(
-            std::fs::read_to_string(home.secrets_file()).unwrap(),
-            "TOKEN=mutated\n"
-        );
-        assert_eq!(std::fs::read(&wal_path).unwrap(), b"stale-wal-bytes");
-
-        // 3. Clean live-home restore commits, removes stale WAL sidecar, and restores 0600 files.
-        let report = restore_with_storage(&home, &cfg, &storage, &opts_live, 0, None).unwrap();
+        let report = restore_with_storage(&home, &cfg, &storage, &opts_live, 0).unwrap();
         assert!(report.live_home);
         assert_eq!(report.verified_databases, 1);
         assert_eq!(
@@ -1320,7 +1290,7 @@ mod tests {
             0o600
         );
 
-        // 4. Alternate target (`--into <dir>`) restores cleanly even while writer.lock is held.
+        // 3. Alternate target (`--into <dir>`) restores cleanly even while writer.lock is held.
         let alt = dir.path().join("extracted");
         let _held = LockGuard::try_acquire(&home.writer_lock_file())
             .unwrap()
@@ -1332,11 +1302,100 @@ mod tests {
             identity: IdentityInput::Path(id_file),
             yes: true,
         };
-        let alt_report = restore_with_storage(&home, &cfg, &storage, &opts_alt, 0, None).unwrap();
+        let alt_report = restore_with_storage(&home, &cfg, &storage, &opts_alt, 0).unwrap();
         assert!(!alt_report.live_home);
         assert_eq!(
             std::fs::read_to_string(alt.join("secrets.env")).unwrap(),
             "TOKEN=original\n"
         );
+    }
+
+    #[test]
+    fn rollback_swap_restores_files_and_sidecars_on_real_rename_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("home");
+        let state = dest.join("state");
+        let staged = dir.path().join("staged");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::create_dir_all(&staged).unwrap();
+
+        let dest_secrets = dest.join("secrets.env");
+        let dest_db = state.join("instrukt.db");
+        let dest_wal = state.join("instrukt.db-wal");
+        let dest_mid = state.join("machine-id");
+        std::fs::write(&dest_secrets, "TOKEN=mutated\n").unwrap();
+        std::fs::write(&dest_db, b"prior-db-bytes").unwrap();
+        std::fs::write(&dest_wal, b"stale-wal-bytes").unwrap();
+        std::fs::write(&dest_mid, "prior-mid\n").unwrap();
+
+        let staged_secrets = staged.join("secrets.env");
+        let staged_db = staged.join("instrukt.db");
+        std::fs::write(&staged_secrets, "TOKEN=original\n").unwrap();
+        std::fs::write(&staged_db, b"restored-db-bytes").unwrap();
+        // Deliberately absent staged file for the third swap entry so the
+        // third `fsx::rename` fails with a real OS `ENOENT` after entries 0
+        // and 1 (plus the `-wal` sidecar) have already moved.
+        let missing_staged_mid = staged.join("missing-machine-id");
+
+        let files = [
+            StagedFile {
+                rel: PathBuf::from("secrets.env"),
+                staged_path: staged_secrets,
+                in_state_volume: false,
+                is_db: false,
+            },
+            StagedFile {
+                rel: PathBuf::from("state/instrukt.db"),
+                staged_path: staged_db,
+                in_state_volume: true,
+                is_db: true,
+            },
+            StagedFile {
+                rel: PathBuf::from("state/machine-id"),
+                staged_path: missing_staged_mid,
+                in_state_volume: true,
+                is_db: false,
+            },
+        ];
+        let swaps = [
+            PlannedSwap {
+                staged: &files[0],
+                dest: dest_secrets.clone(),
+                sidecars: Vec::new(),
+            },
+            PlannedSwap {
+                staged: &files[1],
+                dest: dest_db.clone(),
+                sidecars: vec![dest_wal.clone()],
+            },
+            PlannedSwap {
+                staged: &files[2],
+                dest: dest_mid.clone(),
+                sidecars: Vec::new(),
+            },
+        ];
+
+        let err = execute_rollback_swap(
+            "mid/instrukt-home.20300106T030000Z.tar.zst.age",
+            &dest,
+            &state,
+            false,
+            &swaps,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            BackupError::RestoreSwapFailed {
+                rolled_back: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&dest_secrets).unwrap(),
+            "TOKEN=mutated\n"
+        );
+        assert_eq!(std::fs::read(&dest_db).unwrap(), b"prior-db-bytes");
+        assert_eq!(std::fs::read(&dest_wal).unwrap(), b"stale-wal-bytes");
+        assert_eq!(std::fs::read_to_string(&dest_mid).unwrap(), "prior-mid\n");
     }
 }
