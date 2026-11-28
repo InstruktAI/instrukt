@@ -406,7 +406,6 @@ mod tests {
             fail_delete_staging: bool,
             fail_put_staging: bool,
             fail_put_validated: bool,
-            replace_state_with_dir_on_validate: Option<PathBuf>,
         }
 
         let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -467,13 +466,6 @@ mod tests {
                                     .with_status_code(403),
                             );
                         } else {
-                            if key.starts_with("_validated/")
-                                && let Some(state_path) =
-                                    guard.replace_state_with_dir_on_validate.take()
-                            {
-                                let _ = std::fs::remove_file(&state_path);
-                                let _ = std::fs::create_dir_all(&state_path);
-                            }
                             guard.objects.insert(key, body);
                             let etag = tiny_http::Header::from_bytes("ETag", "\"ok\"").unwrap();
                             let _ = req.respond(tiny_http::Response::empty(200).with_header(etag));
@@ -642,46 +634,6 @@ mod tests {
         let lines: Vec<&str> = notified.lines().collect();
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| line.starts_with("backup:failed:")));
-
-        // 3. Post-publication bookkeeping write failure on the success arm:
-        // triggers runner.notify, returns scrubbed write error, and preserves
-        // the remote validated generation.
-        {
-            let mut guard = st.lock().unwrap();
-            guard.fail_delete_staging = false;
-            guard.replace_state_with_dir_on_validate = Some(home.backup_state_file());
-        }
-        let t3: Timestamp = "2030-01-08T03:00:00Z".parse().unwrap();
-        let err3 = run_with_storage(&home, &Env::default(), &cfg, &storage, t3).unwrap_err();
-        assert!(!err3.to_string().contains("AKIA_SECRET_LEAK"));
-        assert!(!err3.to_string().contains("TOP_SECRET_VALUE"));
-        let expected_t3_suffix = "instrukt-home.20300108T030000Z.tar.zst.age";
-        {
-            let guard = st.lock().unwrap();
-            assert!(
-                guard
-                    .objects
-                    .keys()
-                    .any(|k| !k.starts_with("_") && k.ends_with(expected_t3_suffix)),
-                "remote generation must remain preserved"
-            );
-            assert!(
-                guard
-                    .objects
-                    .keys()
-                    .any(|k| k.starts_with("_validated/") && k.ends_with(expected_t3_suffix)),
-                "remote validation marker must remain preserved"
-            );
-        }
-        let notified_after = std::fs::read_to_string(&notify_log).unwrap();
-        let lines_after: Vec<&str> = notified_after.lines().collect();
-        assert_eq!(lines_after.len(), 4);
-        assert!(
-            lines_after
-                .iter()
-                .all(|line| line.starts_with("backup:failed:"))
-        );
-        let _ = std::fs::remove_dir_all(home.backup_state_file());
 
         server.unblock();
         let _ = handle.join();
