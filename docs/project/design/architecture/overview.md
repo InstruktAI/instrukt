@@ -125,13 +125,16 @@ unverified agent identity remains unresolved.
 
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runtime` (the runtime
-context's vendor-neutral `RuntimeAdapter` trait, structured turn/state types,
-capability catalog, and neutral errors), one crate per concrete runtime
-adapter, `instrukt-runtime-t3` first (holding the T3 adapter, `t3.version`, and
-provider-free contract test wiring), `instrukt-runner` (the runner context,
-shared by `todos`, `events` and `history`), `instrukt-todos`,
-`instrukt-company` (the company context's conversation core, explicit reply
-outbox, curated status, connector host, and company hosting/containers),
+context's vendor-neutral `RuntimeAdapter` trait, structured active/recent turn
+and state types, capability catalog, and `RuntimeError`), one crate per
+concrete runtime adapter, `instrukt-runtime-t3` first (holding the T3 adapter,
+`t3.version`, shipped T3 instructions, and provider-free contract test wiring),
+`instrukt-runner` (the runner context, shared by `todos`, `events` and
+`history`, owning keyed start/rollover orchestration and `SessionsError`),
+`instrukt-todos`, `instrukt-company` (the company context's conversation core,
+explicit reply outbox, curated status, and connector host; the company bounded
+context also owns the two-tier company-hosting contract in
+`project/instrukt/spec/feature/company/company-containers`),
 `instrukt-connector` (the connector interface and each kind's declaration
 data), one crate per connector, `instrukt-connector-slack` first, and
 `instrukt-outside`, the outside gate
@@ -156,16 +159,20 @@ strictly one way:
 No domain crate (`instrukt-core`, `instrukt-blueprint`, `instrukt-runner`,
 `instrukt-todos`, `instrukt-company`) ever depends on `instrukt-runtime-t3` or
 any other concrete runtime adapter crate; this compile-time boundary enforces
-zero vendor leakage. Where core needs runtime metadata (`RuntimeDeclaration`:
-runtime name, native/workflow capabilities, archive support, shipped
-instruction catalog), core declares the data type and `instrukt-cli` installs
-each compiled runtime's declaration once at startup alongside connector
+zero vendor leakage. `instrukt-core` defines the data-only `RuntimeDeclaration`
+carrier type (runtime name, native/workflow/feature capabilities, archive
+support, shipped instruction data, and pure static legacy-history normalizer
+hook), while each concrete runtime adapter crate owns its declaration values
+and shipped instruction file; `instrukt-cli` installs all compiled runtime
+declarations into `instrukt-core` once at startup alongside connector
 declarations. `instrukt-cli` likewise injects the concrete `RuntimeAdapter`
-registry/factory into `instrukt-runner`, `instrukt-company`, `instrukt-todos`,
-and `instrukt-core`'s caller-identity and configured-agent-runtimes hooks.
-Legacy history-record sanitization in `instrukt-runner::history` delegates to
-`ColdTextSource` on `instrukt-runtime`, and dead review-conversation stream
-code in `instrukt-runner` is retired.
+factory into `instrukt-runner`, `instrukt-company`, `instrukt-todos`, and
+`instrukt-core`'s caller-identity and configured-agent-runtimes hooks.
+`RuntimeAdapter` exposes only runtime-owned primitives and `RuntimeError`,
+keeping keyed orchestration, `SessionsError`, and runner delivery-log framing
+inside `instrukt-runner`. Legacy history migrations invoke each runtime's
+static normalizer hook through `RuntimeDeclaration` without requiring a live
+`ColdTextSource` instance.
 
 Where core needs an answer only an optional module has (whether a todo slug
 named by a pending doc exists), core declares the interface and the CLI wires
@@ -185,8 +192,8 @@ runner. Todo dispatch is realized in the runner against those interfaces,
 preserving todos → runner → runtime → core. The runner likewise declares
 conversation hosting in `instrukt run` and the conversation assignment lookup;
 `instrukt-company` implements them (along with explicit reply queueing for
-`instrukt company reply`, curated status updates for `instrukt company status`,
-and company container operations) and the CLI wires them, preserving
+`instrukt company reply` and curated status updates for
+`instrukt company status`) and the CLI wires them, preserving
 company → runner → runtime → core. Blueprint supplies its release-owned tool
 lifecycle to runner's module installation; runner consumes that API rather than
 defining tool policy. Core likewise declares the hook-generation interface;
@@ -245,6 +252,7 @@ Deleting the home is not a lossless reset.
 
 
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
@@ -276,6 +284,39 @@ Deleting the home is not a lossless reset.
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+<!-- change:thin-live-runtime-boundary -->
+| Path | Holds | Re-created from |
+| --- | --- | --- |
+| `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
+| `agents.yaml` | the user's overrides of the shipped role map (class, scoped `can` bundles, model order/tier, App references) and provider-instance tier chains; optional | the user; the defaults are in the program (`project/instrukt/spec/feature/configuration/agent-selection`) |
+| `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with the selected runtime |
+| `companies/<name>/company.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets, beside the checkout of the company's repository whose committed `instrukt.yaml` is that repository's project layer (`project/instrukt/spec/feature/configuration/company-homes`) | the user; the checkout from the company's repository |
+| `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, a domain's `workflow/` flavor files, and under `_compressed/` the compressed units the position's sources have, at each source's path relative to the position | the owning project's committed main, by `sync` |
+| `state/index.yaml` | the global index at schema version 3, every entry carrying its owning project, published-file location and source checkout provenance, and its lineage facts (`project/instrukt/spec/domain/publication`); project entries resolve to the committed project store; every loader brings a version 2 index forward without dropping an entry, each delivered entry's source digest computed from its published file, an entry whose file cannot be read kept without one and named; the next sync persists version 3 | each project's `sync` |
+| `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
+| `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | nothing for the work record (no other copy exists; must be preserved); operational runner state, authoritative object bindings and generation history must be preserved |
+| `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
+| `state/reflection.lock` | the per-computer lock serializing the runner's GitHub reflection passes; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; todo commands and current-schema local readers never acquire it; older-state readers first take the locked migration path | taken again by the next reflection |
+| `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released when the withdrawal finishes | taken again by the next withdrawal |
+| `state/delivered-release.lock` | the per-computer lock work holds while it releases a delivered todo's worktree and work branch; taken without waiting and by no command (`project/instrukt/spec/feature/work/todos`) | taken again by the next release |
+| `state/company-generation/<key>/` | a company home adoption under way: the creation intent naming the owning organisation, the repository, the company's name and its GitHub administrator, written once its prerequisites are checked and before anything on GitHub is changed; the staging checkouts holding the new repository's root commit and the home's clone before it moves into place (`project/instrukt/spec/domain/repository`) | must be preserved while it exists: the next `instrukt init --company <key>` resumes it, and removes it once the home is in place |
+| `state/company-generation.lock` | the lock under which company home adoptions take turns, held for one run of `instrukt init --company` across its GitHub calls and git transfers | taken again by the next adoption |
+| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, and each source's extraction position; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
+| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
+| `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
+| `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
+| `state/computer-fleet.json` | the computer fleet's current failure on this computer, `{failure, since}`, written whole beside its previous version and renamed over it by `instrukt run`'s evaluation responder or `instrukt tick`'s fleet step while a failure lasts, removed on the next success or when no cluster connection is configured; readers take no lock; shown by `instrukt events status` as the worker `computer-fleet` (`project/instrukt/spec/domain/runner`) | nothing: the next attempt records the failure again |
+| `state/runner-workers/<id>.json` | per-worker current failure records shown by `instrukt events status` (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next failing pass records the failure again |
+| `state/redis-reachability.db` | per-Redis last observed reachability store (SQLite, WAL; `-wal` and `-shm` beside it) for background writers (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next background Redis command observes reachability again (at most one repeated transition log) |
+| `state/redis-reachability.lock` | write-isolation lock of `state/redis-reachability.db` (`project/instrukt/spec/domain/runner`, Runner background state) | taken again by the next background reachability transition |
+| `state/eval-fingerprint/current.yaml` | the current eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`) | the next `sync` |
+| `state/eval-fingerprint/<commit>.yaml` | one record per published commit: the fingerprint it was published under and its prose and units digests; history that stamps' evaluation windows are attributed against, kept as written, a record that holds no digests holding its fingerprint alone | nothing: a lost record loses that commit's attribution; must be preserved |
+| `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
+| `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
+| `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
+| `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 
 
@@ -296,9 +337,9 @@ proposals) never contend with background relay or runner writers on
 
 | Path | Nature & owner | Loss cost | Medium, write-isolation unit, scope & bound |
 | --- | --- | --- | --- |
-| `state/company-replies.db` | Authoritative explicit reply outbox; written exclusively by synchronous `instrukt company reply` (`company` context). Holds ordered explicit reply pieces before the background relay copies them idempotently into `conversation_answers` in `state/instrukt.db` | Lost explicit reply pieces not yet copied into `conversation_answers`; must be preserved | Dedicated SQLite WAL store (`-wal` and `-shm` beside it); write-isolation unit `state/company-replies.lock` (registered in `home-backup`'s `FIXED_STATE_LOCKS` alongside dynamic `*.db` backup discovery). Background company relay reads lock-free via WAL snapshot and never writes this DB; `instrukt company reply` opportunistically prunes confirmed-posted rows older than 7 days via lock-free WAL check of `conversation_answers`. Scope: per-home |
+| `state/company-replies.db` | Authoritative explicit reply outbox; written exclusively by synchronous `instrukt company reply` (`company` context). Holds ordered explicit reply pieces with turn correlation before the background relay ingests them into `state/instrukt.db` (`project/instrukt/spec/feature/work/state-database`) | Lost explicit reply pieces not yet copied into the state database; must be preserved | Dedicated SQLite WAL store with its own write-isolation lock `state/company-replies.lock`; covered by home backup (`project/instrukt/spec/feature/runner/home-backup`) and single-company export/import (`project/instrukt/spec/feature/company/company-containers`). Background company relay reads lock-free via WAL snapshot and never writes this store; `instrukt company reply` opportunistically prunes aged confirmed-posted rows (`project/instrukt/spec/feature/work/state-database`). Scope: per-home |
 | `state/company-replies.lock` | Lock file serializing synchronous `instrukt company reply` writes to `state/company-replies.db` | Taken again by the next `instrukt company reply` | Exclusive advisory lock; never shared with `state/writer.lock` or `state/runner.lock`. Scope: per-home |
-| `state/company-turn-status/<binding-digest>.json` | Authoritative latest curated working status for one active addressed turn (`company` context); written by `instrukt company status` and best-effort unlinked by company relay on turn close | Low: working indicator degrades to the default calm line | Bounded single-record JSON file (`< 1 KiB`, `0600`), written whole via atomic temp+fsync+rename with symlink refusal; zero database or writer lock. Matched by `(session, input_id)` so stale files are ignored. Scope: per-home; at most one file per active conversation binding |
+| `state/company-turn-status/<binding-digest>.json` | Authoritative latest curated working status for one active addressed turn (`company` context); single writer is `instrukt company status` (`project/instrukt/spec/feature/work/state-database`) | Low: working indicator degrades to the default calm line | Bounded single-record atomic JSON file written whole with symlink refusal and zero database or writer lock. Background company relay reads lock-free without mutating or unlinking the file and ignores entries whose session or turn input identity does not match the active turn. Scope: per-home, excluded from home backup (`project/instrukt/spec/feature/runner/home-backup`); at most one small file per conversation binding |
 <!-- /planned:thin-live-runtime-boundary -->
 
 Home backup adds two bounded single-writer state files under `state/`, kept
@@ -581,6 +622,7 @@ passing candidate is fast-forwarded onto main.
 
 ### Run
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
 the switched-on modules need: it dispatches todos (when `runner.autostart`), and
 starts or wakes standing agents on events. It reaches a runtime only through its
@@ -634,6 +676,62 @@ dormant (`general/procedure/event-handling/overview`,
 `project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
 standing thread, by itself or by a human, stays reachable and wakes on its next
 activation or message.
+<!-- change:thin-live-runtime-boundary -->
+The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
+the switched-on modules need: it dispatches todos (when `runner.autostart`), and
+starts or wakes standing agents on events. It reaches a runtime only through
+the `runtime` context's neutral adapter trait for unattended operations. Its
+operational sessions surface is `instrukt sessions list`; agents discover and
+operate conversations through configured native instructions, recording
+attempts and native child ids through work commands. Start-or-wake holds exact
+object-key ownership across native operations and short database transactions.
+The binding is authoritative: each generation captures its native
+command/thread IDs and launch request before creation. Lost replies replay that
+fixed native identity; unknown observations and sends leave work pending.
+Outstanding work after confirmed native archive or deletion starts a successor
+generation through the same owner. instrukt derives the single repository todo
+branch `<slug>/work`; the selected runtime creates the corresponding worktree
+from `origin/main` (or from an un-integrated legacy prepare branch during
+upgrade) and refuses an existing local `<slug>/work` branch. Work on another
+computer creates its local `<slug>/work` branch from `origin/<slug>/work`.
+Native shared children (both preparation and build roles) use that recorded
+workspace serially and commit directly on `<slug>/work`; completion stamps
+release attempts atomically. `kind: task` creates no git worktree. Pending docs
+fold at work delivery, and after confirmed delivery the runner has work release
+the clean `<slug>/work` worktree and delete `<slug>/work` locally and on
+origin, on each computer that holds them. On each invocation the runner also
+removes a project's declared regenerable output from the todo worktrees
+workflow reports idle, and a session working a todo reclaims its own worktree
+with `instrukt repo reclaim`; no agent issues a deletion command for either
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). Ad hoc work uses
+its own reviewed one-off worktree; main is integrator-only. Before dispatch
+each tick, the runner fetches canonical remote main and fast-forwards a clean
+canonical checkout when it lags. Post-merge publication and blueprint
+maintenance run on each computer; dirty or diverged checkouts are reported and
+preserved. No integrator-owned local sync or main-ahead event is needed. New
+phase branches use freshly fetched origin/main. Session ending remains the
+runtime's responsibility. A step is done when the record carries its artifact
+and stamp, never when a session's reply says so. Whatever needs the human is a
+session asking in its thread; only anomalies are sent through `runner.notify`.
+
+While the computer's retention window is set, each runner invocation also has
+the runtime archive the finished threads of its registered projects that have
+been quiet past it, after dispatch and event work. No pickup, event reaction or
+other command waits on it; the `instrukt tick` that runs it returns once it is
+done (`project/instrukt/spec/feature/runner/thread-retention`).
+
+Procedure activation is durably accepted before runtime execution. The adapter
+supplies procedure-first assignment and untrusted event data through bounded
+logs with one session-wide waiting slot. The selected runtime realizes ASAP
+according to its declared delivery realization
+(`project/instrukt/spec/feature/runtime/adapter`); only-at-entry delivery waits
+for observed idleness. Runner automation never settles a standing runtime
+thread. A standing procedure may self-settle when parked dormant
+(`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
+standing thread, by itself or by a human, stays reachable and wakes on its next
+activation or message.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Fleet attention composes three owners without a watcher. Work calls the
 runner's fleet-attention contract with the facts of each change it makes to a
@@ -722,6 +820,7 @@ review itself belongs to the procedure that answers the request.
 | workflow | Whether a candidate's content is covered, commit by commit, and what follows an uncovered commit: its author is asked, or the candidate owes a review | `project/instrukt/spec/feature/workflow/integration-gate` |
 | configuration | The per-project opt-in and where its prerequisites are refused | `project/instrukt/spec/feature/configuration/layered-configuration` |
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ```mermaid
 sequenceDiagram
   participant A as author (agent)
@@ -778,6 +877,59 @@ approval is
 derived again until GitHub shows it as the status, and is withdrawn when a
 commit is no longer covered
 (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- change:thin-live-runtime-boundary -->
+```mermaid
+sequenceDiagram
+  participant A as author (agent)
+  participant G as GitHub
+  participant R as runner (tick)
+  participant V as reviewer (agent)
+  participant W as work
+  participant F as workflow
+  participant I as integrator (agent)
+  A->>W: instrukt repo commit with a no-review choice: the commit's exemption, with its basis
+  R->>G: open pull requests and heads (conditional requests)
+  R->>W: does this head carry a verdict?
+  W->>G: for a head with no evidence here, the reviewer bot's status on it, the review that status links and its latest review on each pull request observed at that head
+  R-->>V: runner.review_needed for an owed commit with no live request (head, pinned base, request number)
+  V->>W: instrukt review show (head), then instrukt review record (head, base, verdict, report)
+  W->>R: this commit's requests with their standing and pinned base
+  R->>W: publish what is outstanding to the pull requests observed at each head
+  W->>G: a review on each such pull request and the review status on the commit, linking one of those reviews, as the reviewer bot, until the newest of each shows the current verdict
+  R->>F: active candidate: is its content covered?
+  F->>W: current evidence of each commit the candidate adds
+  F->>R: for each uncovered commit's named session: does the runtime hold it?
+  alt every commit covered
+    R->>W: record the derived approval
+    W->>G: review status on the candidate commit, by a tick that found it covered
+  else a commit is not covered: the candidate is held
+    R-->>I: once per candidate: runner.candidate_held (commits and whose decisions)
+    alt an uncovered commit has an author of ours who can decide
+      R-->>A: once per commit and session: decide — ask for review, or record why none is owed
+      A->>W: instrukt review exempt, or a review of a head that contains the commit
+    else no uncovered commit has an author of ours who can decide
+      R-->>V: runner.review_needed for the exact candidate
+    end
+  end
+  R-->>I: runner.ci_completed once the candidate's result is complete
+```
+
+A review is one judgment of one commit from the pinned base its request
+carries, which the runner selects
+(`project/instrukt/spec/feature/runner/pull-request-review`).
+A verdict covers the canonical branch only when that base lies on it, and
+earns candidate coverage only then. Requests are counted per commit: one is live
+at a time, and a request delivery selected for handover keeps the commit until
+its outcome is known, whichever pull requests point at it meanwhile. The
+outcome is delivered to every eligible pull request at that commit. The runner
+reads GitHub and decides what is owed; it decides nothing about a verdict.
+Work admits the first verdict for a commit; only the settling session revises
+it, consulting no runtime conversation or live turn input. A candidate's result
+follows work's current verdict of it before the status does: needs work is a
+failed result from its admission. A derived approval is derived again until
+GitHub shows it as the status, and is withdrawn when a commit is no longer
+covered (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 instrukt owns the review state and GitHub reflects and enforces it. Evidence
 is recorded locally before anything is published, and GitHub receives two
@@ -903,13 +1055,13 @@ reading runner's files or contacting remote storage.
   `instrukt events status` and logs under the conversation-link contract.
 <!-- change:thin-live-runtime-boundary -->
 - **Company relay or addressed turn fails:** the company relay retains its
-  in-flight delivery state, retries failed turns up to
-  `FAILED_RETRY_MAX_ATTEMPTS = 3` retries (4 total failed attempts with
-  exponential backoff `2m`/`4m`/`8m`, capped at `FAILED_RETRY_LIMIT = 15m`),
-  and upon exhaustion (or terminal completion without an explicit reply) queues
-  one standard member-facing error reply idempotently, records the real failure
-  cause on `instrukt events status`, and emits one operator anomaly alert
-  (`project/instrukt/spec/feature/company/conversations`).
+  in-flight delivery state, retries failed turns up to its declared retry
+  bound, and upon exhaustion or terminal completion without an explicit reply
+  settles the message with one standard member-facing error reply, records the
+  real cause on `instrukt events status`, and raises one per-message operator
+  anomaly (`project/instrukt/spec/domain/company`,
+  `project/instrukt/spec/feature/company/conversations`,
+  `project/instrukt/spec/feature/runner/anomaly-notification`).
 <!-- /planned-change:thin-live-runtime-boundary -->
 - **A checkout has no runtime project of its own:** launch adds one at exactly
   that checkout and starts there; it never runs in a project rooted at an
@@ -970,8 +1122,9 @@ reading runner's files or contacting remote storage.
 <!-- change:thin-live-runtime-boundary -->
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runtime/t3`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runtime/t3-contract`) do not exercise live provider option descriptors.
 - **A cold history commit becomes readable after an extraction notification:**
-  history extraction reads again on the next history search or explicit
-  extraction request (`project/instrukt/spec/feature/runner/history`); live
+  history extraction reads again on its doubling retry schedule while
+  `instrukt run` watches the source, and catches up on history search or
+  explicit extraction (`project/instrukt/spec/feature/runner/history`); live
   company conversations never depend on native database change notifications
   and observe turn progress directly through `runtime`'s live `read_state`.
 <!-- /planned-change:thin-live-runtime-boundary -->
@@ -1007,11 +1160,14 @@ reading runner's files or contacting remote storage.
 - **A session records a verdict while a request of that commit is selected and
   no session holds it yet:** the verdict is refused; the review is that
   request's.
+<!-- planned-change:thin-live-runtime-boundary -->
 - **The runtime cannot say which input opened the turn of a settling session
   that a request of the commit reached:** the command asks again within its
   own wait and then refuses the revision, naming the runtime. Nothing is
   recorded, the earlier version stays current and published, and the session
   records the revision once the runtime answers.
+<!-- change:thin-live-runtime-boundary -->
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **A needs-work version of a candidate's verdict is admitted while GitHub
   still shows the earlier approving status:** the candidate's result is a
   failure from that tick on, whatever the status shows, and the failure status

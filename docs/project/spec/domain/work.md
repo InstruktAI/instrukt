@@ -101,10 +101,16 @@ runner owns dispatch, and the configured runtime owns conversations.
   the candidate's review status it stands only while that finding is found
   again.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Revision**
 : A later version of a commit's head verdict, recorded by the session that
   recorded the current one in a turn that no review request for that commit
   opened.
+<!-- change:thin-live-runtime-boundary -->
+**Revision**
+: A later version of a commit's head verdict, recorded by the session that
+  recorded the current one.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **Handed-over approval**
 : A head verdict its reviewing session returned and did not record, entered by

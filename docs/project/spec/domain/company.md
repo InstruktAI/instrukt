@@ -101,11 +101,9 @@ person.
 - **Contains:** Company, connector name and conversation binding key (the
   connector's conversation identity under `session_scope: conversation`, or the
   shared company binding under `session_scope: company`); the connector's
-  assigned role and session scope; the session's runtime identity; a one-time
-  `needs_explicit_rollover` flag for pre-upgrade `turn_output` live bindings;
-  accepted messages awaiting delivery or completion with their senders and live
-  turn correlation (`dispatch_command_id`, `observed_run_id`,
-  `turn_started_at`, `terminal_error_queued_at`); explicit reply intake records
+  assigned role and session scope; the session's runtime identity; any pending
+  one-time rollover flag; accepted messages awaiting delivery or completion
+  with their senders and live turn correlation; explicit reply outbox records
   and connector posting receipts; and optional curated working status for the
   active addressed turn.
 - **Invariants:**
@@ -118,56 +116,55 @@ person.
     runtime transcripts are never scraped or posted; only explicit replies
     queued via `instrukt company reply` and curated working status set via
     `instrukt company status` reach members. No reply starts a conversation.
+  - Both opening launches and follow-up sends persist their deterministic input
+    command identity before runtime execution so every turn, Turn 1 included,
+    correlates identically against live runtime observations without clearing
+    active-turn correlation when an explicit reply is posted mid-turn.
   - Active-turn speaker resolution is fail-closed with three outcomes over
-    `runtime`'s `read_state` (`active_turn.run_id`, `active_turn.input_id`, and
-    opening-input envelope inspection) plus a lock-free WAL read of
-    `state/instrukt.db`:
-    1. *Verified active addressed turn:* `Presence::Present`,
-       `state ∈ {Running, NeedsInput}`, `active_turn` present with
-       `input_id` matching this binding's durable in-flight
-       `dispatch_command_id` (and `observed_run_id` when recorded) → returns
-       that message's recorded member speaker, surviving restarts and remaining
-       intact after `instrukt company reply`.
-    2. *Fail-closed refusal:* observation error, store error, non-present or
-       non-running state (`InputReady`, `EndedFailed`, `Gone`, `Unknown`),
-       `active_turn` absent (including `preparing`/`queued`), missing
-       `input_id`, `input_id` matching a different company-delivered message,
-       or unknown `input_id` whose opening input carries a company member
-       envelope → refuses rather than falling back to a service login.
+    `runtime`'s `read_state` (active turn identity plus neutral closed opening
+    input) and a lock-free WAL snapshot of the state database
+    (`project/instrukt/spec/feature/company/conversations`,
+    `project/instrukt/spec/feature/runner/mcp-access`):
+    1. *Verified active addressed turn:* present, active session whose live
+       turn input identity matches an in-flight addressed message on this
+       active binding returns that message's recorded member speaker, surviving
+       restarts and remaining intact after explicit replies.
+    2. *Fail-closed refusal:* any observation or store error, any non-present
+       or non-running state, absent active turn or input identity, unavailable
+       opening input, mismatched addressed turn, unknown input whose opening
+       text carries a company member envelope, or any retired conversation
+       generation (`runtime_generations`) refuses with a company-owned
+       `SpeakerError` rather than falling back to a service login.
     3. *Confirmed direct operator / technical-owner turn:* confirmed running
-       turn whose `input_id` matches no company-delivered message and whose
-       opening input carries no company member envelope → returns no addressed
-       member speaker (never inheriting any prior member's identity, admin
-       privilege, or credentials, and refused by `instrukt company status`).
-  - Pre-start vs. post-turn idle distinction: while no run with
-    `userMessageId == dispatch_command_id` exists yet or its state is
-    `Preparing`/`Queued`, the addressed message remains in flight even if the
-    thread observes `InputReady`. Only when that exact run reaches terminal
-    `Completed` without an explicit reply queued does company emit the
-    idle-without-reply error; when it reaches terminal `Failed` without an
-    explicit reply, company enters bounded retry.
-  - Bounded retry exhaustion: `FAILED_RETRY_MAX_ATTEMPTS = 3` retries after
-    the initial failed delivery (4 total failed attempts with exponential
-    backoff `2m`, `4m`, `8m`, capped at `FAILED_RETRY_LIMIT = 15m`). Upon
-    exhaustion without an explicit reply, company clears `retry_at`, queues
-    one standard user-facing error reply idempotently via
-    `terminal_error_queued_at`, records the real cause on its status surface,
-    and raises the operator anomaly once.
-  - `instrukt company status` admission and target guard: admitted under the
-    `company-reply` capability action; requires Outcome 1 (verified active
-    addressed turn), refusing Outcome 2 and Outcome 3 (direct operator turns);
-    under `session_scope: conversation` defaults to and restricts to the bound
-    conversation; under `session_scope: company` requires `--conversation <id>`
-    passing both the admitted-conversation check and exact equality with the
-    currently active addressed turn's conversation.
-  - Pre-upgrade `turn_output` live bindings: forward database migration
-    `v42 → v43` marks existing `reply_mode = 'turn_output'` rows that hold a
-    live `session` with `needs_explicit_rollover = 1`. On the next relay pass
-    once no turn is actively running on that binding, company performs one
-    automatic successor rollover via `keyed::succeed`, launching a fresh
-    generation with the explicit-frontstage opening brief, transferring any
-    unanswered messages in order, clearing `needs_explicit_rollover = 0`, and
-    leaving the prior thread intact as history.
+       turn on the active generation whose input identity matches no
+       company-delivered message and whose available opening text carries no
+       company member envelope yields no addressed member speaker (never
+       inheriting any prior member's identity, admin privilege, or credentials,
+       and refused by `instrukt company status`).
+  - Live turn completion and failure reconcile against `runtime`'s bounded
+    recent turn history using neutral input identity so an overtaken turn is
+    not lost between polls, keeping pre-start preparing/queued turns in flight
+    until their own run reaches terminal completion or failure. Every relay
+    pass ingests the explicit reply outbox before evaluating turn completion,
+    failing closed on outbox read errors while allowing already-ingested
+    answers to post.
+  - Bounded failed-turn retries and terminal completion without an explicit
+    reply atomically settle the message with one standard member-facing error
+    reply, retain the real failure cause on company's status surface, and
+    raise one per-message operator anomaly through
+    `project/instrukt/spec/feature/runner/anomaly-notification`
+    (`project/instrukt/spec/feature/company/conversations`).
+  - `instrukt company status` is admitted under the `company-reply` capability
+    action (`project/instrukt/spec/feature/configuration/roles-and-capabilities`),
+    requires Outcome 1 (refusing Outcome 2 and Outcome 3), defaults to and
+    restricts to the bound conversation under `session_scope: conversation`,
+    and under `session_scope: company` requires an admitted `--conversation`
+    matching the currently active addressed turn's conversation.
+  - Pre-upgrade bindings flagged for explicit-frontstage rollover roll over on
+    demand when unanswered or newly arrived work is present, via runner's
+    present-idle rollover contract, once no turn is actively running, adopting
+    a fresh generation with the explicit-frontstage opening brief and leaving
+    the prior thread as history (`project/instrukt/spec/feature/work/state-database`).
 - **Identifier:** Company, connector name and conversation identity (or shared
   company binding).
 - **Lifecycle:** The first addressed message from an admitted sender starts the
@@ -186,9 +183,9 @@ person.
 - **Invariants:** A connector carries messages for the one company home that
   declares it; one company home may declare multiple named connectors of the
   same kind with isolated identities and provider rate limits. Explicit
-  frontstage is unconditional (`reply_mode` is retired in `company.yaml` v7).
-  What it supplies for each addressed message, and what it does with an answer
-  or curated working status, is the connector contract of
+  frontstage is unconditional across all connectors. What it supplies for each
+  addressed message, and what it does with an answer or curated working status,
+  is the connector contract of
   `project/instrukt/spec/feature/company/conversations`; which messages count
   as addressed, who counts as the company's own and how an answer is rendered
   are its kind's own contract.
@@ -198,18 +195,29 @@ person.
 
 #### Company host
 
-- **Root entity:** One company's isolated hosting environment on a host.
-- **Contains:** Its hosting tier under the two-tier hosting ladder (Tier 1
-  per-company runtime/home isolation by default; Tier 2 container isolation
-  when enabled), container state, mounted tools, shared defaults, and
-  single-company export/import archive boundaries.
-- **Invariants:** Company isolation is owned by the company context and stays
+- **Root entity:** One company's hosting model on a host under the two-tier
+  hosting ladder (`project/instrukt/spec/feature/company/company-containers`).
+- **Contains:**
+  - *Tier 1 (shared host):* a company home folder on the operator's host with
+    folder separation only under one OS user (no OS or runtime confinement
+    between companies), per-company BYOS accounts via the selected runtime's
+    optional multi-account provider isolation capability bound by `profiles`,
+    and interaction strictly through business chat connectors.
+  - *Tier 2 (isolated Linux container):* one long-running Linux container per
+    company with hard OS and filesystem confinement, per-container endpoint
+    authentication and egress isolation blocking host-bound and
+    sibling-container runtime endpoints, self-contained host-folder state with
+    consistent online export/import portability, and dual access (operator
+    visibility plus optional direct steering and mobile access for a technical
+    company owner under their own client account).
+- **Invariants:** Company hosting is owned by the company context and stays
   independent of any specific runtime's internal storage format; Tier 2
-  container state preserves irreplaceable logins, conversations, and company
-  knowledge across container replacement (`project/instrukt/spec/feature/company/company-containers`).
+  preserves irreplaceable logins, conversations, and company knowledge in the
+  company's host folder across container replacement.
 - **Identifier:** Company name on the host.
-- **Lifecycle:** Provisioned and converged for each company home; exported and
-  imported as one company unit without requiring a full-home backup.
+- **Lifecycle:** Starts at Tier 1 when a company home is added; advances to
+  Tier 2 isolation and portable single-company export/import under
+  `project/instrukt/spec/feature/company/company-containers`.
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 #### Knowledge proposal
@@ -290,9 +298,9 @@ person.
   the default working indicator until overwritten or the turn ends.
 
 **Company host**
-: The isolated environment running one company's sessions and state under the
-  two-tier hosting ladder (Tier 1 default isolation or Tier 2 container
-  isolation, `project/instrukt/spec/feature/company/company-containers`).
+: One company's hosting model under the two-tier hosting ladder: Tier 1
+  shared-host BYOS with folder separation only, or Tier 2 isolated Linux
+  container (`project/instrukt/spec/feature/company/company-containers`).
 <!-- /planned:thin-live-runtime-boundary -->
 
 **Knowledge proposal**
@@ -365,10 +373,10 @@ person.
 - **Owns:** connectors and their hosting; the connector interface; conversation
   bindings, per-message turn delivery and live turn-completion reconciliation
   over `runtime`'s `read_state`, who is answered, the fixed reply to someone
-  who is not, bounded failed-turn retry exhaustion (`FAILED_RETRY_MAX_ATTEMPTS`),
-  explicit reply intake (`instrukt company reply`) and connector posting,
-  curated working status (`instrukt company status`), fail-closed active-turn
-  speaker resolution, isolated company hosting and containers
+  who is not, bounded failed-turn retry exhaustion, explicit reply intake
+  (`instrukt company reply`) and connector posting, curated working status
+  (`instrukt company status`), fail-closed active-turn speaker resolution and
+  its `SpeakerError` type, two-tier company hosting and containers
   (`project/instrukt/spec/feature/company/company-containers`), the meaning and
   writes of the conversation tables of
   `project/instrukt/spec/feature/work/state-database`, the explicit reply
@@ -377,11 +385,12 @@ person.
 - **Does not own:** company homes, members, secrets and the `connectors:` map's
   validation, owned by configuration; the vendor-neutral runtime adapter
   boundary and concrete runtime adapters, owned by runtime
-  (`project/instrukt/spec/domain/runtime`); keyed start orchestration,
-  `instrukt run` process hosting, and assignment resolution, owned by runner;
-  which MCP declarations a caller sees and the login a call carries, owned by
-  runner (`project/instrukt/spec/feature/runner/mcp-access`); the state
-  database's file, migrations and writer rules, owned by work.
+  (`project/instrukt/spec/domain/runtime`); keyed start and present-idle
+  rollover orchestration, `instrukt run` process hosting, and assignment
+  resolution, owned by runner; which MCP declarations a caller sees and the
+  login a call carries, owned by runner
+  (`project/instrukt/spec/feature/runner/mcp-access`); the state database's
+  file, migrations and writer rules, owned by work.
 - **Published contracts:**
   - The connector interface: every connector implements it, and the
     conversation core reaches a channel only through it. What it carries is the
@@ -393,9 +402,10 @@ person.
     (`project/instrukt/spec/feature/configuration/configuration-editing`).
   - The hosting the runner declares and this context implements: opening and
     supervising the connections, running the company relay pass over connector
-    intake, explicit reply outbox rows, and live `read_state` polling of
-    in-flight addressed turns, reporting whether retained work is outstanding,
-    the relay's state, and the conversations section of `instrukt events status`.
+    intake, explicit reply outbox ingestion, and live `read_state` polling of
+    in-flight addressed turns, reporting whether retained work (including
+    un-ingested explicit replies) is outstanding, the relay's state, and the
+    conversations section of `instrukt events status`.
   - The conversation assignment lookup, which the runner's assignment
     resolution takes beside work's own, returning the connector's recorded role
     and company home. It recognises a conversation's session from the
@@ -405,37 +415,40 @@ person.
   - The explicit reply queueing operation (`instrukt company reply`), which
     verifies an active company conversation binding via lock-free WAL read,
     checks that the target conversation is admitted on that
-    `(company, connector)`, and writes the reply exactly as the agent wrote it,
-    in ordered pieces, into `state/company-replies.db` under
+    `(company, connector)`, and writes ordered reply pieces with active-turn
+    correlation into `state/company-replies.db` under
     `state/company-replies.lock` without acquiring `state/writer.lock`.
   - The curated turn status operation (`instrukt company status`), admitted
     under `company-reply`, which verifies an active addressed turn (Outcome 1)
     and target conversation binding (under `session_scope: company`, matching
     the active addressed turn's conversation), and atomically writes the
-    bounded progress line to `state/company-turn-status/<binding-digest>.json`
+    validated progress line to `state/company-turn-status/<binding-digest>.json`
     without acquiring any database or writer lock.
-  - The fail-closed speaker lookup: a function of this context that the CLI
-    calls for `instrukt mcp`, admin-DM `instrukt config`, `post-commit`
-    knowledge proposals, and `instrukt company status`, reading
+  - The fail-closed speaker lookup: a function of this context returning a
+    company-owned `SpeakerError` (mapped by each consumer seam, such as MCP
+    access), called by the CLI for `instrukt mcp`, admin-DM `instrukt config`,
+    `post-commit` knowledge proposals, and `instrukt company status`, reading
     `state/instrukt.db` lock-free via WAL snapshot and correlating against
     `runtime`'s live `read_state`.
-  - Company hosting and container operations (`project/instrukt/spec/feature/company/company-containers`).
+  - Two-tier company hosting and container contracts
+    (`project/instrukt/spec/feature/company/company-containers`).
   Other contexts obtain conversation facts only through these; none reads the
   conversation tables or reply/status stores directly.
 - **Allowed dependencies:** runtime supplies the vendor-neutral
-  `RuntimeAdapter` trait (live `read_state` with structured turn correlation,
-  session start, and idempotent send) through `instrukt-runtime`, without
-  importing any concrete adapter crate; runner supplies keyed start
+  `RuntimeAdapter` trait (live `read_state` with structured active/recent turn
+  correlation and neutral opening-input data, plus idempotent start and send
+  primitives) through `instrukt-runtime`, without importing any concrete
+  adapter crate; runner supplies keyed start and present-idle rollover
   orchestration, identity envelopes, and the state database handle the
   conversation core writes through; configuration supplies company homes with
   their settings, members and resolved secrets, and the declared connectors;
   work supplies the state database's file, writer lock and migrations. These
   relationships are specified in the context map position below.
 - **Implementation roots:** `instrukt-company` (the conversation core, explicit
-  reply outbox, curated status, connector host, and company hosting/containers),
-  `instrukt-connector` (the connector interface and the declaration data),
-  `instrukt-connector-slack` (the Slack connector). Their place among the crates
-  is `project/instrukt/design/architecture/overview`.
+  reply outbox, curated status, and connector host), `instrukt-connector` (the
+  connector interface and the declaration data), `instrukt-connector-slack`
+  (the Slack connector). Their place among the crates is
+  `project/instrukt/design/architecture/overview`.
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 Knowledge proposals extend this boundary:
@@ -480,15 +493,14 @@ Knowledge proposals extend this boundary:
 
   | Store | Nature | Owner | Loss cost | Medium and write isolation | Scope, bound and retirement |
   | --- | --- | --- | --- | --- | --- |
-  | `state/company-replies.db` (SQLite WAL) with `state/company-replies.lock` | Authoritative explicit reply outbox queued by `instrukt company reply` before relay intake. | This context; written exclusively by synchronous agent-waited `instrukt company reply` commands. | Lost explicit reply pieces not yet copied into `conversation_answers`. | Dedicated SQLite WAL store with `state/company-replies.lock` (registered in `home-backup`'s `FIXED_STATE_LOCKS` and discovered dynamically for backup). Background company relay reads lock-free via WAL snapshot and copies rows idempotently into `conversation_answers` in `state/instrukt.db`; synchronous `instrukt company reply` never acquires `state/writer.lock`. | Per home (`INSTRUKT_HOME`). Bounded by active/recent explicit replies; `instrukt company reply` opportunistically prunes rows confirmed posted in `conversation_answers` (checked via lock-free WAL read) older than 7 days so no background writer shares `company-replies.lock`. |
-  | `state/company-turn-status/<binding-digest>.json` | Authoritative latest curated working status for one active addressed turn (`schema_version`, `session`, `input_id`, `company`, `connector`, `conversation`, `text`, `updated_at`). | This context; written by `instrukt company status`, unlinked best-effort by company relay on turn close. | Low: status line degrades to the default calm working indicator. | Bounded single-record atomic JSON file (`< 1 KiB`, `0600`), written via temp+fsync+rename with symlink refusal. Zero database or `state/writer.lock` acquisition; relay reads lock-free and ignores files whose `(session, input_id)` do not match the current active turn. | Per home (`INSTRUKT_HOME`). At most one tiny file per active conversation binding; unlinked on turn completion, failure, or rollover. |
-  | `connected_conversations`, `conversation_messages`, `conversation_answers`, `connector_read_back` in `state/instrukt.db` | Authoritative conversation bindings, addressed-message speaker and live turn correlation (`dispatch_command_id`, `observed_run_id`, `turn_started_at`, `terminal_error_queued_at`, `needs_explicit_rollover`), and connector posting receipts. | This context (meaning and writes); work owns the database file, `state/writer.lock`, and migrations (`v42 → v43`). | Lost bindings, in-flight turn tracking, and posting receipts; must be preserved. | Shared SQLite WAL state database; written exclusively by the background company relay (`instrukt run`) under `state/writer.lock`. Every synchronous agent-waited reader (`instrukt mcp`, admin-DM `instrukt config`, `post-commit` proposals, `instrukt company reply`, `instrukt company status`) performs lock-free WAL reads and never takes `state/writer.lock`. | Per home (`INSTRUKT_HOME`), backed up by `home-backup` and exported per company by `company-containers`. |
+  | `state/company-replies.db` with `state/company-replies.lock` | Authoritative explicit reply outbox queued by `instrukt company reply` before relay intake (`project/instrukt/spec/feature/work/state-database`). | This context; written exclusively by synchronous agent-waited `instrukt company reply` commands. | Lost explicit reply pieces not yet copied into the state database's answer table. | Dedicated SQLite WAL store with its own advisory lock, isolated from `state/writer.lock`. Background company relay reads lock-free via WAL snapshot and copies rows idempotently into the state database; synchronous `instrukt company reply` never acquires `state/writer.lock`. | Per home (`INSTRUKT_HOME`), covered by home backup (`project/instrukt/spec/feature/runner/home-backup`) and carried by single-company export/import via consistent filtered backup or pre-snapshot drain (`project/instrukt/spec/feature/company/company-containers`). Opportunistically pruned of aged confirmed-posted rows by `instrukt company reply` alone so no background writer shares the lock (`project/instrukt/spec/feature/work/state-database`). |
+  | `state/company-turn-status/<binding-digest>.json` | Authoritative latest curated working status for one active addressed turn (`project/instrukt/spec/feature/work/state-database`). | This context; single writer is `instrukt company status`. | Low: working indicator degrades to the default calm line. | Bounded single-record atomic JSON file written whole with symlink refusal and zero database or writer lock. Background company relay reads lock-free, never mutates or unlinks the file, ignores entries whose session or turn input identity does not match the active turn, and warns-and-ignores malformed files. | Per home (`INSTRUKT_HOME`), excluded from home backup (`project/instrukt/spec/feature/runner/home-backup`). Bounded to at most one small file per conversation binding, overwritten in place by later status updates. |
+  | Conversation tables in `state/instrukt.db` and connector read-back store (`state/connector-read-back.sqlite`) | Authoritative conversation bindings, addressed-message speaker and live turn correlation, connector posting receipts, and read-back windows (`project/instrukt/spec/feature/work/state-database`). | This context (meaning and writes); work owns `state/instrukt.db`'s file, `state/writer.lock`, and migrations. | Lost bindings, in-flight turn tracking, and posting receipts; must be preserved. | Shared SQLite WAL state database written by the background company relay under `state/writer.lock` (with read-back state in its own SQLite store). Every synchronous agent-waited caller (`instrukt mcp`, admin-DM `instrukt config`, `post-commit` proposals, `instrukt company reply`, `instrukt company status`) reads lock-free via WAL snapshot and never acquires `state/writer.lock`. | Per home (`INSTRUKT_HOME`), covered by home backup and single-company export/import (`project/instrukt/spec/feature/company/company-containers`). |
   | `.instrukt/knowledge-proposals.db` in the company's home, kept out of the repository by the home's ignore lines | Authoritative: who asked for each recorded commit, learned only while the turn is in progress. | This context; written only by its recording operation. | Lost intent, failing closed: an administrator's pending proposal is no longer admitted and waits for a person. | A database of its own: several recording processes write it at once, one per committing conversation session, and it is read by commit. Its file is its write-isolation unit. Its only writers are recordings a commit waits on, each holding one short transaction; no background writer shares it. | The company's home, moving with it, its container's exported state included. Bounded by the recorded commits a local branch, remote-tracking branch or worktree's `HEAD` still holds and the remote-tracking canonical branch does not contain, retired under the Lifecycle rule above. A store of an older shape is migrated by the next recording, never discarded; an unreadable one is left as it is, since nothing rebuilds it. |
 
-- **Allowed dependencies:** runtime supplies live `read_state` active-turn
-  correlation (`active_turn.run_id`, `active_turn.input_id`, opening-input
-  inspection) for speaker lookup; the repository's own git answers refs and
-  containment.
+- **Allowed dependencies:** runtime supplies live `read_state` with structured
+  active/recent turn correlation and neutral closed opening-input data for
+  speaker lookup; the repository's own git answers refs and containment.
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 ## Event subjects and origins
@@ -521,15 +533,15 @@ The company context has no governing design or decision record of its own.
   sign-in sends through a connector.
 <!-- change:thin-live-runtime-boundary -->
 - **Runtime** — customer / supplier: runtime supplies live `read_state` with
-  structured active-turn correlation (`active_turn.run_id`,
-  `active_turn.input_id`, opening-input inspection) for fail-closed
-  active-speaker resolution and live turn tracking, plus keyed session start
-  and idempotent input delivery (`project/instrukt/spec/domain/runtime`).
-- **Runner** — customer / supplier, both ways: runner supplies keyed start
-  orchestration, identity envelopes and the state database handle; this context
-  supplies the hosting and the conversation assignment lookup that runner
-  declares, the fail-closed speaker lookup that MCP access uses, and the direct
-  messages to one person that MCP sign-in sends through a connector.
+  structured active/recent turn correlation and neutral closed opening-input
+  data for fail-closed active-speaker resolution and live turn tracking, plus
+  idempotent start and send primitives (`project/instrukt/spec/domain/runtime`).
+- **Runner** — customer / supplier, both ways: runner supplies keyed start and
+  present-idle rollover orchestration, identity envelopes and the state
+  database handle; this context supplies the hosting and the conversation
+  assignment lookup that runner declares, the fail-closed speaker lookup that
+  MCP access uses, and the direct messages to one person that MCP sign-in sends
+  through a connector.
 <!-- /planned-change:thin-live-runtime-boundary -->
 - **Configuration** — customer / supplier: configuration supplies company
   homes, their members, resolved secrets and declared connectors. Published

@@ -58,6 +58,36 @@ meaning and the writes of the conversation tables.
   isolated from `state/writer.lock` (`project/instrukt/spec/domain/runner`,
   Runner background state).
 
+<!-- planned:thin-live-runtime-boundary -->
+- **Company explicit reply outbox and curated turn status stay outside it:**
+  - `state/company-replies.db` (SQLite WAL, `PRAGMA user_version = 1`, owner-only
+    permissions and symlink refusal) under `state/company-replies.lock` holds
+    authoritative explicit reply pieces written exclusively by synchronous
+    `instrukt company reply` (`explicit_replies`, keyed by `(reply_id, piece)`
+    with `company`, `connector`, `conversation`, nullable `turn_message`,
+    nullable `turn_input_id`, `text`, and `queued_at`). The background company
+    relay reads it lock-free via WAL snapshot and copies rows idempotently into
+    `conversation_answers` in `state/instrukt.db`; `instrukt company reply`
+    never acquires `state/writer.lock` and opportunistically prunes aged
+    confirmed-posted rows (older than 7 days, verified via lock-free WAL read
+    of `conversation_answers`, bounded per call, skipping on transient read
+    errors). Covered by home backup (`project/instrukt/spec/feature/runner/home-backup`)
+    and single-company export/import via consistent filtered online backup or
+    pre-snapshot drain (`project/instrukt/spec/feature/company/company-containers`).
+  - `state/company-turn-status/<binding-digest>.json` holds the latest curated
+    working status for one active addressed turn (`schema_version = 1`,
+    `session`, `input_id`, `company`, `connector`, `conversation`, validated
+    non-empty single-line `text` bounded to at most 256 UTF-8 bytes, and
+    `updated_at`). `<binding-digest>` is the lowercase hexadecimal SHA-256 of
+    `<company>\0<connector>\0<binding_conversation>`. Written solely by
+    `instrukt company status` via atomic temp+fsync+rename (`0600`) with symlink
+    refusal and zero database or writer lock; the background relay reads
+    lock-free without mutating or unlinking the file, ignores entries whose
+    `(session, input_id)` do not match the current active turn, and warns and
+    falls back to the default calm line on malformed or unknown-schema JSON.
+    Excluded from home backup (`project/instrukt/spec/feature/runner/home-backup`).
+<!-- /planned:thin-live-runtime-boundary -->
+
 
 
 - **No legacy file stores:** directories left by earlier builds
@@ -284,6 +314,31 @@ disk. Every work, runner and conversation row in the remaining tables is kept.
 
 Version 42 adds `review_asks` (Runner tables), the runner's record of each ask
 to a held integration candidate's authoring session. It starts empty.
+
+<!-- planned:thin-live-runtime-boundary -->
+Version 43 moves company conversations to unconditional explicit frontstage and
+live turn correlation:
+
+- `connected_conversations` drops `reply_mode`, `source_identity`, and
+  `position_json`, and adds `needs_explicit_rollover` (`INTEGER NOT NULL DEFAULT 0`).
+  Existing rows with `reply_mode = 'turn_output'` and `session IS NOT NULL` are
+  marked `needs_explicit_rollover = 1` for demand-driven one-time present-idle
+  successor rollover; unstarted `reply_mode = 'turn_output'` rows with
+  `session IS NULL` and `request IS NOT NULL` clear cached `request`, `opening`,
+  and `opening_conversation` so their first start builds a fresh
+  explicit-frontstage opening brief.
+- `conversation_messages` drops `turn_update`, adds nullable `observed_run_id`,
+  `turn_started_at`, and `terminal_error_queued_at`, and backfills
+  `dispatch_command_id` for existing `state = 'sent'` opening rows whose
+  `dispatch_command_id IS NULL` from `runtime_bindings.start_key` (falling back
+  to `connected_conversations.request`'s captured `native_launch.command_id`).
+- `conversation_answers` adds nullable `source_message` linking explicit reply
+  and terminal error pieces back to their originating `conversation_messages.message`.
+- Serialized `RuntimeStart` payloads across `connected_conversations`,
+  `runtime_bindings`, `runtime_generations`, `procedure_responsibilities`,
+  `procedure_generations`, and `manual_standing_reservations` remain JSON
+  wire-compatible across the runtime crate extraction.
+<!-- /planned:thin-live-runtime-boundary -->
 
 
 ### Work tables
@@ -1036,6 +1091,7 @@ is `(company, connector, conversation)`.
 the address (`(company, connector, conversation)`, with `conversation = ''` for
 the shared standing session of a `session_scope: company` connector).
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Column | Meaning |
 | --- | --- |
 | `semantic_key` | The key its one session is started and woken by (`instrukt:conversation:<company>:<connector>:<conversation>` for `conversation` scope; `instrukt:conversation:<company>:<connector>` for `company` scope). |
@@ -1047,10 +1103,23 @@ the shared standing session of a `session_scope: company` connector).
 | `source_identity`, `position_json` | The fixed identity of the bound native source and its opaque read position. A mismatch or missing identity on an existing binding is a configuration error; it advances neither the position nor native work. Initial binding and confirmed replacement establish the identity. |
 | `display_title` | Readable title captured for the session. |
 | `failure` | Cause of a source read failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
+<!-- change:thin-live-runtime-boundary -->
+| Column | Meaning |
+| --- | --- |
+| `semantic_key` | The key its one session is started and woken by (`instrukt:conversation:<company>:<connector>:<conversation>` for `conversation` scope; `instrukt:conversation:<company>:<connector>` for `company` scope). |
+| `role` | The role recorded from the connector declaration when the binding was created (default `'company-agent'`); caller assignment lookup reads this column to grant the connector's role. |
+| `session_scope` | `'conversation'` (default) or `'company'`. |
+| `needs_explicit_rollover` | Boolean (`0` or `1`, default `0`). Set to `1` by migration 43 for live pre-upgrade `turn_output` bindings; cleared to `0` atomically once a present-idle successor generation with the explicit-frontstage opening brief is adopted. |
+| `opening`, `opening_conversation`, `request` | The addressed message (and its originating conversation when `session_scope = 'company'`) whose delivery starts the session, and the start request captured for that message before the runtime is called. |
+| `session` | The bound session; `NULL` until a start is bound. |
+| `display_title` | Readable title captured for the session. |
+| `failure` | Cause of a live observation failure or a blocked bound session, with its recovery door where applicable. Cleared when work can resume. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **`conversation_messages`** — one row per addressed message. Key: the address
 and `message`, the connector's identity of that message.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Column | Meaning |
 | --- | --- |
 | `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
@@ -1077,6 +1146,35 @@ and `message`, the connector's identity of that message.
 | `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
 | `turn_update` | The newest message the agent has written in its turn, as the runtime records it, which its status shows; `NULL` until the agent has written one, and once its answer is posted or its turn completed with nothing to post. |
 | `turn_ended_at` | When its turn was read as ended, recorded before any post of its answer; a post of that answer that fails opens its interval from this time. `NULL` until then. |
+<!-- change:thin-live-runtime-boundary -->
+| Column | Meaning |
+| --- | --- |
+| `sender` | The connector identity of the person who wrote it, stored with the message before it is acknowledged. It decides nothing: admission reads the provider's record for it. |
+| `sender_name`, `sender_email` | The name and email address the provider gave for the sender when the message was admitted: `NULL` until then, and the address `NULL` when the provider gave none. Once written they do not change. |
+| `sender_is_admin`, `is_direct` | Booleans (`0` or `1`) recorded at admission: whether the provider reported the sender as a workspace administrator (`sender_is_admin`) and whether the conversation is a direct message (`is_direct`). Migrated rows default to `0`. Once written they do not change. |
+| `conversation_display` | Optional provider-supplied channel or DM label captured for this message (e.g. `#channel` or `DM with Name`), used to tag turns delivered to a company-scoped shared session. |
+| `thread` | Optional connector-supplied thread identifier when the message belongs to a thread (`NULL` for direct messages or unthreaded conversations). Keeps conversation IDs opaque to the company layer. Migration 35 adds the column. |
+| `written_us`, `written_at` | When it was written: in microseconds, which orders a conversation's messages, and as a timestamp. |
+| `arrived_at` | When it was stored. |
+| `state` | `received` once stored; `refused` once admission refused the sender (`not_own` or `not_admin`); `pending` once the sender is admitted, what accompanies the message is captured and its input is framed; `sent` once the runtime accepted it; `failed` once its turn ended unsuccessfully while retries remain; `answered` once its turn finished with an explicit reply or settled with a terminal standard error reply (`terminal_error_queued_at IS NOT NULL`). |
+| `text` | The message's text as written. |
+| `context_json`, `boundary`, `content` | The captured earlier messages with provider IDs and the context limit, how far an early read was complete, whether more context must be read, the delivery boundary, and the framed input. These fields are null until capture. The framed input is set to the selected context before an attempt and retained through uncertain acceptance. |
+| `context_delivery_ids` | The provider IDs selected for the most recent attempted input. The delivery transaction uses these IDs to write the receipts. |
+| `attempted_at` | When the current attempt began, recorded with the boundary that identifies it before the runtime can accept it. `NULL` before an attempt, after confirmed non-acceptance, or when its turn settles. An acknowledgement applies only while its boundary identifies the outstanding attempt. |
+| `dispatch_command_id` | The durable runtime input command identity for the current attempt (persisted for BOTH opening launches and follow-up sends before execution). Retained while the turn runs (never cleared by mid-turn explicit reply posting) and matched across `state IN ('pending', 'failed', 'sent') AND superseded_at IS NULL` for active-turn speaker correlation; cleared when the turn settles. |
+| `dispatch_write_at` | When writing the first request byte could have begun under the recorded follow-up command ID (set only on follow-up sends, not keyed opening starts, so `SEND_RECONCILE_BOUND` is not mis-armed while pending). Cleared when the attempt settles. |
+| `send_unknown_at` | When an unresolved send stopped blocking later work at `SEND_RECONCILE_BOUND`. The original frame, attempt boundary and time remain for a late match via bounded recent-turn observation. The row is not dispatched again and produces no further waiting indication or notice. A match clears this field. |
+| `retry_at`, `failed_turns` | The next eligible redelivery time on the operator clock and the failed-turn count used for bounded exponential backoff (`FAILED_RETRY_DELAY = 2m`, `FAILED_RETRY_LIMIT = 15m`, `FAILED_RETRY_MAX_ATTEMPTS = 3` retries / 4 total failed attempts). Upon exhaustion without an explicit reply, the row transitions atomically to `state = 'answered'` with `retry_at = NULL`, `terminal_error_queued_at = <now>`, and retained `failure` cause; rows with `terminal_error_queued_at IS NOT NULL` are never rescheduled. |
+| `observed_run_id`, `turn_started_at` | Live runtime run identity and start timestamp observed via `runtime`'s `read_state` once the turn enters execution; `NULL` before execution starts and retained until the turn settles. |
+| `terminal_error_queued_at` | Operator-clock timestamp when a terminal standard member-facing error reply was queued idempotently into `conversation_answers` (on bounded retry exhaustion or terminal completion without an explicit reply); `NULL` otherwise. |
+| `turn` | The explicit reply or terminal error turn identifier (`error:<message>`) that settled the message; `NULL` until then. |
+| `failure` | Cause of its last failed capture, delivery, or turn. `NULL` once served cleanly; retained on superseded rows and on rows settled via `terminal_error_queued_at` for operator inspection on `instrukt events status`. |
+| `admitted_at` | When its sender was admitted; `NULL` until then, and for a message admitted before it was recorded. |
+| `admission_position` | Durable sequence assigned at admission. Migration 23 seeds older admitted messages in retained row order. |
+| `superseded_at` | The operator clock time when a later-admitted message from the same sender in the same conversation settles and supersedes this failed row. `NULL` until then. Supersession closes the interval and removes the row from status and unfinished work while retaining its failure record. |
+| `unavailable_since` | Start of the current interval in which no observable turn does the work this message waits on, `NULL` outside one; started and ended as `project/instrukt/spec/feature/company/conversations` states, for this message only. |
+| `turn_ended_at` | When its turn was observed as ended, recorded before any post of its answer; a post of that answer that fails opens its interval from this time. `NULL` until then. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Superseded failed rows are retained for at least seven days from
 `superseded_at`, measured on the runner's operator clock. Each conversation
@@ -1102,6 +1200,7 @@ of pruning. The relay prunes at most 100 expired receipts per pass.
 Migration 25 seeds the IDs of already delivered addressed messages.
 Older accompanying messages have no stored provider IDs to recover.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **`conversation_answers`** — retained ordered answer pieces (from finished
 turns under `reply_mode: turn_output` and explicit replies queued by
 `instrukt company reply` under `turn = 'reply:<id>'`). Key: the address,
@@ -1114,6 +1213,26 @@ opaque id and its posting time or the observed response time. No local id is
 invented when the response omits one. Failure remains visible until confirmed
 posting. The normal relay retries unconfirmed pieces in order, allowing duplicates
 when a prior successful effect was not recorded before a restart.
+<!-- change:thin-live-runtime-boundary -->
+**`conversation_answers`** — retained ordered answer pieces (explicit replies
+ingested idempotently from `state/company-replies.db` under `turn = 'reply:<id>'`
+and terminal error replies under `turn = 'error:<message>'`). Key: the address,
+`turn` and `piece`. Columns: `text`, `admission_position`, `source_message`
+(nullable link to the originating `conversation_messages.message` for
+addressed-turn replies and terminal errors, `NULL` for direct-operator explicit
+replies), `attempted_at`, `provider_post_id`, `posted_at` and `failure`. Every
+relay pass ingests all un-ingested rows from `state/company-replies.db` into
+`conversation_answers` before evaluating turn completion or idle-without-reply
+(failing closed on outbox read errors while allowing already-ingested pieces to
+post). The attempt timestamp records the most recent posting attempt for
+status; it imposes no uncertainty deadline. A NULL `posted_at` keeps a piece
+pending regardless of its age or prior outcome. Only a successful post response
+confirms acceptance, with the provider's optional opaque id and its posting
+time or the observed response time. No local id is invented when the response
+omits one. Failure remains visible until confirmed posting. The normal relay
+retries unconfirmed pieces in order, allowing duplicates when a prior
+successful effect was not recorded before a restart.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Migration preserves text, order, admission associations, failures and confirmed
 posting times, with an unknown provider id for old confirmed pieces. Old reserved
@@ -1195,6 +1314,7 @@ A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again
 after a restart. A message's `refused` state and the reply owed to its sender
 are written in one transaction.
+<!-- planned-change:thin-live-runtime-boundary -->
 Reading a finished turn and the connector accepting a post are separate
 boundaries: an answer's pieces are stored in the same transaction as the
 position that read them and the message's `answered` state, and `posted_at`
@@ -1202,6 +1322,14 @@ is set only when the connector accepted that piece. Recording the final
 piece's receipt closes the message's no-work interval and clears its turn
 update in the same transaction. These tables hold no
 credential.
+<!-- change:thin-live-runtime-boundary -->
+Ingesting explicit replies (or queueing a terminal error reply) and the
+connector accepting a post are separate boundaries: answer pieces commit in
+`conversation_answers` before connector I/O, and `posted_at` is set only when
+the connector accepted that piece. Recording the final piece's receipt closes
+the originating message's no-work interval in the same transaction. These
+tables hold no credential.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **`connector_private_messages`** — the messages a connector posted for one
 person alone, such as a sign-in link

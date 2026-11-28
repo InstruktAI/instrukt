@@ -170,10 +170,18 @@ text, calls a model or judges whether a unit means what its source means.
    `visibility` of a snippet, which is docs'
    (`project/instrukt/spec/domain/docs`).
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Configured agent runtime**
 :  An agent runtime the runtime `runner.runtime` selects reports as configured
    and enabled — for T3, an enabled provider instance — with the home that
    instance runs with.
+<!-- change:thin-live-runtime-boundary -->
+**Configured agent runtime**
+:  An agent runtime the selected runtime adapter reports as configured and
+   enabled through its optional configured-agent-runtimes capability
+   (`project/instrukt/spec/feature/runtime/adapter`), with the instruction home
+   directory that instance runs with.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **Global agent file**
 :  The user-scope instruction file of a configured agent runtime, in the home

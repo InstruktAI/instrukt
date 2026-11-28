@@ -166,6 +166,7 @@ capability the global layer admits runs unchanged.
 
 ### Layer rules
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
@@ -200,6 +201,42 @@ capability the global layer admits runs unchanged.
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- change:thin-live-runtime-boundary -->
+| Key | Layer | Meaning owned by |
+| --- | --- | --- |
+| `schema_version` | each document | configuration |
+| `agents.<name>.git_author` | global only | commit composition |
+| `backup` (required `endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`, `age_recipient`; optional `prefix`, `keep`, `time`) | global only | runner home backup |
+| `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
+| `events.watch: [{remote, ref}]` | project only | runner |
+| `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `company` | company home only; equals the home folder's name | configuration |
+| `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
+| `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
+| `connectors.<name>` (optional `kind` defaulting to `<name>`, optional `role` defaulting to `company-agent`, optional `admit` (`members` \| `admins_only`), optional `session_scope` (`conversation` \| `company`), plus the provider fields that `kind` declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
+| `mcp_clients.<name>` (required `issuer` authorization server URL, required `id` and optional `secret` references into `~/.instrukt/secrets.env`, optional `description`) | global only; reusable host-level OAuth clients pinned to one authorization server issuer that companies reference via `sign_in.client_ref` | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` mode, scopes, host `client_ref` or local `client` references, and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
+| `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
+| `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
+| `ticks` | global only | the runner |
+| `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
+| `runner.notify` | global only | the runner |
+| `runner.runtime` (compiled adapter name registered via `RuntimeDeclaration`; unset selects the default compiled adapter) | global only | runtime |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
+| `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
+| `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
+| `project` | project only | docs and publication |
+| `requires` (modules the flavor needs) | project only | publication |
+| `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
+| `github.apps` (App/bot public identities and protected private-key references), `github.project_app` (fallback App reference) | global only | work GitHub boundary; configuration stores and validates declarations |
+| `github.approvers` (GitHub logins) | project only | work |
+| `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
+| `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
+| `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
+| `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 `github.org` (the login of a GitHub organisation) is global only. It names the
 organisation that owns the company home repositories this computer adds, and
@@ -312,10 +349,20 @@ installer toggle, shared configuration layer or runtime detection is added.
 
 ### Runtime choice
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The developer may choose global `runner.runtime` by compiled adapter name. `t3`
 selects the shipped T3 implementation; an unknown name is a validation finding.
 An unset value selects the one runtime compiled into this instrukt. No runtime is
 detected from installed tools or from a caller inside a runtime's session.
+<!-- change:thin-live-runtime-boundary -->
+The developer chooses global `runner.runtime` by compiled adapter name
+validated against the `RuntimeDeclaration` catalog installed once by the CLI at
+startup (`project/instrukt/spec/domain/runtime`); an unknown name is a
+validation finding, and calling runtime resolution with no declarations
+installed fails closed with a configuration error. An unset value selects the
+default compiled runtime registered by the CLI. No runtime is detected from
+installed tools or from a caller inside a runtime's session.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 `runtimes` is a map keyed by runtime name. Each entry holds the named nonempty
 agent-action instruction values below. `runner.runtime` selects that entry;
@@ -363,6 +410,7 @@ The following table specifies the instruction text carried by the `t3` entry.
 Only the configuration entry carries the runtime-specific execution wording;
 agent-facing consumers retrieve the value through its alias.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Value | T3 entry instruction |
 | --- | --- |
 | `dispatch` | Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. A repository todo shares one `<slug>/work` worktree; all repository children inherit `todo-orchestrator`'s workspace (`kind: task` creates no git worktree). Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery. |
@@ -390,6 +438,37 @@ Feature enablement is checked against the selected runtime's native/adapter capa
 runtime, enabling runtime-dependent features is refused with that reason. A
 missing capability refuses and names the runtime and capability. Configuration
 reads and documentation remain usable without a runtime.
+<!-- change:thin-live-runtime-boundary -->
+| Value | T3 entry instruction |
+| --- | --- |
+| `dispatch` | Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. A repository todo shares one `<slug>/work` worktree; all repository children inherit `todo-orchestrator`'s workspace (`kind: task` creates no git worktree). Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery. |
+| `message_child` | Message or continue the identified child natively, as the `message_child` contract above requires: a follow-up within an outstanding attempt stays under that role/attempt, and a newly reserved attempt is bound to the child through instrukt before its brief is sent. The native wording is owned by the shipped T3 runtime declaration, `crates/instrukt-runtime-t3/shipped/t3.yaml`. |
+| `message_peer` | Use native thread messaging for the supplied peer/coordinator thread id and text. Preserve its identity and the message's attribution. |
+| `read_thread` | Read the identified thread with native thread-read operations, including the relevant message range and attribution. Report pagination or unavailable evidence; read no archive/history service. |
+| `inspect_thread` | Read the identified native thread or own delegated task through its native status/result operation. Follow native completion/wake instructions; inspect a running task only when those instructions permit it or your scheduled reply check fires. |
+| `schedule_check` | Set, update or clear the check with native scheduled tasks bound to this thread and running in its own session, as the `schedule_check` contract above requires. The native wording is owned by the shipped T3 runtime declaration, `crates/instrukt-runtime-t3/shipped/t3.yaml`. |
+| `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
+| `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
+| `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a repository todo, start `t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>` (on another computer use `--worktree origin/<slug>/work --branch <slug>/work`; legacy un-integrated `<slug>/prepare` branches are carried forward automatically). instrukt derives these names; creation refuses an existing local branch. Native shared children inherit `<slug>/work`. After deliberate native startup, enter `instrukt todo work <slug> --placement-evidence <file\|->` containing native session, key, title, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
+| `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
+| `finish_thread` | Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message. |
+| `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
+| `connect_environment` | Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite. |
+| `dispatch_remote` | Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success. |
+
+Selection and entry values stay global; a project cannot replace either. A
+shipped entry is supplied by its compiled runtime's `RuntimeDeclaration` and
+never chooses the runtime on the developer's behalf. Unattended adapter
+operations run through `runtime`'s adapter boundary independently of these
+agent values; caller-identity recognition remains an environment-only code
+operation (`project/instrukt/spec/feature/runtime/adapter`).
+
+Feature enablement is checked strictly against the selected runtime's installed
+`RuntimeDeclaration` capabilities (`project/instrukt/spec/feature/runtime/adapter`).
+Without a selected runtime, enabling runtime-dependent features is refused with
+that reason. A missing capability refuses and names the runtime and capability.
+Configuration reads and documentation remain usable without a runtime.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### Agent preferences and availability
 
@@ -445,6 +524,7 @@ with `--global` answers from the global layer alone. Writes address one layer
 - a value of the wrong type or outside its allowed values;
 - a missing `schema_version`;
 - `ingress.reactions` set while `ingress.computer` is not;
+<!-- planned-change:thin-live-runtime-boundary -->
 - a feature switched on whose required capabilities the chosen adapter lacks,
   or switched on while `runner.runtime` names no compiled adapter, naming each
   missing capability and the selected runtime
@@ -463,6 +543,26 @@ with `--global` answers from the global layer alone. Writes address one layer
   (`project/instrukt/spec/feature/runner/session-continuity`). A write that
   would set it so, or choose such a runtime while it is set, is refused with
   the same naming.
+<!-- change:thin-live-runtime-boundary -->
+- a feature switched on whose required capabilities the chosen adapter's
+  `RuntimeDeclaration` lacks, or switched on while `runner.runtime` names no
+  compiled adapter, naming each missing capability and the selected runtime
+  (`project/instrukt/spec/feature/runtime/adapter`). A write that would switch
+  such a feature on is refused with the same naming. Events on a computer that
+  is the ingress and not the reacting computer need no runtime: receiving and
+  publishing need no agent;
+- in a project, `modules.todos` on in the effective configuration while the
+  project's code is not on GitHub, saying in plain words that todos need the
+  project's code on GitHub
+  (`project/instrukt/spec/feature/work/github-record`). A write to the
+  project layer that would switch todos on there is refused with the same
+  reason.
+- `runner.archive_finished_after` set while the selected runtime's
+  `RuntimeDeclaration` does not support thread archiving, naming the runtime
+  and the missing capability (`project/instrukt/spec/feature/runtime/adapter`).
+  A write that would set it so, or choose such a runtime while it is set, is
+  refused with the same naming.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 That capability finding withholds only thread retention: wherever the
 machine layer is admitted, a layer whose only findings are this one is
@@ -510,6 +610,12 @@ as an invalid `backup` declaration withholding only home backup).
   runtime entry of its `runtimes`, keeping every other agent-action value. A
   runtime entry that this removal leaves empty is removed, and so is a
   `runtimes` map it leaves empty.
+<!-- planned:thin-live-runtime-boundary -->
+- A company home's `company.yaml` converts one-way forward from schema version
+  6 to schema version 7 by stripping `reply_mode` from every entry under
+  `connectors.<name>` while preserving all other connector settings; version 7
+  validation rejects `reply_mode` as an unknown field.
+<!-- /planned:thin-live-runtime-boundary -->
 
 ### Environment
 

@@ -97,9 +97,15 @@ missing `url` or `description`.
 
 ### Whose declarations a call sees
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The command takes its caller from the selected runtime's caller identity
 (`project/instrukt/spec/feature/runner/session-continuity`), and reads the
 runner's recorded assignment for that session.
+<!-- change:thin-live-runtime-boundary -->
+The command takes its caller from the selected runtime's caller identity
+(`project/instrukt/spec/feature/runtime/adapter`), and reads the runner's
+recorded assignment for that session.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 | Caller | Declarations |
 | --- | --- |
@@ -118,6 +124,7 @@ a role or a login.
 
 ### The login a call carries
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The speaker is the person the company context recorded as the sender of the
 addressed message that started the calling session's current turn
 (`project/instrukt/spec/domain/company`). The current turn is the
@@ -126,6 +133,35 @@ leaves running beyond its turn is judged by the turn then in progress, and is
 refused when the session has none or the runtime cannot say. A session with no
 such record has no speaker. No argument and no value the agent passes selects
 a speaker or a member.
+<!-- change:thin-live-runtime-boundary -->
+The speaker is resolved fail-closed at point of use by the company context
+(`project/instrukt/spec/domain/company`,
+`project/instrukt/spec/feature/company/conversations`), correlating a lock-free
+WAL snapshot of instrukt-owned conversation state against the selected
+runtime's live `read_state` (`project/instrukt/spec/feature/runtime/adapter`):
+
+- **Verified active addressed turn:** when the active bound session is present
+  and running with an active turn whose input identity matches an in-flight
+  addressed message on that binding, the call carries that message's recorded
+  member speaker (surviving restarts and staying intact after explicit
+  replies).
+- **Fail-closed refusal:** when the live observation or state lookup fails, the
+  session is idle (`input-ready`), failed, gone, absent, archived, or
+  preparing/queued, the active turn or its opening input is unavailable, the
+  input identity matches an adjacent/different company-delivered message or
+  carries an unrecognized company member envelope, or the calling session
+  matches a retired conversation generation (`runtime_generations`), the call
+  is refused and **never** falls through to the company's service-account
+  `login`.
+- **Confirmed direct operator / technical-owner turn:** when the active bound
+  session is confirmed running on an input matching no company-delivered
+  message and whose available opening text carries no company member envelope,
+  the call has no addressed member speaker and never inherits any prior
+  member's identity or credentials.
+
+A session outside company conversations has no speaker. No argument and no
+value the agent passes selects a speaker or a member.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 A speaker's stored logins are those of the one member entry of that company
 (`project/instrukt/spec/feature/configuration/company-homes`) whose email
@@ -578,6 +614,7 @@ otherwise; it is sent as plain text.
 
 ### What the caller identity establishes
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The caller identity is the runtime's statement of which session a process
 belongs to, and instrukt does not authenticate a caller beyond it. Every
 process of the same operating-system user is trusted: a caller presenting
@@ -588,6 +625,20 @@ home, logins or sessions
 (`project/instrukt/spec/feature/company/company-containers`); inside one
 company's container, every process is trusted alike. The `--company` path
 is the local operator's.
+<!-- change:thin-live-runtime-boundary -->
+The caller identity is the runtime's statement of which session a process
+belongs to, and instrukt does not authenticate a caller beyond it. Every
+process of the same operating-system user is trusted: a caller presenting
+another session's identity is served as that session, and that user can read a
+company home's files, its secrets file among them. Under Tier-1 shared-host
+onboarding, companies share one OS user with folder separation only; hard OS
+and filesystem confinement between companies is provided at Tier 2, where each
+company runs in its own isolated Linux container holding no other company's
+home, logins, or sessions
+(`project/instrukt/spec/feature/company/company-containers`). Inside one
+company's environment, every process is trusted alike. The `--company` path is
+the local operator's.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### Commands
 

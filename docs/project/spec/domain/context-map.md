@@ -86,12 +86,22 @@ domain spec owns its behavior. The map is not an additional bounded context.
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 Events are a module switch within the runner's semantic boundary, not a tenth
 bounded context. The runner's work follows the enabled modules; events do not
 require todo autostart. A flavor declares its module requirements through
 `requires`. Eval has no module or switch: stamps carry model, version and eval
 fingerprint; reporting uses `instrukt eval report` and the flavor's report
 procedure. There is reportable work only where work passes through the record.
+<!-- change:thin-live-runtime-boundary -->
+Events are a module switch within the runner's semantic boundary, not a
+separate bounded context. The runner's work follows the enabled modules; events
+do not require todo autostart. A flavor declares its module requirements
+through `requires`. Eval has no module or switch: stamps carry model, version
+and eval fingerprint; reporting uses `instrukt eval report` and the flavor's
+report procedure. There is reportable work only where work passes through the
+record.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 A report covering other computers reaches them through the runner's fleet query
 over the cluster connection each computer already has, whether or not history
@@ -154,13 +164,13 @@ not permission for an upstream module to depend on its consumer.
 | configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration, runner settings and company homes |
 | configuration → company | Customer / Supplier | Company homes with their settings, members, resolved secrets and declared connectors |
 | company → configuration | Published language | Each connector kind's declaration, which configuration validates a company home's `connectors:` against (`project/instrukt/spec/domain/configuration`) |
-| runtime → configuration | Published language | Each compiled runtime's declaration (`RuntimeDeclaration`: name, native and workflow capabilities, archive support, shipped instruction catalog) and environment-only caller-identity lookup, installed once at CLI startup (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/domain/configuration`) |
-| runtime → publication | Customer / Supplier | Configured agent runtimes and their homes reported by the selected runtime's adapter for global agent files; core-declared interface wired by the CLI |
-| runtime → runner | Customer / Supplier | Universal live adapter spine (start, send, live state and structured turn correlation, readiness/liveness, caller identity), live start/send/input observation with zero live runtime-database reads, and optional capabilities (`Worktree`, `NativeDelegation`, `AgentSelection`, `RuntimeProjectIsolation`, non-live `ColdTextSource` for history extraction, `Archive` for thread retention) (`project/instrukt/spec/domain/runtime`) |
-| runtime → company | Customer / Supplier | Live `read_state` with structured active-turn correlation (`active_turn.run_id`, `active_turn.input_id`, opening-input inspection) for fail-closed active-speaker resolution and live turn tracking, plus keyed start and idempotent send |
+| runtime → configuration | Published language | Each compiled runtime's declaration (`RuntimeDeclaration` values, capability flags, shipped instruction catalog, and static legacy-history normalizer hook) and environment-only caller-identity lookup, installed once at CLI startup (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/domain/configuration`) |
+| runtime → publication | Customer / Supplier | Optional configured agent runtimes and their instruction homes reported by the selected runtime's adapter for global agent files; core-declared interface wired by the CLI |
+| runtime → runner | Customer / Supplier | Universal live adapter spine (`start`/`start_or_wake` primitives, `send`, `read_state`, `caller_identity`, `execution_root`, `list`), structured active/recent turn observations with zero live runtime-database reads, and declared optional progressive capabilities (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/feature/runtime/adapter`) |
+| runtime → company | Customer / Supplier | Live `read_state` with structured active/recent turn correlation and neutral opening-input data for fail-closed active-speaker resolution and live turn tracking, plus idempotent start and send primitives |
 | runtime → work | Customer / Supplier | Runtime session references stored on todos and review evidence without translating native runtime mechanics |
-| runtime → workflow | Customer / Supplier | Runtime capability vocabulary declared in `workflow.yaml` `requires` and held-session observation for candidate review coverage |
-| runner → company | Customer / Supplier | Keyed start orchestration, identity envelopes and the state database handle |
+| runtime → workflow | Customer / Supplier | Runtime capability vocabulary declared in `workflow.yaml` `requires` (`project/instrukt/spec/feature/runtime/adapter`) |
+| runner → company | Customer / Supplier | Keyed start and present-idle rollover orchestration, identity envelopes and the state database handle |
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner, implemented by company and wired by the CLI; a connector's direct message to one person, which MCP sign-in sends its links through |
 | work → company | Customer / Supplier | The state database's file, writer lock and migrations, holding the conversation tables |
 | work, runner, company → CLI admission | Published language | Owner-supplied todo attempts, standing/scheduled assignment facts and conversation assignments for the recognized caller; core-declared lookup wired by the CLI |
@@ -212,8 +222,8 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → runner | Customer / Supplier | Whether a pull request is a todo's, whether a commit carries a verdict and which review evidence is current for it; recording or withdrawing a derived approval and publishing outstanding verdicts through work's command contract |
 | runner → work | Customer / Supplier | A commit's review requests, each with its number, its standing (queued, selected, handed over to a named session, or ended with its disposition), the session it reached and its pinned base, consulted when a head verdict is admitted |
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
-| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer, the runner's red observation of the canonical head and runtime's answer on each uncovered commit's named session; for a held candidate, which uncovered commits wait on which session's decision, and whether the candidate owes its own review |
-| runtime → workflow | Customer / Supplier | Whether the selected runtime holds a named session, consulted for each uncovered commit's authoring session when coverage is derived |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer, the runner's red observation of the canonical head and the runner's answer on each uncovered commit's named session; for a held candidate, which uncovered commits wait on which session's decision, and whether the candidate owes its own review |
+| runner → workflow | Customer / Supplier | Whether the selected runtime holds a named session (composed by runner over runtime's `read_state` and project-verification checks with runner's delivery-eligibility rules), consulted for each uncovered commit's authoring session when coverage is derived |
 | runner → workflow | Published language | `runner.candidate_held` tells the integrator which candidate is held and for whose decisions |
 <!-- /planned-change:thin-live-runtime-boundary -->
 

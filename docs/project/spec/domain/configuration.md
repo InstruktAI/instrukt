@@ -93,8 +93,9 @@ finding. No runtime is detected from installed tools or the caller's environment
 : The compiled runtime adapter chosen by global `runner.runtime`, validated
 against the runtime declarations (`RuntimeDeclaration`) installed once by the
 CLI at startup (`project/instrukt/spec/domain/runtime`). Absent, it is the
-default compiled runtime registered by the CLI; an unknown name is a finding.
-No runtime is detected from installed tools or the caller's environment.
+default compiled runtime registered by the CLI; an unknown name or absent
+runtime registration fails closed as a finding or error. No runtime is detected
+from installed tools or the caller's environment.
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 **Caller identity**

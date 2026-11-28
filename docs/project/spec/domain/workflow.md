@@ -44,20 +44,11 @@ commit. Intelligence owns all activity routing in clear prose
 - **Owns:** flavor manifest schema (`workflow/workflow.yaml`), pure factual ledger derivation (`TodoLedger`), repository observations (worktree cleanliness, heads, grounding drift), the exact-SHA handoff check (independent review approval and admitting verification disposition), which session may record which verification disposition and which may follow another for a commit (`project/instrukt/spec/feature/workflow/delivery-cycle`), and runner `WorkflowAssignments` dispatch selection.
 - **Does not own:** activity micro-routing (owned by prose procedures), work-record storage/reflection (owned by `work`), or session/process execution (owned by `runner`).
 
-<!-- planned-change:thin-live-runtime-boundary -->
 Workflow also derives the active candidate's review coverage on request, from
 the repository, the independent approvals todo records bind to exact commits,
 work's answer on each other commit's current review evidence, the runner's
 red observation of the canonical head and, for each uncovered commit's named
 authoring session, the runner's answer whether the selected runtime holds it.
-<!-- change:thin-live-runtime-boundary -->
-Workflow also derives the active candidate's review coverage on request, from
-the repository, the independent approvals todo records bind to exact commits,
-work's answer on each other commit's current review evidence, the runner's
-red observation of the canonical head and, for each uncovered commit's named
-authoring session, whether the selected runtime holds it
-(`project/instrukt/spec/domain/runtime`).
-<!-- /planned-change:thin-live-runtime-boundary -->
 It is a derived fact and workflow stores it nowhere. Its rule, and what
 follows an uncovered commit, belong to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
@@ -130,8 +121,8 @@ there, never by reading through delivered work.
 <!-- planned-change:thin-live-runtime-boundary -->
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage and, for a held candidate, which uncovered commits wait on which session's decision; the runner supplies the canonical head's CI result as it observed it and whether the selected runtime holds a named session.
 <!-- change:thin-live-runtime-boundary -->
-- **Runtime → workflow:** runtime defines the capability vocabulary declared in `workflow.yaml` `requires` (`project/instrukt/spec/domain/runtime`) and answers whether the selected runtime holds a named session for candidate review coverage.
-- **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage and, for a held candidate, which uncovered commits wait on which session's decision; the runner supplies the canonical head's CI result as it observed it.
+- **Runtime → workflow:** runtime defines the capability vocabulary declared in `workflow.yaml` `requires` (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/feature/runtime/adapter`).
+- **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage and, for a held candidate, which uncovered commits wait on which session's decision; the runner supplies the canonical head's CI result as it observed it and whether the selected runtime holds a named session.
 <!-- /planned-change:thin-live-runtime-boundary -->
 - **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
 

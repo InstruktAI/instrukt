@@ -182,12 +182,26 @@ names a company home (`project/instrukt/spec/feature/company/conversations`),
 access is restricted strictly to that company's own `mcp` declarations and
 requires an authenticated administrator speaking in a direct message:
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - The active turn's recorded speaker must have `is_admin = true` and
   `is_direct = true`, as the connector recorded at admission. A non-admin, a
   channel turn (`is_direct = false`), a session with no active turn, or a
   `--company` naming another company is refused, naming its door: an
   administrator asks in a direct message to the company agent, or the local
   operator runs the command outside any session.
+<!-- change:thin-live-runtime-boundary -->
+- The active turn's speaker is verified fail-closed through the company
+  context's active-speaker lookup (correlating a lock-free WAL snapshot of
+  instrukt-owned conversation state against `runtime`'s live `read_state`,
+  `project/instrukt/spec/domain/company`) and must resolve to Outcome 1
+  (verified active addressed turn) with `is_admin = true` and
+  `is_direct = true`, as recorded at admission. A non-admin, a channel turn
+  (`is_direct = false`), an idle/failed/gone/unobservable/unmatched turn, a
+  direct operator turn (Outcome 3), a retired conversation generation
+  (`runtime_generations`), or a `--company` naming another company is refused,
+  naming its door: an administrator asks in a direct message to the company
+  agent, or the local operator runs the command outside any session.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - Allowed verbs inside that scope are `schema --company <own> mcp`,
   `get --company <own> mcp`, `get --company <own> --revision`,
   `validate --company <own>`, and `patch --company <own> --revision <rev>`

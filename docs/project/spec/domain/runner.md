@@ -318,9 +318,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
   home backup standing query (core-declared, CLI-wired for publication), the
   sign-in return path, and wake-up, runner-service, and daily home backup timer
   registration by `instrukt install`; instrukt-owned start semantic-key
-  discovery, keyed-start orchestration and database locking; the hosting and
-  the conversation assignment lookup that the company context implements and
-  the CLI wires. Every operational sessions command accepts `--json`.
+  discovery, keyed-start and present-idle rollover orchestration, and database
+  locking; the hosting and the conversation assignment lookup that the company
+  context implements and the CLI wires. Every operational sessions command
+  accepts `--json`.
   Agents use configured native operations in their own conversation and
   record native child attempts through work. The adapter starts only without
   an agent or for an explicit native-capability gap. Native delegation returns
@@ -331,10 +332,11 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
   `workflow.finalized`.
 - **Allowed dependencies:** runtime supplies the vendor-neutral
-  `RuntimeAdapter` trait, structured turn/state observations, and optional
-  capabilities (`Worktree`, `NativeDelegation`, `AgentSelection`,
-  `RuntimeProjectIsolation`, non-live `ColdTextSource`, and `Archive`) through
-  `instrukt-runtime`, without importing any concrete adapter crate; blueprint
+  `RuntimeAdapter` universal live spine, structured active/recent turn
+  observations, and declared optional progressive capabilities
+  (`project/instrukt/spec/domain/runtime`,
+  `project/instrukt/spec/feature/runtime/adapter`) through `instrukt-runtime`,
+  without importing any concrete adapter crate; blueprint
   supplies its release-owned tool lifecycle to module installation;
   configuration supplies effective machine and project settings and company
   homes; publication supplies project checkout paths; docs supplies subscribed
@@ -628,6 +630,7 @@ registered project whose checkout is on the computer, whatever modules that
 project switches on. The contract is
 `project/instrukt/spec/feature/runner/thread-retention`.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 A pass reads, for each such project, the finished threads the selected runtime
 lists for it through the adapter's finished-thread listing
 (`project/instrukt/spec/feature/runner/session-continuity`). It keeps every thread a standing responsibility holds — the
@@ -641,6 +644,21 @@ remaining eligible threads across projects, the pass attempts the longest
 quiet first, up to its bound on archive attempts whatever their outcome, each
 archived only while the adapter finds the observation it was chosen from still
 holds.
+<!-- change:thin-live-runtime-boundary -->
+A pass reads, for each such project, the finished threads the selected runtime
+lists for it through the adapter's optional finished-thread listing
+(`project/instrukt/spec/feature/runtime/adapter`). It keeps every thread a
+standing responsibility holds — the session of its current binding, of its
+standing runtime binding, or of its manual reservation, observed or bound —
+and every thread work associates with one of the project's todos without a
+terminal outcome. When the standing bindings or work's answers cannot be read,
+the pass archives nothing. A project whose listing or whose work answer cannot
+be read in a pass is left whole for a later pass: nothing is archived on a
+partial answer. Of the remaining eligible threads across projects, the pass
+attempts the longest quiet first, up to its bound on archive attempts whatever
+their outcome, each archived only while the adapter finds the observation it
+was chosen from still holds.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 No pickup, event reaction or other command waits on a pass; only the
 `instrukt tick` that runs one returns after it. In `instrukt run` it
@@ -1148,7 +1166,7 @@ related references.
 <!-- change:thin-live-runtime-boundary -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| runtime → runner | Customer / Supplier | Universal live adapter spine, structured turn/state observations, live start/send/input evidence with zero live runtime-DB reads, and optional capabilities (`Worktree`, `NativeDelegation`, `AgentSelection`, `RuntimeProjectIsolation`, non-live `ColdTextSource`, `Archive`) (`project/instrukt/spec/domain/runtime`) |
+| runtime → runner | Customer / Supplier | Universal live adapter spine, structured active/recent turn observations with zero live runtime-database reads, and declared optional progressive capabilities (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/feature/runtime/adapter`) |
 | configuration → runner | Customer / Supplier | Runtime mapping, module switches, runner settings, and company homes with their settings and secrets |
 | workflow → runner | Customer / Supplier; Published language | Computed state, transitions and finalize-ready event used for dispatch |
 | work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
@@ -1157,7 +1175,7 @@ related references.
 | publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
 | work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
-| runner → company | Customer / Supplier | Keyed start orchestration, identity envelopes and the state database handle |
+| runner → company | Customer / Supplier | Keyed start and present-idle rollover orchestration, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 <!-- /planned-change:thin-live-runtime-boundary -->
 
@@ -1212,10 +1230,12 @@ owes its own review. Through work's command contract the
 runner records or withdraws a derived approval and has outstanding verdicts published,
 handing over the eligible pull requests it observed at each head. It supplies
 work with a commit's review requests, each with its number, standing, the
-session it reached and pinned base; the runtime context answers whether the
-selected runtime holds a named session. For a held candidate it sends each
-author ask through its input delivery and tells the integrator with
-`runner.candidate_held` (`project/instrukt/spec/domain/context-map`).
+session it reached and pinned base; it supplies workflow with whether the
+selected runtime holds a named session (composed over runtime's `read_state`
+and project verification with runner's delivery-eligibility policy). For a held
+candidate it sends each author ask through its input delivery and tells the
+integrator with `runner.candidate_held`
+(`project/instrukt/spec/domain/context-map`).
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 
@@ -1287,6 +1307,7 @@ core declares and the CLI wires (`project/instrukt/spec/domain/context-map`).
 
 ## Known caveats
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - The target delivery contract requires durable acceptance, bounded batch
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization uses the selected runtime's supported input boundary. Missing
@@ -1295,6 +1316,16 @@ core declares and the CLI wires (`project/instrukt/spec/domain/context-map`).
   standing procedure may self-settle when parked dormant
   (`general/procedure/event-handling/overview`), and a settled one stays
   reachable (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+<!-- change:thin-live-runtime-boundary -->
+- The target delivery contract requires durable acceptance, bounded batch
+  selection, procedure-first briefing and untrusted activation provenance. Its
+  realization uses the selected runtime's supported input boundary. Missing
+  steering degrades ASAP attention to queued input or idle entry without a
+  validation finding. Runner automation never settles a standing runtime
+  thread; a standing procedure may self-settle when parked dormant
+  (`general/procedure/event-handling/overview`), and a settled one stays
+  reachable (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 - A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
   one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
