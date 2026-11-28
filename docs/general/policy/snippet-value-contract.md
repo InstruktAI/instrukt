@@ -330,11 +330,6 @@ would violate `general/principle/intelligence-boundaries`.
 - The discovery-to-taxonomy tables in `project-analysis` and
   `init-scaffolding` describe shapes worth considering, not slots to fill.
   Each row is conditional on the value test.
-<!-- planned:doctrine-commands-and-scan -->
-- Reviewers check changed snippets for unbackticked commands, redundant
-  `instrukt docs get` invocations, and copied `--flag` recipes during snippet
-  review.
-<!-- /planned:doctrine-commands-and-scan -->
 
 ## Exceptions
 

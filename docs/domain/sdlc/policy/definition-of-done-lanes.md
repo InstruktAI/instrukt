@@ -691,15 +691,17 @@ surface references that owner. Judge the meaning; do not build or rely on a
 keyword scanner.
 
 <!-- planned:doctrine-commands-and-scan -->
-**Shared-doctrine command check.** For changed regions in `docs/general/` and
-`docs/domain/**`, verify that CLI commands sit inside backticks or fenced code
-blocks (`general/spec/snippet-authoring-schema`) and honour
-`general/policy/snippet-value-contract`: flag commands written in plain prose
-outside code containers, redundant `instrukt docs get` invocations outside the
-retrieval-defining baseline snippets, and copied `--flag` recipes (local-only
-doctrine retains `instrukt <subcommand>` and multi-target snippets use
-`<!-- @config: ... -->` placeholders). `docs/project/**` snippets are exempt
-from the shared-doctrine retrieval and `--flag` restrictions.
+**Snippet command check.** For every changed snippet region (`docs/**`,
+including `docs/project/**`), verify that CLI commands sit inside backticks or
+fenced code blocks (`general/spec/snippet-authoring-schema`), flagging commands
+written in plain prose outside code containers. For changed regions in shared
+doctrine (`docs/general/` and `docs/domain/**`), additionally verify compliance
+with `general/policy/snippet-value-contract`: flag redundant
+`instrukt docs get` invocations outside the retrieval-defining baseline
+snippets and copied `--flag` recipes (local-only doctrine retains
+`instrukt <subcommand>` and multi-target snippets use `<!-- @config: ... -->`
+placeholders). `docs/project/**` snippets are exempt from those shared-doctrine
+retrieval and `--flag` restrictions.
 <!-- /planned:doctrine-commands-and-scan -->
 
 For each changed snippet body, flag the Narration anti-pattern in its four forms
@@ -817,9 +819,10 @@ Severity guidance:
   **Critical** when it conflicts with the applicable language owner or directs
   implementation through the wrong language mechanism.
 <!-- planned:doctrine-commands-and-scan -->
-- A CLI command written outside backticks or fenced code blocks, a redundant
-  `instrukt docs get` outside retrieval-defining baseline snippets, or a copied
-  `--flag` recipe introduced in shared doctrine (`docs/general/`,
+- A CLI command written outside backticks or fenced code blocks in any changed
+  snippet (`docs/**`) → **Important**.
+- A redundant `instrukt docs get` outside retrieval-defining baseline snippets
+  or a copied `--flag` recipe introduced in shared doctrine (`docs/general/`,
   `docs/domain/**`) → **Important**.
 <!-- /planned:doctrine-commands-and-scan -->
 - Pre-existing narration in a region this change did not touch → **drop the
