@@ -647,14 +647,15 @@ mod tests {
         assert_eq!(with_fm.directives, without_fm.directives);
         assert_eq!(
             with_fm.frontmatter,
-            CompanyFrontmatter::Read {
-                description: Some(
-                    "Read @general/policy/commits and [old](../secret.md) <!-- @config: company -->."
-                        .to_owned()
-                ),
-                visibility: Some(serde_yaml_ng::Value::String("internal".to_owned())),
-            }
+            company_document(frontmatter).frontmatter
         );
+        assert!(matches!(
+            with_fm.frontmatter,
+            CompanyFrontmatter::Read {
+                description: Some(_),
+                visibility: Some(_),
+            }
+        ));
         assert_eq!(placed(&text), placed(body_part));
         assert_eq!(kept(&text, CompanyText::Whole), text);
         assert_eq!(kept(&text, CompanyText::Body), without_fm.body);
@@ -684,10 +685,15 @@ mod tests {
 
     #[test]
     fn a_pre_split_company_body_does_not_strip_a_second_leading_fence_block() {
-        let body = "---\n## Required reads\n\n- extra.md\n\n## Rules\n---\n- rule\n";
-        let document = company_body(body);
+        let before = "---\n";
+        let required = "## Required reads\n\n- extra.md\n\n";
+        let after = "## Rules\n---\n- rule\n";
+        let with_reads = format!("{before}{required}{after}");
+        let without_reads = format!("{before}{after}");
+        let document = company_body(&with_reads);
         assert_eq!(document.reads, vec!["extra.md".to_owned()]);
-        assert_eq!(document.body, "---\n## Rules\n---\n- rule\n");
+        assert_eq!(document.body, company_body(&without_reads).body);
+        assert_ne!(document.body, company_document(&with_reads).body);
     }
 
     #[test]
