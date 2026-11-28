@@ -89,6 +89,46 @@ impl HomeBackupStanding for Standing {
     }
 }
 
+/// Builds the `backup` section of `instrukt events status`, including the
+/// applicable repair door for every active failure, staleness, or unreadable
+/// local-bookkeeping condition without exposing secret material.
+pub fn events_status_json(home: &Home, now: Timestamp) -> serde_json::Value {
+    match HomeBackupStanding::standing(&Standing, home, now) {
+        Ok(standing) => {
+            let repair_door: Option<&'static str> = match &standing {
+                BackupStanding::Stale { admitted: true, .. } => Some(
+                    "run `instrukt backup run` to publish a fresh generation, and run `instrukt install --check` to verify the daily backup timer",
+                ),
+                BackupStanding::Stale {
+                    admitted: false, ..
+                } => Some(
+                    "repair the global `backup` configuration in `~/.instrukt/instrukt.yaml` and `~/.instrukt/secrets.env`, then run `instrukt backup run` and `instrukt install`",
+                ),
+                BackupStanding::Failed { admitted: true, .. } => Some(
+                    "resolve the error in `last_error` and run `instrukt backup run` to publish a fresh generation; run `instrukt install --check` if scheduled runs are failing",
+                ),
+                BackupStanding::Failed {
+                    admitted: false, ..
+                } => Some(
+                    "repair the global `backup` configuration in `~/.instrukt/instrukt.yaml` and `~/.instrukt/secrets.env`, then run `instrukt backup run` and `instrukt install`",
+                ),
+                BackupStanding::Unconfigured
+                | BackupStanding::NeverRun { .. }
+                | BackupStanding::Ok { .. } => None,
+            };
+            let mut value = standing.to_json();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("repair_door".into(), serde_json::json!(repair_door));
+            }
+            value
+        }
+        Err(err) => serde_json::json!({
+            "errors": [{"path": err.path, "reason": err.reason}],
+            "repair_door": "inspect and repair or move aside the unreadable backup file above, then run `instrukt backup run`",
+        }),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct StalenessMark {
     episode_anchor: Timestamp,
@@ -440,6 +480,82 @@ mod tests {
         assert_eq!(
             lines2,
             vec![format!("backup:stale:{mid}"), format!("backup:stale:{mid}")]
+        );
+    }
+
+    #[test]
+    fn events_status_json_includes_repair_doors_for_active_conditions_only() {
+        let (_dir, home) = configure_home(true);
+        let t0: Timestamp = "2030-01-06T03:00:00Z".parse().unwrap();
+        let t_ok: Timestamp = "2030-01-06T12:00:00Z".parse().unwrap();
+        let t_stale: Timestamp = "2030-01-07T15:00:01Z".parse().unwrap();
+
+        // NeverRun: no repair door.
+        assert_eq!(
+            events_status_json(&home, t0)["repair_door"],
+            serde_json::Value::Null
+        );
+
+        // Ok: no repair door.
+        write_state(
+            &home.backup_state_file(),
+            &BackupState {
+                schema_version: STATE_SCHEMA_VERSION,
+                first_attempt_at: t0,
+                last_attempt_at: t0,
+                last_outcome: BackupOutcome::Ok,
+                last_success_at: Some(t0),
+                last_generation: Some("gen1".into()),
+                last_error: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            events_status_json(&home, t_ok)["repair_door"],
+            serde_json::Value::Null
+        );
+
+        // Stale (admitted): non-empty repair door.
+        let stale_json = events_status_json(&home, t_stale);
+        assert_eq!(stale_json["standing"], "stale");
+        assert!(
+            stale_json["repair_door"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+
+        // Failed (withheld): non-empty config-repair door, zero secret leakage.
+        let (_dir2, withheld_home) = configure_home(false);
+        write_state(
+            &withheld_home.backup_state_file(),
+            &BackupState {
+                schema_version: STATE_SCHEMA_VERSION,
+                first_attempt_at: t0,
+                last_attempt_at: t0,
+                last_outcome: BackupOutcome::Failed,
+                last_success_at: None,
+                last_generation: None,
+                last_error: Some("config withheld".into()),
+            },
+        )
+        .unwrap();
+        let withheld_failed = events_status_json(&withheld_home, t_ok);
+        assert_eq!(withheld_failed["standing"], "failed");
+        assert_eq!(withheld_failed["admitted"], false);
+        assert!(
+            withheld_failed["repair_door"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+
+        // Unreadable bookkeeping: errors + repair door.
+        std::fs::write(home.backup_state_file(), b"{not-json").unwrap();
+        let err_json = events_status_json(&home, t_ok);
+        assert!(err_json["errors"].is_array());
+        assert!(
+            err_json["repair_door"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
         );
     }
 }

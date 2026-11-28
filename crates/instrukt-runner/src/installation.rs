@@ -1000,16 +1000,7 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
             serde_json::json!({"error": error.to_string(), "runner": runner, "projects": [], "findings": []})
         }
     };
-    let backup = match instrukt_core::interfaces::HomeBackupStanding::standing(
-        &crate::backup::Standing,
-        request.home,
-        request.now,
-    ) {
-        Ok(standing) => standing.to_json(),
-        Err(err) => serde_json::json!({
-            "errors": [{"path": err.path, "reason": err.reason}]
-        }),
-    };
+    let backup = crate::backup::events_status_json(request.home, request.now);
     if candidate.is_err() {
         // Nothing read from the full configuration can be shown: what depends
         // on it is absent, while local backup standing and the admission error
