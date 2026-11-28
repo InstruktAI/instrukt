@@ -103,6 +103,57 @@ fn a_stopped_execution_is_visible_without_a_notification_command() {
         serde_json::json!([])
     );
     check_configured_notification();
+    check_backup_staleness_notification();
+}
+
+fn check_backup_staleness_notification() {
+    let mut project = Tracked::new(true);
+    let home = project.env.instrukt_home();
+    let recipient = age::x25519::Identity::generate().to_public().to_string();
+    let path = home.join("instrukt.yaml");
+    let mut settings: serde_yaml_ng::Value =
+        serde_yaml_ng::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    settings["schema_version"] =
+        serde_yaml_ng::Value::from(instrukt_core::config::GLOBAL_SCHEMA_VERSION);
+    settings["backup"] = serde_yaml_ng::from_str(&format!(
+        "endpoint: https://s3.example.test\nregion: auto\nbucket: bkt\naccess_key_id: '${{BK_KEY}}'\nsecret_access_key: '${{BK_SECRET}}'\nage_recipient: {recipient}\n"
+    ))
+    .unwrap();
+    std::fs::write(&path, serde_yaml_ng::to_string(&settings).unwrap()).unwrap();
+    std::fs::write(home.join("secrets.env"), "BK_KEY=ak\nBK_SECRET=sk\n").unwrap();
+    std::fs::create_dir_all(home.join("state")).unwrap();
+    let mid = "22223333444455556666777788889999";
+    std::fs::write(home.join("state/machine-id"), format!("{mid}\n")).unwrap();
+    let state_file = home.join("state/backup-state.json");
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-06T03:00:00Z","last_outcome":"ok","last_success_at":"2030-01-06T03:00:00Z","last_generation":"g1","last_error":null}"#,
+    )
+    .unwrap();
+
+    project.tick_at("2030-01-07T15:00:00Z");
+    assert!(project.rt.notifications().is_empty());
+
+    project.tick_at("2030-01-07T15:00:01Z");
+    project.tick_at("2030-01-07T15:05:00Z");
+    assert_eq!(project.rt.notifications(), [format!("backup:stale:{mid}")]);
+
+    project.env.set_env("INSTRUKT_NOW", "2030-01-07T15:05:00Z");
+    let out = project
+        .env
+        .run(project.repo.path(), ["events", "status", "--json"])
+        .success();
+    let report: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(report["backup"]["standing"], "stale");
+    assert_eq!(report["backup"]["stale"], true);
+
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-07T16:00:00Z","last_outcome":"ok","last_success_at":"2030-01-07T16:00:00Z","last_generation":"g2","last_error":null}"#,
+    )
+    .unwrap();
+    project.tick_at("2030-01-07T16:01:00Z");
+    assert!(!home.join("state/backup-staleness-notified.json").exists());
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3

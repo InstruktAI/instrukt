@@ -659,6 +659,39 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     // defect into any project, and no other work-record write.
     insta::assert_snapshot!("company-agent-help", help(&["--help"]));
 
+    // A company-assigned conversation session is unconditionally refused every
+    // `instrukt backup` subcommand regardless of its role grants (even `list`).
+    {
+        let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+        let mut db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+        db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
+            tx.execute(
+                "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,session,role) VALUES ('acme','slack','C1','conv-acme','t3:company-conv','company-agent')",
+                [],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+    }
+    for args in [
+        &["backup", "list"][..],
+        &["backup", "run"][..],
+        &["backup", "restore", "--yes"][..],
+    ] {
+        let refused = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "company-conv")
+            .args(args)
+            .assert()
+            .failure();
+        let err = String::from_utf8_lossy(&refused.get_output().stderr);
+        assert!(
+            err.contains("home backup is the operator's"),
+            "expected company-session refusal for `{args:?}`, got: {err}"
+        );
+    }
+
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
     let file = env.instrukt_home().join("agents.yaml");

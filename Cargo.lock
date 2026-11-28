@@ -2071,6 +2071,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tiny_http",
  "tokio",
@@ -2078,6 +2079,7 @@ dependencies = [
  "tungstenite 0.28.0",
  "url",
  "walkdir",
+ "zstd",
 ]
 
 [[package]]

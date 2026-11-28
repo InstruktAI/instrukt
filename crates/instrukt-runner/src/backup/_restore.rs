@@ -289,9 +289,9 @@ fn validate_archive_extension(key: &str) -> Result<(), BackupError> {
 
 fn confirmation_tty_available(identity: &IdentityInput) -> bool {
     if *identity == IdentityInput::Stdin {
-        open_controlling_tty().is_ok()
+        std::io::stderr().is_terminal() && open_controlling_tty().is_ok()
     } else {
-        std::io::stdin().is_terminal() || open_controlling_tty().is_ok()
+        std::io::stdin().is_terminal()
     }
 }
 
@@ -374,7 +374,7 @@ fn load_identity(input: &IdentityInput) -> Result<age::x25519::Identity, BackupE
             Zeroizing::new(buf)
         }
         IdentityInput::Prompt => {
-            if !std::io::stdin().is_terminal() && open_controlling_tty().is_err() {
+            if !std::io::stdin().is_terminal() {
                 return Err(BackupError::InvalidIdentity(
                     "cannot prompt for age identity in a non-interactive session; pass `--identity <path>` or `--identity -`".into(),
                 ));

@@ -66,7 +66,7 @@ fn status_uses_compiled_capabilities_and_recognizes_native_caller_without_runtim
     std::fs::create_dir_all(env.instrukt_home()).unwrap();
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 7\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     env.set_env("T3CODE_THREAD_ID", "caller");
@@ -174,7 +174,7 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
     first.write("instrukt.yaml","schema_version: 6\nproject: first\nmodules: {todos: true}\ngithub: {repository: example/project}\n");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 7\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let report = status(&env, first.path());
@@ -304,7 +304,7 @@ fn admission_reads_existing_database_and_live_wal_without_creating_or_changing_f
     drop(StateDb::open(&home).unwrap());
     std::fs::write(
         home.global_config(),
-        "schema_version: 7\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     env.set_env("T3CODE_THREAD_ID", "caller");
@@ -333,7 +333,7 @@ fn foreign_checkout_edits_cannot_change_machine_status_or_its_exit_status() {
     documented::sync(&env, &foreign);
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 7\nmodules: {todos: true}\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nmodules: {todos: true}\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let first = status(&env, env.home());
@@ -353,4 +353,93 @@ fn status_renders_the_configuration_owners_default_value() {
         serde_json::from_slice(&configured.get_output().stdout).unwrap();
     let report = status(&env, env.home());
     assert_eq!(report["modules"]["history"]["enabled"], expected);
+}
+
+// spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS5
+#[test]
+fn status_reports_local_backup_standing_without_network_or_mutation() {
+    let mut env = TestEnv::new();
+    env.set_env("INSTRUKT_NOW", "2030-01-06T03:00:00Z");
+
+    let before = filesystem(env.home());
+    let unconf = status(&env, env.home());
+    assert_eq!(unconf["backup"]["standing"], "unconfigured");
+    assert_eq!(before, filesystem(env.home()));
+
+    let recipient = age::x25519::Identity::generate().to_public().to_string();
+    let home = env.instrukt_home();
+    std::fs::create_dir_all(home.join("state")).unwrap();
+    let yaml = [
+        format!(
+            "schema_version: {}",
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
+        ),
+        "runner: {runtime: t3}".to_owned(),
+        "backup:".to_owned(),
+        "  endpoint: https://s3.unreachable.invalid".to_owned(),
+        "  region: auto".to_owned(),
+        "  bucket: bkt".to_owned(),
+        "  access_key_id: ${BK_KEY}".to_owned(),
+        "  secret_access_key: ${BK_SECRET}".to_owned(),
+        format!("  age_recipient: {recipient}"),
+        String::new(),
+    ]
+    .join("\n");
+    std::fs::write(home.join("instrukt.yaml"), yaml).unwrap();
+    std::fs::write(home.join("secrets.env"), "BK_KEY=ak\nBK_SECRET=sk\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            home.join("secrets.env"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+
+    let never = status(&env, env.home());
+    assert_eq!(never["backup"]["standing"], "never_run");
+    assert_eq!(never["backup"]["admitted"], true);
+
+    let state_file = home.join("state/backup-state.json");
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-06T03:00:00Z","last_outcome":"ok","last_success_at":"2030-01-06T03:00:00Z","last_generation":"m1/gen1.tar.zst.age","last_error":null}"#,
+    )
+    .unwrap();
+    let ok_rep = status(&env, env.home());
+    assert_eq!(ok_rep["backup"]["standing"], "ok");
+    assert_eq!(ok_rep["backup"]["stale"], false);
+    assert_eq!(ok_rep["backup"]["last_generation"], "m1/gen1.tar.zst.age");
+
+    env.set_env("INSTRUKT_NOW", "2030-01-07T15:00:01Z");
+    let stale_rep = status(&env, env.home());
+    assert_eq!(stale_rep["backup"]["standing"], "stale");
+    assert_eq!(stale_rep["backup"]["stale"], true);
+    assert_eq!(stale_rep["backup"]["admitted"], true);
+
+    std::fs::write(
+        &state_file,
+        r#"{"schema_version":1,"first_attempt_at":"2030-01-06T03:00:00Z","last_attempt_at":"2030-01-07T15:00:00Z","last_outcome":"failed","last_success_at":"2030-01-06T03:00:00Z","last_generation":"m1/gen1.tar.zst.age","last_error":"storage failed: <redacted>"}"#,
+    )
+    .unwrap();
+    let fail_rep = status(&env, env.home());
+    assert_eq!(fail_rep["backup"]["standing"], "failed");
+    assert_eq!(fail_rep["backup"]["stale"], true);
+    assert_eq!(
+        fail_rep["backup"]["last_error"],
+        "storage failed: <redacted>"
+    );
+
+    std::fs::write(&state_file, "not-valid-json{").unwrap();
+    let broken = env.run(env.home(), ["status", "--json"]).failure();
+    let broken_json: serde_json::Value =
+        serde_json::from_slice(&broken.get_output().stdout).unwrap();
+    assert!(
+        broken_json["backup"]["errors"]
+            .as_array()
+            .is_some_and(|errs| !errs.is_empty()),
+        "{broken_json}"
+    );
+    assert!(broken_json["machine"].is_object());
+    assert!(broken_json["runtime"].is_object());
 }

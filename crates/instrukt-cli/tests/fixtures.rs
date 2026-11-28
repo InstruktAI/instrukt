@@ -23,6 +23,8 @@ pub mod mcp;
 pub mod reviewed;
 #[path = "support/runtime.rs"]
 pub mod runtime;
+#[path = "support/s3.rs"]
+pub mod s3;
 #[path = "support/slack.rs"]
 pub mod slack;
 #[path = "support/t3.rs"]
