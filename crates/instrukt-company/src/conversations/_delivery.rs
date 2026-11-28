@@ -1,14 +1,13 @@
 //! Bind and deliver addressed messages to their native sessions.
 use instrukt_connector::Accompanying;
-use instrukt_core::config::{Admitted, Agents, COMPANY_AGENT_ROLE, Env, ReplyMode, SessionScope};
+use instrukt_core::config::{Admitted, Agents, COMPANY_AGENT_ROLE, SessionScope};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{RoleName, SessionRef, SnippetId};
 use instrukt_core::index::{GlobalIndex, IndexEntry, RoleProcedure};
 use instrukt_core::state_db::rusqlite::params;
 use instrukt_runner::keyed::{self, RuntimeInvocation};
-use instrukt_runner::runtime::conversations::{ConversationSource, SourcePosition};
 use instrukt_runner::runtime::{
-    DispatchError, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart,
+    DispatchError, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeError, RuntimeStart,
 };
 use instrukt_runner::sessions::SessionsError;
 use instrukt_runner::state::{self, RunnerState, StateError};
@@ -19,64 +18,15 @@ use super::_availability::{retire_notices, unavailable};
 use super::_envelopes::framed;
 use super::_intake::{context_exclusions, conversation_title};
 use super::_store::{
-    COMPANY_OWNED_MESSAGES, Conversation, Message, Stage, remember_delivery, reread, set_failure,
-    set_message_failure,
+    COMPANY_OWNED_MESSAGES, Conversation, Message, Stage, remember_delivery, set_message_failure,
 };
 use super::envelopes::Span;
 use super::{ConversationError, LOG_TARGET, envelopes};
 
-/// A source is established only by initial binding or confirmed replacement.
-pub(super) fn require_source(c: &Conversation, current: &str) -> Result<(), ConversationError> {
-    match c.source_identity.as_deref() {
-        Some(recorded) if recorded == current => Ok(()),
-        None if c.session.is_none()
-            && c.position.is_none()
-            && c.request.is_none()
-            && c.opening.is_none() =>
-        {
-            Ok(())
-        }
-        recorded => Err(ConversationError::SourceConfiguration(format!(
-            "conversation `{}` records source `{}` but the current source is `{current}`; restore the recorded binding/source from retained evidence or use existing confirmed session replacement when its presence checks permit it",
-            c.semantic_key,
-            recorded.unwrap_or("<unavailable>"),
-        ))),
-    }
-}
-
-/// The configured source and clock under which this native delivery was prepared.
+/// The home and clock under which this native delivery was prepared.
 pub(super) struct NativeDelivery<'a> {
     pub(super) home: &'a Home,
-    pub(super) identity: &'a str,
-    pub(super) env: &'a Env,
-    pub(super) clock: &'a dyn Fn() -> Timestamp,
-}
-
-impl NativeDelivery<'_> {
-    pub(super) fn check_source(
-        &self,
-        adapter: &dyn RuntimeAdapter,
-        state: &RunnerState,
-        c: &Conversation,
-    ) -> Result<(), ConversationError> {
-        let source = adapter.conversation_source(self.home, self.env)?;
-        if source.identity() != self.identity {
-            return Err(ConversationError::SourceConfiguration(format!(
-                "conversation `{}` was prepared against source `{}` but the current source is `{}`; restore the configured source before retrying native delivery",
-                c.semantic_key,
-                self.identity,
-                source.identity(),
-            )));
-        }
-        if let Some(current) = reread(state, c)? {
-            require_source(&current, source.identity())
-        } else {
-            Err(ConversationError::SourceConfiguration(format!(
-                "conversation `{}` no longer has its recorded binding",
-                c.semantic_key
-            )))
-        }
-    }
+    pub(super) clock: &'a (dyn Fn() -> Timestamp + Sync),
 }
 
 /// Whether a failed delivery is logged. A message waiting for its procedure
@@ -149,10 +99,13 @@ fn assignment(
                 .to_owned()
         }
     };
-    let reply_line = match (c.reply_mode, c.session_scope) {
-        (ReplyMode::TurnOutput, _) => String::new(),
-        (ReplyMode::Explicit, SessionScope::Conversation) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --text <text>`)".to_owned(),
-        (ReplyMode::Explicit, SessionScope::Company) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --conversation <id> --text <text>`)".to_owned(),
+    let reply_line = match c.session_scope {
+        SessionScope::Conversation => {
+            "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --text <text>`, and optionally publish short active-turn progress with `instrukt company status --text <text>`)"
+        }
+        SessionScope::Company => {
+            "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --conversation <id> --text <text>`, and optionally publish short active-turn progress with `instrukt company status --conversation <id> --text <text>`)"
+        }
     };
     Ok(instrukt_runner::control::Control::Assignment.frame(&format!(
         "instrukt conversation assignment\nProcedure: {procedure}\nRole: {role}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\n{scope_line}{reply_line}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.\n",
@@ -160,13 +113,18 @@ fn assignment(
     )))
 }
 
-/// The position a new session's answers are read from: one over no
-/// conversation yet, so everything its own thread comes to hold is read after
-/// it. Capturing it reads no native history.
-pub(super) fn opening_position(
-    source: &dyn ConversationSource,
-) -> Result<SourcePosition, ConversationError> {
-    Ok(source.changed_since(None, &[])?.position)
+/// Build a fresh explicit-frontstage opening assignment brief for a successor
+/// generation rolling over a pre-upgrade `turn_output` binding.
+pub(super) fn fresh_rollover_brief(
+    home: &Home,
+    admitted: &Admitted,
+    c: &Conversation,
+) -> Result<String, ConversationError> {
+    let index = GlobalIndex::load_readable(home)?.unwrap_or_default();
+    let procedure = opening_procedure_for_role(&index, &c.role, admitted.agents())?
+        .id
+        .clone();
+    assignment(admitted, c, &procedure)
 }
 
 /// Save the precise input before native I/O. A pending native attempt
@@ -327,11 +285,9 @@ fn prepare_delivery(
                 "Speaker Name: {}\n",
                 envelopes::control_field(&sender)
             ));
-            if c.reply_mode == ReplyMode::Explicit {
-                body.push_str(&format!(
-                    "Reply command: instrukt company reply --conversation {safe_conversation} --text <text>\n"
-                ));
-            }
+            body.push_str(&format!(
+                "Reply command: instrukt company reply --conversation {safe_conversation} --text <text>\n"
+            ));
             let header = instrukt_runner::control::Control::Notification.frame(&body);
             format!("{header}\n{base_content}")
         }
@@ -363,7 +319,8 @@ fn prepare_delivery(
 
 /// The runtime accepted `message` as its own turn, which ends its no-work
 /// interval; a first message's acceptance also binds the conversation's
-/// session.
+/// session and records Turn 1's deterministic launch `start_command_id`
+/// (leaving `dispatch_write_at = NULL`).
 pub(super) fn accepted(
     state: &RunnerState,
     c: &Conversation,
@@ -371,17 +328,19 @@ pub(super) fn accepted(
     message: &str,
     boundary: Option<&str>,
     session: Option<&SessionRef>,
-    source_identity: &str,
+    start_command_id: Option<&str>,
 ) -> Result<bool, StateError> {
     let applied = state.write(|tx| {
         let path = state::db_path(tx);
         let changed = tx.execute(
-            "UPDATE conversation_messages SET state='sent',failure=NULL,unavailable_since=NULL,turn_update=NULL,retry_at=NULL,send_unknown_at=NULL
+            "UPDATE conversation_messages
+             SET state='sent',failure=NULL,unavailable_since=NULL,retry_at=NULL,send_unknown_at=NULL,
+                 observed_run_id=NULL,turn_started_at=NULL,
+                 dispatch_command_id=coalesce(dispatch_command_id,?6)
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
                AND boundary=?5 AND attempted_at IS NOT NULL
-               AND state IN ('pending','failed') AND superseded_at IS NULL
-               AND EXISTS(SELECT 1 FROM connected_conversations c WHERE c.company=?1 AND c.connector=?2 AND c.conversation=?7 AND c.source_identity=?6)",
-            params![c.company.as_str(), c.connector, conversation, message, boundary, source_identity, c.conversation],
+               AND state IN ('pending','failed') AND superseded_at IS NULL",
+            params![c.company.as_str(), c.connector, conversation, message, boundary, start_command_id],
         ).map_err(state::sql(&path))?;
         if changed != 0 {
             remember_delivery(tx, c, conversation, message)?;
@@ -405,8 +364,13 @@ pub(super) fn stale_acknowledgement(c: &Conversation, message: &str) {
     tracing::warn!(target: LOG_TARGET, event = "conversation_stale_acknowledgement", key = %c.semantic_key, message);
 }
 
-const FAILED_RETRY_DELAY: SignedDuration = SignedDuration::from_mins(2);
-const FAILED_RETRY_LIMIT: SignedDuration = SignedDuration::from_mins(15);
+/// Initial backoff delay before retrying a failed addressed turn.
+pub const FAILED_RETRY_DELAY: SignedDuration = SignedDuration::from_mins(2);
+/// Maximum backoff delay between failed-turn retries.
+pub const FAILED_RETRY_LIMIT: SignedDuration = SignedDuration::from_mins(15);
+/// Maximum number of retries after the initial attempt (4 total attempts: initial + 3 retries).
+pub const FAILED_RETRY_MAX_ATTEMPTS: u32 = 3;
+
 const SEND_RECONCILE_BOUND: SignedDuration = SignedDuration::from_mins(5);
 
 pub(super) fn retry_delay(previous_failures: u32) -> SignedDuration {
@@ -419,7 +383,10 @@ pub(super) fn next_message<'a>(
     c: &Conversation,
     now: Timestamp,
 ) -> Option<&'a Message> {
-    let available = || open.iter().filter(|message| !message.send_unknown);
+    let available = || {
+        open.iter()
+            .filter(|message| !message.send_unknown && message.terminal_error_queued_at.is_none())
+    };
     if available().any(|m| m.stage == Stage::Sent) {
         return None;
     }
@@ -453,14 +420,16 @@ pub(super) fn schedule_earlier_failures(
             SessionScope::Conversation => tx.execute(
                 "UPDATE conversation_messages SET retry_at=?4,failed_turns=1
                  WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed'
-                   AND superseded_at IS NULL AND send_unknown_at IS NULL AND retry_at IS NULL AND boundary IS NOT NULL",
+                   AND superseded_at IS NULL AND send_unknown_at IS NULL AND retry_at IS NULL
+                   AND boundary IS NOT NULL AND terminal_error_queued_at IS NULL",
                 params![c.company.as_str(), c.connector, c.conversation, retry],
             ),
             SessionScope::Company => tx.execute(
                 &format!(
                     "UPDATE conversation_messages SET retry_at=?3,failed_turns=1
                      WHERE company=?1 AND connector=?2 AND state='failed'
-                       AND superseded_at IS NULL AND send_unknown_at IS NULL AND retry_at IS NULL AND boundary IS NOT NULL
+                       AND superseded_at IS NULL AND send_unknown_at IS NULL AND retry_at IS NULL
+                       AND boundary IS NOT NULL AND terminal_error_queued_at IS NULL
                        AND {COMPANY_OWNED_MESSAGES}"
                 ),
                 params![c.company.as_str(), c.connector, retry],
@@ -479,29 +448,24 @@ pub(super) fn deliver_one(
     invocation: &RuntimeInvocation,
     admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
-    opening_source: Result<Option<OpeningSource>, ConversationError>,
     c: &Conversation,
     next: &Message,
     delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
     let state = &RunnerState::new(invocation.home());
-    if let Err(error) = delivery.check_source(adapter, state, c) {
-        set_failure(state, c, Some(&error.to_string()))?;
-        return Err(error);
-    }
+    let mut tracked = next.clone();
     let result = match prepare_delivery(state, c, next) {
         Ok(None) => return Ok(()),
         Err(error) => Err(error),
-        Ok(Some(prepared)) => match &c.session {
-            None => opening_source.and_then(|source| {
-                start(
-                    invocation, admitted, adapter, source, c, &prepared, delivery,
-                )
-            }),
-            Some(session) => send(adapter, state, c, session, &prepared, delivery),
-        },
+        Ok(Some(prepared)) => {
+            tracked = prepared;
+            match &c.session {
+                None => start(invocation, admitted, adapter, c, &tracked, delivery),
+                Some(session) => send(adapter, state, c, session, &mut tracked, delivery),
+            }
+        }
     };
-    record_delivery_failure(adapter, state, c, next, delivery.clock, &result)?;
+    record_delivery_failure(adapter, state, c, &tracked, delivery.clock, &result)?;
     result
 }
 
@@ -513,14 +477,13 @@ pub(super) fn record_delivery_failure(
     clock: &dyn Fn() -> Timestamp,
     result: &Result<(), ConversationError>,
 ) -> Result<(), ConversationError> {
-    if let Err(error @ ConversationError::SourceConfiguration(_)) = result {
-        set_failure(state, c, Some(&error.to_string()))?;
-        return Ok(());
-    }
     // A runtime failure is retained through the adapter's safe diagnostic,
     // never its raw native output.
     let failure = result.as_ref().err().map(|error| match error {
-        ConversationError::Sessions(native) => adapter
+        ConversationError::Runtime(native) => adapter
+            .diagnostic("conversation delivery", native)
+            .to_string(),
+        ConversationError::Sessions(SessionsError::Runtime(native)) => adapter
             .diagnostic("conversation delivery", native)
             .to_string(),
         other => other.to_string(),
@@ -557,17 +520,10 @@ pub(super) fn record_delivery_failure(
     Ok(())
 }
 
-pub(super) struct OpeningSource {
-    pub(super) identity: String,
-    pub(super) position: SourcePosition,
-}
-
-#[allow(clippy::too_many_arguments)]
 fn start(
     invocation: &RuntimeInvocation,
     admitted: &Admitted,
     adapter: &dyn RuntimeAdapter,
-    opening_source: Option<OpeningSource>,
     c: &Conversation,
     next: &Message,
     delivery: &NativeDelivery<'_>,
@@ -616,27 +572,34 @@ fn start(
                     instrukt_runner::runtime::SelectionOperation::ThreadStart,
                 )),
                 checkout,
-                title: state.read(|conn,path|conn.query_row("SELECT display_title FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3",params![c.company.as_str(),c.connector,c.conversation],|row|row.get::<_,Option<String>>(0)).map_err(state::sql(path)))?.flatten().unwrap_or(default_title),
+                title: state
+                    .read(|conn, path| {
+                        conn.query_row(
+                            "SELECT display_title FROM connected_conversations WHERE company=?1 AND connector=?2 AND conversation=?3",
+                            params![c.company.as_str(), c.connector, c.conversation],
+                            |row| row.get::<_, Option<String>>(0),
+                        )
+                        .map_err(state::sql(path))
+                    })?
+                    .flatten()
+                    .unwrap_or(default_title),
                 key: c.semantic_key.clone(),
                 brief: format!("{}\n{input}", assignment(admitted, c, &procedure)?),
                 worktree: None,
-                launch_modes: None, native_launch: None, profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
+                launch_modes: None,
+                native_launch: None,
+                profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
             };
-            let source = opening_source.ok_or_else(|| {
-                ConversationError::Refused("the opening source is unavailable".into())
-            })?;
             state.write::<_, StateError>(|tx| {
                 let path = state::db_path(tx);
                 tx.execute(
-                    "UPDATE connected_conversations SET opening=?4,opening_conversation=?8,request=?5,source_identity=?6,position_json=?7 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                    "UPDATE connected_conversations SET opening=?4,opening_conversation=?6,request=?5 WHERE company=?1 AND connector=?2 AND conversation=?3",
                     params![
                         c.company.as_str(),
                         c.connector,
                         c.conversation,
                         next.message,
                         serde_json::to_string(&request).map_err(|e| state::invalid(&path, e))?,
-                        source.identity,
-                        serde_json::to_string(&source.position).map_err(|e| state::invalid(&path, e))?,
                         next.conversation
                     ],
                 )
@@ -661,17 +624,18 @@ fn start(
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })?;
-    delivery.check_source(adapter, state, c)?;
-    let started = adapter.start_or_wake(&RuntimeAssignment {
-        bindings: None,
-        invocation,
-        project: None,
-        request: &request,
-        existing_worktree: None,
-        now,
-    });
-    delivery.check_source(adapter, state, c)?;
-    let thread = started?;
+    let thread = keyed::start(
+        adapter,
+        &RuntimeAssignment {
+            bindings: None,
+            invocation,
+            project: None,
+            request: &request,
+            existing_worktree: None,
+            now,
+        },
+    )?;
+    let start_cmd = keyed::start_command_id(state, adapter.runtime_name(), &c.semantic_key)?;
     accepted(
         state,
         c,
@@ -679,25 +643,40 @@ fn start(
         &next.message,
         next.boundary.as_deref(),
         Some(&thread.session),
-        delivery.identity,
+        start_cmd.as_deref(),
     )?;
     tracing::info!(target: LOG_TARGET, event = "conversation_session_started", company = %c.company, connector = %c.connector, key = %c.semantic_key, session = %thread.session);
     Ok(())
 }
 
-fn send(
+fn is_rejected_send(
+    adapter: &dyn RuntimeAdapter,
+    session: &SessionRef,
+    error: &ConversationError,
+) -> bool {
+    match error {
+        ConversationError::Runtime(err)
+        | ConversationError::Sessions(SessionsError::Runtime(err)) => {
+            matches!(err, RuntimeError::CommandPreviouslyRejected { .. })
+                || adapter.send_certainly_rejected(session, err)
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn send(
     adapter: &dyn RuntimeAdapter,
     state: &RunnerState,
     c: &Conversation,
     session: &SessionRef,
-    next: &Message,
+    next: &mut Message,
     delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
     let clock = delivery.clock;
     let now = clock();
     let content = next
         .content
-        .as_deref()
+        .clone()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
     // The bound thread must run in the company home's own runtime project
     // before anything is attempted: a misplaced one is sent nothing.
@@ -710,8 +689,20 @@ fn send(
         &thread,
         Some(&c.semantic_key),
     )?;
-    if let Some(id) = &next.dispatch_id {
-        dispatch_frame(adapter, state, c, next, session, (id, content), delivery)?;
+    if let Some(id) = next.dispatch_id.clone() {
+        if let Err(error) =
+            dispatch_frame(adapter, state, c, next, session, (&id, &content), delivery)
+        {
+            if is_rejected_send(adapter, session, &error)
+                && let Some(boundary) = next.boundary.as_deref()
+            {
+                clear_rejected_send(state, c, &next.conversation, &next.message, boundary)?;
+                next.dispatch_write_at = None;
+                next.attempted = None;
+                next.dispatch_id = None;
+            }
+            return Err(error);
+        }
         accepted(
             state,
             c,
@@ -719,7 +710,7 @@ fn send(
             &next.message,
             next.boundary.as_deref(),
             None,
-            delivery.identity,
+            None,
         )?;
         return Ok(());
     }
@@ -727,7 +718,7 @@ fn send(
         .boundary
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message has no delivery boundary".into()))?;
-    let boundary = envelopes::delivery_boundary(&[content])?;
+    let boundary = envelopes::delivery_boundary(&[&content])?;
     let content = content.replace(old_boundary, &boundary);
     use sha2::{Digest, Sha256};
     let id = format!(
@@ -744,18 +735,33 @@ fn send(
             "UPDATE conversation_messages SET attempted_at=?5,content=?6,boundary=?7,dispatch_command_id=?9
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4
                AND boundary=?8 AND attempted_at IS NULL AND superseded_at IS NULL",
-            params![c.company.as_str(), c.connector, next.conversation, next.message, now.to_string(),
-                content, boundary, old_boundary, id],
-        ).map_err(state::sql(&state::db_path(tx)))
+            params![
+                c.company.as_str(),
+                c.connector,
+                next.conversation,
+                next.message,
+                now.to_string(),
+                content,
+                boundary,
+                old_boundary,
+                id
+            ],
+        )
+        .map_err(state::sql(&state::db_path(tx)))
     })?;
     if recorded != 0 {
+        next.boundary = Some(boundary.clone());
+        next.content = Some(content.clone());
+        next.attempted = Some(now);
+        next.dispatch_id = Some(id.clone());
         if let Err(error) =
             dispatch_frame(adapter, state, c, next, session, (&id, &content), delivery)
         {
-            if let ConversationError::Sessions(error) = &error
-                && adapter.send_certainly_rejected(session, error)
-            {
+            if is_rejected_send(adapter, session, &error) {
                 clear_rejected_send(state, c, &next.conversation, &next.message, &boundary)?;
+                next.dispatch_write_at = None;
+                next.attempted = None;
+                next.dispatch_id = None;
             }
             return Err(error);
         }
@@ -766,7 +772,7 @@ fn send(
             &next.message,
             Some(&boundary),
             None,
-            delivery.identity,
+            None,
         )?;
     }
     Ok(())
@@ -782,7 +788,6 @@ fn dispatch_frame(
     delivery: &NativeDelivery<'_>,
 ) -> Result<(), ConversationError> {
     let clock = delivery.clock;
-    delivery.check_source(adapter, state, c)?;
     let mut marked = false;
     let result = adapter.dispatch_send(session, id, content, &mut || {
         if next.dispatch_write_at.is_none() {
@@ -793,15 +798,15 @@ fn dispatch_frame(
                 &next.message,
                 id,
                 Some(clock()),
-            )?;
+            )
+            .map_err(|err| RuntimeError::Refused(err.to_string()))?;
             marked = true;
         }
         Ok(())
     });
-    delivery.check_source(adapter, state, c)?;
     match result {
         Ok(()) => Ok(()),
-        Err(DispatchError::BeforeFrame(error)) => {
+        Err(DispatchError::BeforeWrite(error) | DispatchError::BeforeFrame(error)) => {
             if marked {
                 // This write sent zero bytes. Keep any marker from an earlier
                 // write that already made the command uncertain.
@@ -848,16 +853,13 @@ pub(super) fn clear_rejected_send(
         tx.execute(
             "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL
              WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND boundary=?5
-               AND state IN ('pending','failed') AND send_unknown_at IS NULL
-               AND EXISTS(SELECT 1 FROM connected_conversations c WHERE c.company=?1 AND c.connector=?2 AND c.conversation=?7 AND c.source_identity IS ?6)",
+               AND state IN ('pending','failed') AND send_unknown_at IS NULL",
             params![
                 c.company.as_str(),
                 c.connector,
                 conversation,
                 message,
-                boundary,
-                c.source_identity,
-                c.conversation
+                boundary
             ],
         )
         .map_err(state::sql(&state::db_path(tx)))?;
@@ -911,7 +913,6 @@ pub(super) fn adopt_replacement(
     home: &Home,
     state: &RunnerState,
     adapter: &dyn RuntimeAdapter,
-    source: &dyn ConversationSource,
     c: &mut Conversation,
 ) -> Result<Option<SessionRef>, ConversationError> {
     let Some(current) = &c.session else {
@@ -923,41 +924,87 @@ pub(super) fn adopt_replacement(
         if !ready {
             return Ok(Some(successor));
         }
-        let position = opening_position(source)?;
-        let serialized = serde_json::to_string(&position)?;
+        let changed_session = successor != *current;
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
             tx.execute(
-                "UPDATE connected_conversations SET session=?4,source_identity=?5,position_json=?6 WHERE company=?1 AND connector=?2 AND conversation=?3",
-                params![c.company.as_str(), c.connector, c.conversation, successor.to_string(), source.identity(), serialized],
-            ).map_err(state::sql(&path))?;
+                "UPDATE connected_conversations
+                 SET session=?4,
+                     needs_explicit_rollover=CASE WHEN ?5 THEN 0 ELSE needs_explicit_rollover END
+                 WHERE company=?1 AND connector=?2 AND conversation=?3",
+                params![
+                    c.company.as_str(),
+                    c.connector,
+                    c.conversation,
+                    successor.to_string(),
+                    changed_session
+                ],
+            )
+            .map_err(state::sql(&path))?;
             match c.session_scope {
                 SessionScope::Conversation => {
                     tx.execute(
-                        "UPDATE conversation_messages SET state=?4,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state IN (?4,?5) AND send_unknown_at IS NULL",
-                        params![c.company.as_str(), c.connector, c.conversation, Stage::Pending.as_str(), Stage::Sent.as_str()],
-                    ).map_err(state::sql(&path))?;
+                        "UPDATE conversation_messages
+                         SET state=?4,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,
+                             observed_run_id=NULL,turn_started_at=NULL,failure=NULL
+                         WHERE company=?1 AND connector=?2 AND conversation=?3
+                           AND state IN (?4,?5) AND send_unknown_at IS NULL",
+                        params![
+                            c.company.as_str(),
+                            c.connector,
+                            c.conversation,
+                            Stage::Pending.as_str(),
+                            Stage::Sent.as_str()
+                        ],
+                    )
+                    .map_err(state::sql(&path))?;
                     tx.execute(
-                        "UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL WHERE company=?1 AND connector=?2 AND conversation=?3 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
+                        "UPDATE conversation_messages
+                         SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,
+                             observed_run_id=NULL,turn_started_at=NULL
+                         WHERE company=?1 AND connector=?2 AND conversation=?3
+                           AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL",
                         params![c.company.as_str(), c.connector, c.conversation],
-                    ).map_err(state::sql(&path))?;
+                    )
+                    .map_err(state::sql(&path))?;
                 }
                 SessionScope::Company => {
                     tx.execute(
-                        &format!("UPDATE conversation_messages SET state=?3,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,turn_update=NULL,failure=NULL WHERE company=?1 AND connector=?2 AND state IN (?3,?4) AND send_unknown_at IS NULL AND {COMPANY_OWNED_MESSAGES}"),
-                        params![c.company.as_str(), c.connector, Stage::Pending.as_str(), Stage::Sent.as_str()],
-                    ).map_err(state::sql(&path))?;
+                        &format!(
+                            "UPDATE conversation_messages
+                             SET state=?3,attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,
+                                 observed_run_id=NULL,turn_started_at=NULL,failure=NULL
+                             WHERE company=?1 AND connector=?2
+                               AND state IN (?3,?4) AND send_unknown_at IS NULL AND {COMPANY_OWNED_MESSAGES}"
+                        ),
+                        params![
+                            c.company.as_str(),
+                            c.connector,
+                            Stage::Pending.as_str(),
+                            Stage::Sent.as_str()
+                        ],
+                    )
+                    .map_err(state::sql(&path))?;
                     tx.execute(
-                        &format!("UPDATE conversation_messages SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL WHERE company=?1 AND connector=?2 AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL AND {COMPANY_OWNED_MESSAGES}"),
+                        &format!(
+                            "UPDATE conversation_messages
+                             SET attempted_at=NULL,dispatch_command_id=NULL,dispatch_write_at=NULL,
+                                 observed_run_id=NULL,turn_started_at=NULL
+                             WHERE company=?1 AND connector=?2
+                               AND state='failed' AND superseded_at IS NULL AND send_unknown_at IS NULL
+                               AND {COMPANY_OWNED_MESSAGES}"
+                        ),
                         params![c.company.as_str(), c.connector],
-                    ).map_err(state::sql(&path))?;
+                    )
+                    .map_err(state::sql(&path))?;
                 }
             }
             Ok(())
         })?;
         c.session = Some(successor);
-        c.source_identity = Some(source.identity().to_owned());
-        c.position = Some(position);
+        if changed_session {
+            c.needs_explicit_rollover = false;
+        }
     }
     Ok(None)
 }

@@ -118,7 +118,12 @@ there, never by reading through delivered work.
 - **Runner → workflow (knowledge proposals):** runner routes `runner.proposal_approved` to a company home's standing `integrator`, naming the exact approved head to compose.
 - **Publication → workflow (review coverage):** publication supplies its one operation rendering a tree's agent material, from which coverage reproduces a rendering commit.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage and, for a held candidate, which uncovered commits wait on which session's decision; the runner supplies the canonical head's CI result as it observed it and whether the selected runtime holds a named session.
+<!-- change:thin-live-runtime-boundary -->
+- **Runtime → workflow:** runtime defines the capability vocabulary declared in `workflow.yaml` `requires` (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/feature/runtime/adapter`).
+- **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage and, for a held candidate, which uncovered commits wait on which session's decision; the runner supplies the canonical head's CI result as it observed it and whether the selected runtime holds a named session.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
 
 - **Workflow → runner (worktree standing):** workflow supplies each todo worktree's standing on the computer, and what a delivered todo still owes of its worktree and work branch; the runner reclaims by it and derives none of it.

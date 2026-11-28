@@ -6,10 +6,12 @@
 //! that freed, then completes moving the history earlier builds kept in the
 //! state database; once that move is recorded complete no history read or
 //! write opens the state database or takes its writer lock.
+#[cfg(test)]
+use super::RetainedMessage;
 use super::{
     _earlier::{self, Current, Earlier},
     _store::{self, Conversation},
-    HistoryError, RetainedMessage,
+    HistoryError,
 };
 use instrukt_core::{
     home::Home,
@@ -116,7 +118,7 @@ fn version_2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         let batch = {
             let mut statement = tx.prepare_cached(&format!(
                 "{} WHERE ?1 IS NULL OR id>?1 ORDER BY id LIMIT ?2",
-                _earlier::EARLIER
+                _earlier::earlier_sql()
             ))?;
             statement
                 .query_map(params![after, BATCH_ROWS as i64], Earlier::row)?
@@ -222,6 +224,7 @@ pub(super) fn read(home: &Home) -> Result<Option<Connection>, HistoryError> {
 /// which changes nothing on disk; a store at an earlier schema version is
 /// brought forward in memory for it. `None` when no store exists or it has
 /// not retained the conversation.
+#[cfg(test)]
 pub(super) fn retained_messages(
     home: &Home,
     source: &str,
@@ -335,7 +338,7 @@ fn copy_conversations(
     let batch = {
         let mut statement = state.prepare(&format!(
             "{} WHERE ?1 IS NULL OR id>?1 ORDER BY id LIMIT ?2",
-            _earlier::EARLIER
+            _earlier::earlier_sql()
         ))?;
         let rows = statement.query_map(params![cursor, BATCH_ROWS as i64], Earlier::row)?;
         let mut batch = Vec::new();
@@ -434,10 +437,72 @@ fn remove(home: &Home, db: &mut StoreDb, started: Instant) -> Result<(), History
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::conversations::Role;
+    use crate::runtime::cold_text::Role;
+    use instrukt_core::config::{NativeCapabilities, RuntimeDeclaration};
     use instrukt_core::state_db::rusqlite::OpenFlags;
     use serde_json::Value;
     use std::path::Path;
+
+    fn test_legacy_normalizer(message: &mut Value) -> bool {
+        if matches!(
+            message
+                .pointer("/notification/source/kind")
+                .and_then(Value::as_str),
+            Some("command" | "background_command")
+        ) {
+            return false;
+        }
+        if let Some(records) = message
+            .pointer_mut("/context/records")
+            .and_then(Value::as_array_mut)
+        {
+            let remove = |holder: &mut Value, member: &str| {
+                if let Some(holder) = holder.as_object_mut() {
+                    holder.shift_remove(member);
+                }
+            };
+            for record in records {
+                match record["kind"].as_str() {
+                    Some("terminal") => remove(record, "text"),
+                    Some("review-comment") => remove(record, "diff"),
+                    Some("element") => remove(record, "htmlPreview"),
+                    Some("preview-annotation") => {
+                        if let Some(elements) =
+                            record.get_mut("elements").and_then(Value::as_array_mut)
+                        {
+                            for element in elements {
+                                remove(element, "htmlPreview");
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        true
+    }
+
+    fn install_test_runtime() {
+        static TEST_RUNTIME: RuntimeDeclaration = RuntimeDeclaration {
+            name: "t3",
+            archives_threads: true,
+            worktree_create: true,
+            worktree_attach: true,
+            cold_text_source: true,
+            link: false,
+            notify: false,
+            unattended_agent_selection: true,
+            native_capabilities: NativeCapabilities {
+                shared_delegation: true,
+                worktree_attach: true,
+                agent_selection: true,
+            },
+            shipped_yaml: "",
+            legacy_history_normalizer: Some(test_legacy_normalizer),
+        };
+        static LIST: [&RuntimeDeclaration; 1] = [&TEST_RUNTIME];
+        instrukt_core::config::install_runtime_declarations(&LIST);
+    }
 
     /// The history tables as the state database held them at version 31.
     const LEGACY: &str = r#"
@@ -474,6 +539,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
     /// message of about `size` bytes, a run record, a runtime position, a
     /// completed import of an earlier archive and an inert `t3:` row.
     fn upgraded(conversations: u32, size: u32) -> (tempfile::TempDir, Home) {
+        install_test_runtime();
         let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         drop(StateDb::open(&home).unwrap());
@@ -744,6 +810,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
 
     #[test]
     fn a_version_1_store_comes_forward_with_each_text_once_and_nothing_tools_held() {
+        install_test_runtime();
         let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         let file = home.history_db_file();

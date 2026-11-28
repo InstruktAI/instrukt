@@ -14,6 +14,7 @@ thread, where the runtime shows that input is needed.
 
 ### Routing contract
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Situation | Surface |
 | --- | --- |
 | An agent needs approval or new intent | The agent asks in its thread; the runtime exposes `needs-input`. |
@@ -21,6 +22,16 @@ thread, where the runtime shows that input is needed.
 | The dispatch agent order is exhausted | An anomaly eligible for runner notification. |
 | Main is red and the integrator cannot repair it, with no waiting thread | An anomaly eligible for runner notification. |
 | A home backup fails or becomes stale | An anomaly eligible for runner notification (failure notified directly by backup run; staleness notified on runner wakes and surfaced on local inspection). |
+<!-- change:thin-live-runtime-boundary -->
+| Situation | Surface |
+| --- | --- |
+| An agent needs approval or new intent | The agent asks in its thread; the runtime exposes `needs-input`. |
+| A failed task waits in no thread | An anomaly eligible for runner notification. |
+| The dispatch agent order is exhausted | An anomaly eligible for runner notification. |
+| Main is red and the integrator cannot repair it, with no waiting thread | An anomaly eligible for runner notification. |
+| A home backup fails or becomes stale | An anomaly eligible for runner notification (failure notified directly by backup run; staleness notified on runner wakes and surfaced on local inspection). |
+| A company conversation turn exhausts bounded failed-turn retries or finishes idle without an explicit reply | An anomaly eligible for runner notification (deduplicated per unresolved message and surfaced on `instrukt events status`, `project/instrukt/spec/feature/company/conversations`). |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Notification is for anomalies only. It does not duplicate ordinary questions
 from a waiting thread or supply a separate approval channel.
@@ -38,6 +49,7 @@ disables notification. It controls whether and how the runner reports anomalies.
 When unset, the runner defaults to the notification the runtime adapter declares
 supported, including mobile notification where that capability is available.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The adapter's optional `notify` capability declares support; the runner setting
 chooses anomaly-reporting policy. T3's published host CLI has no notification
 operation, so its default is unavailable; an explicit `runner.notify` command
@@ -53,6 +65,30 @@ failing (`project/instrukt/spec/feature/runner/session-continuity`,
 `instrukt events status` with its door, whether or not a notification command is
 configured, so the operator sees what automation cannot resolve even when the
 runtime offers no notification.
+<!-- change:thin-live-runtime-boundary -->
+The adapter's optional `notify` capability
+(`project/instrukt/spec/feature/runtime/adapter`) declares support; the runner
+setting chooses anomaly-reporting policy. When the selected adapter does not
+declare `notify`, the default is unavailable; an explicit `runner.notify`
+command can provide it. The project layer does not supply this machine-level
+notification command.
+
+The runner also raises an anomaly for what automation cannot resolve in a
+conversation or a start: an unresolved start, a live key conflict or an
+archived bound thread that persists past the runner's operator bound, a message
+no turn has taken past that bound, a message whose turn exhausts bounded
+failed-turn retries without an explicit reply, and a message whose turn
+completes idle without an explicit reply
+(`project/instrukt/spec/feature/runner/session-continuity`,
+`project/instrukt/spec/feature/company/conversations`). Conversation-message
+anomalies are deduplicated per unresolved message identity
+`(company, connector, conversation, message)` within the running process rather
+than per conversation binding key, so later unrecovered messages in the same
+conversation or shared company session still alert the operator. Each is also
+listed in `instrukt events status` with its real cause and door, whether or not
+a notification command is configured, so the operator sees what automation
+cannot resolve even when the runtime offers no notification.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 For a stopped execution, `instrukt events status` lists its work item,
 session, workflow state and whether a notification command is configured.

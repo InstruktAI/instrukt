@@ -2040,6 +2040,8 @@ dependencies = [
  "instrukt-core",
  "instrukt-outside",
  "instrukt-runner",
+ "instrukt-runtime",
+ "instrukt-runtime-t3",
  "instrukt-todos",
  "jiff 0.2.39",
  "jsonwebtoken 9.3.1",
@@ -2075,6 +2077,7 @@ dependencies = [
  "instrukt-core",
  "instrukt-outside",
  "instrukt-runner",
+ "instrukt-runtime",
  "jiff 0.2.39",
  "serde",
  "serde_json",
@@ -2185,6 +2188,7 @@ dependencies = [
  "instrukt-blueprint",
  "instrukt-core",
  "instrukt-outside",
+ "instrukt-runtime",
  "jiff 0.2.39",
  "jsonwebtoken 9.3.1",
  "notify",
@@ -2216,6 +2220,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrukt-runtime"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "instrukt-core",
+ "jiff 0.2.39",
+ "notify",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "instrukt-runtime-t3"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "hex",
+ "instrukt-core",
+ "instrukt-outside",
+ "instrukt-runtime",
+ "jiff 0.2.39",
+ "notify",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tracing",
+ "tungstenite 0.28.0",
+ "url",
+]
+
+[[package]]
 name = "instrukt-todos"
 version = "0.1.0"
 dependencies = [
@@ -2225,6 +2264,7 @@ dependencies = [
  "instrukt-core",
  "instrukt-outside",
  "instrukt-runner",
+ "instrukt-runtime",
  "jiff 0.2.39",
  "octocrab",
  "proptest",

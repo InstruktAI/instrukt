@@ -2,7 +2,7 @@
 # Record a new nightly as a dependency head, then explicitly dispatch its check.
 set -eu
 branch=upstream/t3-nightly
-pin=crates/instrukt-runner/t3.version
+pin=crates/instrukt-runtime-t3/t3.version
 default_branch=${DEFAULT_BRANCH:?default branch is required}
 remote_record=$(git ls-remote --tags --refs --sort=-version:refname https://github.com/pingdotgg/t3code.git 'v*-nightly.*' | awk 'NR == 1 { print $1, $2 }')
 upstream_sha=${remote_record%% *}

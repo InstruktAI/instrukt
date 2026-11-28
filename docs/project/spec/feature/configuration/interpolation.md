@@ -112,3 +112,7 @@ But an absent runtime or instruction is reported as unresolved rather than guess
 - [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)
 - [project/instrukt/spec/feature/docs/progressive-retrieval](../docs/progressive-retrieval.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runtime/t3](../runtime/t3.md)
+<!-- /planned:thin-live-runtime-boundary -->

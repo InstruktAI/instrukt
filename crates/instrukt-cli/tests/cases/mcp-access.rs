@@ -312,21 +312,10 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
     // When the runtime cannot say which turn is in progress, the call is
     // refused too: no login is read, the company's included, and no server is
     // contacted.
-    let store = c.env.home().join(".t3/userdata/statev2.sqlite");
-    let aside = store.with_extension("aside");
-    std::fs::rename(&store, &aside).unwrap();
-    // The test's home is named as such, so the cause reads the same each run.
-    let homes = [
-        c.env.home().canonicalize().unwrap(),
-        c.env.home().to_path_buf(),
-    ];
-    let refused = homes
-        .iter()
-        .fold(stderr(&whoami(&c).failure()), |text, home| {
-            text.replace(home.to_str().unwrap(), "[home]")
-        });
+    c.runtime.flag("show-failure", true);
+    let refused = stderr(&whoami(&c).failure());
     insta::assert_snapshot!("unreadable-turn-refused", refused);
-    std::fs::rename(&aside, &store).unwrap();
+    c.runtime.flag("show-failure", false);
     assert_eq!(erp.received().len(), reached);
 }
 

@@ -1,8 +1,6 @@
-//! Native database notifications drive the runner's company conversation relay.
-use std::sync::{
-    Arc, Mutex as StdMutex,
-    atomic::{AtomicBool, Ordering},
-};
+//! Notification-free company conversation relay backed by live runtime polling
+//! and `instrukt-outside::Gate` backoff.
+use std::sync::Arc;
 use std::time::Duration;
 
 use instrukt_core::{
@@ -12,15 +10,14 @@ use instrukt_core::{
 use instrukt_outside::{
     Attempted, Extent, Gate, Key, Reason, Report, Settings, Tried, Unavailable,
 };
-use tokio::sync::{Mutex, Notify, mpsc, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 
-use crate::{interfaces::CompanyRelayPass, runtime::conversations::SourceWake};
+use crate::interfaces::CompanyRelayPass;
+use crate::runtime::{RuntimeAdapter, RuntimeRegistry};
 
-/// How often the relay checks for retained or out-of-process company work while idle.
+/// How often the relay checks for active turns, retries, or out-of-process
+/// `instrukt company reply` outbox entries.
 const RETRY_CADENCE: Duration = Duration::from_secs(2);
-
-/// How long the blocking notification bridge waits per poll before checking shutdown.
-const NOTIFICATION_POLL: Duration = Duration::from_millis(200);
 
 /// The company destination served by the relay and its intake wake-ups.
 #[derive(Clone)]
@@ -29,75 +26,17 @@ pub(crate) struct Destinations {
     pub(crate) arrivals: Arc<Mutex<mpsc::Receiver<()>>>,
 }
 
-/// The long-lived async relay task serving company conversations from T3's
-/// conversation source. Dropping it signals shutdown cleanly.
+/// The long-lived async relay task serving company conversations over a shared
+/// long-lived `RuntimeAdapter`. Dropping it signals shutdown cleanly.
 pub(crate) struct Worker {
     shutdown: watch::Sender<bool>,
     handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Signals the blocking notification bridge to exit when dropped.
-struct BridgeStop(Arc<AtomicBool>);
-impl Drop for BridgeStop {
+struct AdapterShutdown(Arc<dyn RuntimeAdapter>);
+impl Drop for AdapterShutdown {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Release);
-    }
-}
-
-/// Lossless monotonic coalescer for conversation notifications so a stronger
-/// `CatchUp` (`SourceWake::Changed`) or `Failed` event can never be dropped
-/// behind queued `Retry` (`SourceWake::ReadAgain`) notifications.
-#[derive(Default)]
-enum PendingWake {
-    #[default]
-    None,
-    Retry,
-    CatchUp,
-    Failed(String),
-}
-
-#[derive(Default)]
-struct WakeSlot {
-    state: StdMutex<PendingWake>,
-    notify: Notify,
-}
-
-impl WakeSlot {
-    fn record_wake(&self, wake: SourceWake) {
-        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        match (&*guard, wake) {
-            (PendingWake::Failed(_), _) | (_, SourceWake::Timeout) => return,
-            (_, SourceWake::Changed) => *guard = PendingWake::CatchUp,
-            (PendingWake::None, SourceWake::ReadAgain) => *guard = PendingWake::Retry,
-            (PendingWake::Retry | PendingWake::CatchUp, SourceWake::ReadAgain) => return,
-        }
-        drop(guard);
-        self.notify.notify_one();
-    }
-
-    fn record_error(&self, error: String) {
-        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if !matches!(&*guard, PendingWake::Failed(_)) {
-            *guard = PendingWake::Failed(error);
-        }
-        drop(guard);
-        self.notify.notify_one();
-    }
-
-    async fn next(&self) -> Result<CompanyRelayPass, String> {
-        loop {
-            let notified = self.notify.notified();
-            {
-                let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-                match std::mem::take(&mut *guard) {
-                    PendingWake::None => {}
-                    PendingWake::Retry => return Ok(CompanyRelayPass::Retry),
-                    PendingWake::CatchUp => return Ok(CompanyRelayPass::CatchUp),
-                    PendingWake::Failed(error) => return Err(error),
-                }
-            }
-            notified.await;
-        }
+        self.0.shutdown();
     }
 }
 
@@ -110,13 +49,13 @@ fn format_relay_wait(wait: &instrukt_outside::Wait, error: Option<&str>) -> Stri
 
 impl Worker {
     /// Spawns the company conversation relay on the shared Tokio runtime.
-    /// Source acquisition and reader failures are judged by `instrukt-outside::Gate`,
-    /// which owns backoff pacing and outage reporting while projecting the
-    /// current failure state onto `destinations.company`.
+    /// Runtime resolution, `relay()`, and `outstanding()` failures are judged
+    /// by `instrukt-outside::Gate` and projected onto `destinations.company.relay_state`.
     pub(crate) fn start(
         home: &Home,
         env: &Env,
         current: Current,
+        runtimes: RuntimeRegistry,
         destinations: Destinations,
     ) -> std::io::Result<Self> {
         let rt = instrukt_outside::runtime::runtime()?;
@@ -129,7 +68,7 @@ impl Worker {
                 Arc::new(std::time::Instant::now),
                 Report::log(),
             );
-            let key = Key::new("t3", ["conversation-source"]).item("relay");
+            let key = Key::new("runtime", ["company-relay"]).item("relay");
             let settings = Settings::default();
             loop {
                 if *stopping.borrow() {
@@ -143,13 +82,10 @@ impl Worker {
                                 .global()
                                 .runner_runtime()
                                 .map_err(|error| error.to_string())?;
-                            let adapter = crate::runtime::adapter(runtime);
-                            let source = adapter
-                                .conversation_source(&home, &env)
+                            let adapter = runtimes
+                                .long_lived(runtime.name(), &env)
                                 .map_err(|error| error.to_string())?;
-                            let notifications =
-                                source.subscribe().map_err(|error| error.to_string())?;
-                            Ok::<_, String>((adapter, source, notifications))
+                            Ok::<_, String>((runtime.name(), adapter))
                         }) {
                             Ok(ready) => Tried::Done(ready),
                             Err(cause) => Tried::Unavailable(
@@ -163,7 +99,7 @@ impl Worker {
                         }
                     })
                     .await;
-                let (adapter, source, notifications) = match acquired {
+                let (runtime_name, adapter) = match acquired {
                     Attempted::Done(ready) => ready,
                     Attempted::Wait { wait, error } => {
                         let status = format_relay_wait(&wait, error.as_deref());
@@ -189,18 +125,19 @@ impl Worker {
                     }
                 };
 
-                // The source is acquired: clear any previously recorded relay failure.
-                tokio::task::block_in_place(|| {
-                    destinations.company.relay_state(&home, None);
-                });
+                let _shutdown = AdapterShutdown(Arc::clone(&adapter));
 
                 match serve(
-                    &home,
-                    &current,
-                    &destinations,
-                    adapter,
-                    source,
-                    notifications,
+                    ServeArgs {
+                        home: &home,
+                        current: &current,
+                        destinations: &destinations,
+                        runtime_name,
+                        adapter,
+                        gate: &gate,
+                        key: &key,
+                        settings: &settings,
+                    },
                     &mut stopping,
                 )
                 .await
@@ -249,15 +186,12 @@ impl Worker {
         })
     }
 
-    /// Whether the relay task is still alive.
     pub(crate) fn is_running(&self) -> bool {
         self.handle
             .as_ref()
             .is_some_and(|handle| !handle.is_finished())
     }
 
-    /// Resolves as soon as the relay task exits (normal return or unwind).
-    /// Cancellation-safe: dropping the returned future keeps the task running.
     pub(crate) async fn exited(&mut self) {
         if let Some(handle) = self.handle.as_mut() {
             let _ = handle.await;
@@ -272,66 +206,126 @@ impl Drop for Worker {
     }
 }
 
-/// Serves company conversations on an acquired T3 conversation source until
-/// shutdown (`Ok`) or a notification reader failure (`Err`).
-async fn serve(
-    home: &Home,
-    current: &Current,
-    destinations: &Destinations,
-    adapter: Box<dyn crate::runtime::RuntimeAdapter>,
-    source: Box<dyn crate::runtime::conversations::ConversationSource>,
-    notifications: Box<dyn crate::runtime::conversations::ConversationNotifications>,
-    stopping: &mut watch::Receiver<bool>,
-) -> Result<(), String> {
+struct ServeArgs<'a> {
+    home: &'a Home,
+    current: &'a Current,
+    destinations: &'a Destinations,
+    runtime_name: &'static str,
+    adapter: Arc<dyn RuntimeAdapter>,
+    gate: &'a Gate,
+    key: &'a Key,
+    settings: &'a Settings<'a>,
+}
+
+async fn serve(args: ServeArgs<'_>, stopping: &mut watch::Receiver<bool>) -> Result<(), String> {
+    let ServeArgs {
+        home,
+        current,
+        destinations,
+        runtime_name,
+        adapter,
+        gate,
+        key,
+        settings,
+    } = args;
     if *stopping.borrow() {
         return Ok(());
     }
-
-    // Bridge blocking `ConversationNotifications::wait` onto a monotonic
-    // coalescing slot so `Changed` can never be dropped behind `ReadAgain`.
-    let wakes = Arc::new(WakeSlot::default());
-    let bridge_wakes = Arc::clone(&wakes);
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let _bridge_stop = BridgeStop(Arc::clone(&stop_flag));
-    let bridge_flag = Arc::clone(&stop_flag);
-    let _bridge = tokio::task::spawn_blocking(move || {
-        let mut notifications = notifications;
-        while !bridge_flag.load(Ordering::Acquire) {
-            match notifications.wait(NOTIFICATION_POLL) {
-                Ok(SourceWake::Timeout) => {}
-                Ok(wake) => bridge_wakes.record_wake(wake),
-                Err(error) => {
-                    bridge_wakes.record_error(error.to_string());
-                    return;
-                }
-            }
-        }
-    });
-
     let mut arrivals = destinations.arrivals.lock().await;
     let mut pass = CompanyRelayPass::CatchUp;
+    let mut failing = false;
     loop {
         if *stopping.borrow() {
             return Ok(());
         }
         let admitted = current.get();
-        let retry = tokio::task::block_in_place(|| {
-            if let Err(error) =
-                destinations
-                    .company
-                    .relay(home, &admitted, source.as_ref(), adapter.as_ref(), pass)
-            {
-                tracing::warn!(event = "conversation_relay_failed", error = %error);
-            }
+        let selected = admitted
+            .global()
+            .runner_runtime()
+            .map_err(|error| error.to_string())?;
+        if selected.name() != runtime_name {
+            return Err(format!(
+                "configured runtime changed from `{runtime_name}` to `{}`",
+                selected.name()
+            ));
+        }
+
+        let pass_outcome: Result<bool, String> = tokio::task::block_in_place(|| {
+            destinations
+                .company
+                .relay(home, &admitted, Arc::clone(&adapter), pass)
+                .map_err(|error| error.to_string())?;
             if matches!(pass, CompanyRelayPass::CatchUp) {
                 tracing::debug!(event = "conversation_relay_source_processed");
             }
-            // Retained connector work that is not yet done is retried within a
-            // bound; an out-of-process `instrukt company reply` can also
-            // enqueue pending answers while idle, so check read-only SQLite on
-            // the same 2-second cadence without touching the native source.
-            destinations.company.outstanding(home).unwrap_or(true)
+            destinations
+                .company
+                .outstanding(home)
+                .map_err(|error| error.to_string())
         });
+
+        let retry = match pass_outcome {
+            Ok(outstanding) => {
+                if failing {
+                    let _ = gate
+                        .attempt_async(key, settings, || async { Tried::<(), String>::Done(()) })
+                        .await;
+                    tokio::task::block_in_place(|| {
+                        destinations.company.relay_state(home, None);
+                    });
+                    failing = false;
+                }
+                outstanding
+            }
+            Err(cause) => {
+                tracing::warn!(event = "conversation_relay_failed", error = %cause);
+                let recorded = gate
+                    .attempt_async(key, settings, || async {
+                        Tried::<(), String>::Unavailable(
+                            Unavailable {
+                                reason: Reason::Unreachable,
+                                extent: Extent::Scope,
+                                named: None,
+                            },
+                            cause.clone(),
+                        )
+                    })
+                    .await;
+                let status = match &recorded {
+                    Attempted::Wait { wait, error } => {
+                        format_relay_wait(wait, error.as_deref().or(Some(cause.as_str())))
+                    }
+                    Attempted::Defect(detail) => detail.clone(),
+                    Attempted::Done(()) => cause,
+                };
+                tokio::task::block_in_place(|| {
+                    destinations.company.relay_state(home, Some(&status));
+                });
+                failing = true;
+                if let Attempted::Wait { wait, .. } = recorded {
+                    tokio::select! {
+                        changed = stopping.changed() => {
+                            if changed.is_err() || *stopping.borrow() {
+                                return Ok(());
+                            }
+                        }
+                        arrived = arrivals.recv() => {
+                            match arrived {
+                                Some(()) => {
+                                    pass = CompanyRelayPass::Retry;
+                                    continue;
+                                }
+                                None => return Ok(()),
+                            }
+                        }
+                        () = tokio::time::sleep_until(tokio::time::Instant::from_std(wait.until())) => {}
+                    }
+                    pass = CompanyRelayPass::Retry;
+                    continue;
+                }
+                true
+            }
+        };
 
         let mut retry_deadline = tokio::time::Instant::now() + RETRY_CADENCE;
         pass = loop {
@@ -347,38 +341,29 @@ async fn serve(
                         None => return Ok(()),
                     }
                 }
-                next = wakes.next() => {
-                    break next?;
-                }
                 () = tokio::time::sleep_until(retry_deadline) => {
-                    let has_work = retry
-                        || tokio::task::block_in_place(|| {
-                            destinations.company.outstanding(home).unwrap_or(false)
-                        });
-                    if has_work {
-                        break CompanyRelayPass::Retry;
+                    let check: Result<bool, String> = if retry {
+                        Ok(true)
+                    } else {
+                        tokio::task::block_in_place(|| {
+                            destinations
+                                .company
+                                .outstanding(home)
+                                .map_err(|error| error.to_string())
+                        })
+                    };
+                    match check {
+                        Ok(true) => break CompanyRelayPass::Retry,
+                        Ok(false) => {
+                            retry_deadline = tokio::time::Instant::now() + RETRY_CADENCE;
+                        }
+                        Err(cause) => {
+                            tracing::warn!(event = "conversation_relay_outstanding_failed", error = %cause);
+                            return Err(cause);
+                        }
                     }
-                    retry_deadline = tokio::time::Instant::now() + RETRY_CADENCE;
                 }
             }
         };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wake_slot_preserves_changed_over_queued_read_again() {
-        let slot = WakeSlot::default();
-        slot.record_wake(SourceWake::ReadAgain);
-        slot.record_wake(SourceWake::ReadAgain);
-        slot.record_wake(SourceWake::Changed);
-        slot.record_wake(SourceWake::ReadAgain);
-        let pass = instrukt_outside::runtime::block_on(slot.next())
-            .ok()
-            .and_then(Result::ok);
-        assert!(matches!(pass, Some(CompanyRelayPass::CatchUp)));
     }
 }

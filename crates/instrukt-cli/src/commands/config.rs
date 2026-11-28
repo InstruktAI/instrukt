@@ -183,7 +183,7 @@ fn check_company_agent_scope(
 
     // Establish active turn's speaker and require is_admin && is_direct.
     let runtime = global.runner_runtime()?;
-    let adapter = instrukt_runner::runtime::adapter(runtime);
+    let adapter = crate::runtimes::adapter(runtime.name(), &env)?;
     let speaker = instrukt_company::conversations::speaker(&ctx.home, &session, adapter.as_ref())
         .map_err(|error| anyhow::anyhow!("config access refused: {error}; {DOOR}"))?
         .ok_or_else(|| {

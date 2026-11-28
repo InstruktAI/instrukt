@@ -1,10 +1,12 @@
 //! The machine-owned T3 state location, independent of instrukt's output home.
-use instrukt_core::{config::Env, home::Home};
 use std::path::PathBuf;
+
+use instrukt_core::{config::Env, home::Home};
 
 pub(crate) struct T3Home {
     directory: PathBuf,
 }
+
 impl T3Home {
     pub(crate) fn discover(home: &Home, env: &Env) -> Self {
         let explicit = env.get("T3CODE_HOME").filter(|s| !s.trim().is_empty());
@@ -32,9 +34,11 @@ impl T3Home {
         let directory = directory.canonicalize().unwrap_or(directory);
         Self { directory }
     }
+
     pub(crate) fn database(&self) -> PathBuf {
         self.directory.join("statev2.sqlite")
     }
+
     pub(crate) fn descriptor(&self) -> PathBuf {
         self.directory.join("server-runtime.json")
     }

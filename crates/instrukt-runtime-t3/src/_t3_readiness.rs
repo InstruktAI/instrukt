@@ -1,50 +1,40 @@
-//! Protocol- and shape-validated translation of T3's internal read-scoped provider snapshot.
-//! Wire source: https://github.com/pingdotgg/t3code/tree/bf469bb19669671d0df2efda74ed73867a7137c0/apps/server/src
-//!
-//! Readiness is off the start path. A runner keeps one read-scoped token,
-//! issued when it starts and renewed before it expires, and refreshes the
-//! provider snapshot on its own wake ([`Readiness`]). Each snapshot read is
-//! published with the time it was observed; a start reads the last one
-//! published ([`last`]) and never waits on an acquisition in progress.
-//!
-//! The same read answers which agent instances are configured
-//! ([`configured`]): the enabled providers, with the home each one's
-//! settings and instance environment name, interpreted at T3 `v0.1.8`'s
-//! semantics (`packages/contracts/src/settings.ts`, `providerInstance.ts`,
-//! `apps/server/src/provider/Drivers/CodexDriver.ts`).
-use super::{ObservedSnapshot, ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
-use crate::{
-    process::Invocation,
-    sessions::{ExecutionRootCause, SessionsError},
-};
+//! Protocol- and shape-validated T3 WebSocket RPC, HTTP project snapshot, readiness,
+//! and bounded token lifecycle (`Token` single-revoke + long-lived `ReadTokenLease`).
+use std::collections::{BTreeMap, BTreeSet};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::time::{Duration, Instant};
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use instrukt_core::{
-    config::{Env, HarnessKind},
-    home::Home,
-    ids::ProviderInstanceId,
-    interfaces::{ConfiguredInstance, InstructionAssurance, InstructionHomeSource},
+use instrukt_core::config::{Env, HarnessKind};
+use instrukt_core::home::Home;
+use instrukt_core::ids::{ProviderInstanceId, SessionRef};
+use instrukt_core::interfaces::{ConfiguredInstance, InstructionAssurance, InstructionHomeSource};
+use instrukt_core::process::{Finished, Invocation, ProcessError};
+use instrukt_runtime::DispatchError::{self, AfterFrame, BeforeFrame, BeforeWrite};
+use instrukt_runtime::{
+    ExecutionRootCause, LaunchInteractionMode, LaunchRuntimeMode, ObservedSnapshot, ProviderFacts,
+    ProviderSnapshot, ReportedModel, ResolvedLaunchModes, RuntimeError, RuntimeStart, UsageWindow,
 };
 use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::json;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::TcpStream,
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
-};
 use tungstenite::{Message, client::IntoClientRequest};
 
 const RPC_REQUEST_ID: &str = "instrukt-readiness";
-/// The limit on one T3 CLI launch and on one snapshot read.
+/// Default limit on one T3 CLI launch and on one snapshot read.
 const TIMEOUT: Duration = Duration::from_secs(10);
-/// The lifetime T3 gives a readiness token (`--ttl`).
+/// Bounded single-attempt synchronous revoke cap for one-shot live reads and drop cleanup.
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(1);
+/// The lifetime T3 gives a readiness / live-read token (`--ttl`).
 const TOKEN_LIFETIME: &str = "5m";
 const TOKEN_LIFETIME_SECONDS: i64 = 300;
 /// How long before its expiry a token is replaced.
 const RENEW_BEFORE_SECONDS: i64 = 60;
-fn refused(cause: &str) -> SessionsError {
-    SessionsError::Refused(format!("T3 readiness: {cause}"))
+
+fn refused(cause: &str) -> RuntimeError {
+    RuntimeError::Refused(format!("T3 readiness: {cause}"))
 }
 
 #[derive(Deserialize)]
@@ -56,36 +46,34 @@ struct RuntimeState {
     origin: String,
     server_version: Option<String>,
 }
+
 #[derive(Deserialize)]
 struct Snapshot {
     providers: Vec<Provider>,
     settings: Settings,
 }
-/// The configured instances' settings, decoded apart from the provider
-/// facts: what an instance's home is depends on them.
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Settings {
     #[serde(default)]
     provider_instances: BTreeMap<ProviderInstanceId, InstanceSettings>,
 }
+
 #[derive(Deserialize)]
 struct InstanceSettings {
-    /// Whether the instance is enabled; T3 decodes an absent value as
-    /// enabled.
     #[serde(default = "enabled_by_default")]
     enabled: bool,
     #[serde(default)]
     environment: Vec<Variable>,
-    /// Each driver decodes its own `config`; only the home settings are read.
     #[serde(default)]
     config: serde_json::Value,
 }
+
 fn enabled_by_default() -> bool {
     true
 }
-/// An instance-environment variable. T3 sends a sensitive variable's value
-/// redacted (empty, or a secret reference), so a selected home stays unknown.
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Variable {
@@ -97,7 +85,7 @@ struct Variable {
     #[serde(default)]
     value_redacted: bool,
 }
-/// The homes T3 reports for a managed Codex instance.
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimePaths {
@@ -105,6 +93,7 @@ struct RuntimePaths {
     #[serde(default)]
     shadow_home_path: Option<String>,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Provider {
@@ -124,6 +113,7 @@ struct Provider {
     #[serde(default, deserialize_with = "present")]
     runtime_paths: Option<RuntimePaths>,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Status {
@@ -132,10 +122,12 @@ enum Status {
     Error,
     Disabled,
 }
+
 #[derive(Deserialize)]
 struct Auth {
     status: AuthStatus,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum AuthStatus {
@@ -143,22 +135,26 @@ enum AuthStatus {
     Unauthenticated,
     Unknown,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Available {
     Available,
     Unavailable,
 }
+
 #[derive(Deserialize)]
 struct Model {
     slug: String,
     #[serde(default)]
     aliases: Vec<String>,
 }
+
 #[derive(Deserialize)]
 struct Usage {
     windows: Vec<Window>,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Window {
@@ -183,6 +179,7 @@ enum CommandFailure {
     Io,
     Exit,
 }
+
 impl CommandFailure {
     fn as_str(self) -> &'static str {
         match self {
@@ -193,24 +190,29 @@ impl CommandFailure {
         }
     }
 }
-fn command_failure(error: crate::process::ProcessError) -> CommandFailure {
+
+fn command_failure(error: ProcessError) -> CommandFailure {
     match error {
-        crate::process::ProcessError::Spawn { .. } => CommandFailure::Launch,
-        crate::process::ProcessError::Timeout { .. } => CommandFailure::Timeout,
-        crate::process::ProcessError::Io { .. } => CommandFailure::Io,
+        ProcessError::Spawn { .. } => CommandFailure::Launch,
+        ProcessError::Timeout { .. } => CommandFailure::Timeout,
+        ProcessError::Io { .. } => CommandFailure::Io,
     }
 }
-fn command_output(
-    outcome: Result<crate::process::Finished, crate::process::ProcessError>,
-) -> Result<String, CommandFailure> {
+
+fn command_output(outcome: Result<Finished, ProcessError>) -> Result<String, CommandFailure> {
     match outcome {
         Ok(out) if out.success => Ok(out.stdout),
         Ok(_) => Err(CommandFailure::Exit),
         Err(error) => Err(command_failure(error)),
     }
 }
-fn command(args: &[&str], operation: &str) -> Result<String, SessionsError> {
-    match command_output(Invocation::program("t3", args).run(TIMEOUT)) {
+
+fn command_within(
+    args: &[&str],
+    operation: &str,
+    timeout: Duration,
+) -> Result<String, RuntimeError> {
+    match command_output(Invocation::program("t3", args).run(timeout)) {
         Ok(stdout) => Ok(stdout),
         Err(failure) => {
             tracing::warn!(
@@ -223,18 +225,31 @@ fn command(args: &[&str], operation: &str) -> Result<String, SessionsError> {
     }
 }
 
+fn command(args: &[&str], operation: &str) -> Result<String, RuntimeError> {
+    command_within(args, operation, TIMEOUT)
+}
+
 struct Token {
     secret: String,
     session: String,
     revoked: bool,
 }
+
 impl Token {
-    fn issue() -> Result<Self, SessionsError> {
-        Self::issue_scoped("orchestration:read", "instrukt-readiness")
+    fn issue() -> Result<Self, RuntimeError> {
+        Self::issue_scoped_within("orchestration:read", "instrukt-readiness", TIMEOUT)
     }
 
-    fn issue_scoped(scope: &str, label: &str) -> Result<Self, SessionsError> {
-        let secret = command(
+    fn issue_scoped(scope: &str, label: &str) -> Result<Self, RuntimeError> {
+        Self::issue_scoped_within(scope, label, TIMEOUT)
+    }
+
+    fn issue_scoped_within(
+        scope: &str,
+        label: &str,
+        timeout: Duration,
+    ) -> Result<Self, RuntimeError> {
+        let secret = command_within(
             &[
                 "auth",
                 "session",
@@ -252,6 +267,7 @@ impl Token {
             } else {
                 "cannot issue operate-scoped token"
             },
+            timeout,
         )?
         .trim()
         .to_owned();
@@ -267,7 +283,15 @@ impl Token {
             kind: String,
             sid: String,
         }
-        let claims:Claims=URL_SAFE_NO_PAD.decode(payload).ok().and_then(|bytes|serde_json::from_slice(&bytes).ok()).ok_or_else(||refused("unrecognized issued token payload; short-lived session may require manual revocation"))?;
+        let claims: Claims = URL_SAFE_NO_PAD
+            .decode(payload)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .ok_or_else(|| {
+                refused(
+                    "unrecognized issued token payload; short-lived session may require manual revocation",
+                )
+            })?;
         if claims.sid.is_empty() {
             return Err(refused("issued token has no revocable session identity"));
         }
@@ -282,18 +306,34 @@ impl Token {
         }
         Ok(issued)
     }
-    fn revoke(&mut self) -> Result<(), SessionsError> {
-        command(
+
+    /// Runs one synchronous revoke attempt, marking `revoked = true` BEFORE
+    /// invoking the subprocess so `Drop` never attempts a second revoke.
+    fn revoke_with_timeout(&mut self, timeout: Duration) -> Result<(), RuntimeError> {
+        if self.revoked {
+            return Ok(());
+        }
+        self.revoked = true;
+        command_within(
             &["auth", "session", "revoke", "--", &self.session],
             "cannot revoke readiness session",
+            timeout,
         )?;
-        self.revoked = true;
         Ok(())
     }
+
+    fn revoke(&mut self) -> Result<(), RuntimeError> {
+        self.revoke_with_timeout(TIMEOUT)
+    }
+
+    fn revoke_quick(&mut self) -> Result<(), RuntimeError> {
+        self.revoke_with_timeout(REVOKE_TIMEOUT)
+    }
 }
+
 impl Drop for Token {
     fn drop(&mut self) {
-        if !self.revoked && self.revoke().is_err() {
+        if !self.revoked && self.revoke_quick().is_err() {
             tracing::error!(
                 event = "readiness_token_cleanup_failed",
                 message = "readiness session revocation failed; its five-minute TTL remains"
@@ -301,8 +341,103 @@ impl Drop for Token {
         }
     }
 }
-/// The local server's WebSocket endpoint, from its runtime descriptor.
-fn endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
+
+/// Shared `orchestration:read` session-token lease held by long-lived `T3` adapters
+/// (`instrukt run`), eliminating per-poll auth subprocesses while refreshing once on HTTP 401.
+#[derive(Default)]
+struct LeaseSlot {
+    kept: Option<(Token, Instant)>,
+    closed: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct ReadTokenLease {
+    slot: Mutex<LeaseSlot>,
+}
+
+impl ReadTokenLease {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock_slot(&self) -> MutexGuard<'_, LeaseSlot> {
+        match self.slot.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn get_or_issue(&self, timeout: Duration) -> Result<String, RuntimeError> {
+        let now = Instant::now();
+        {
+            let slot = self.lock_slot();
+            if slot.closed {
+                return Err(refused("the runner is stopping"));
+            }
+            if let Some((token, renew_at)) = &slot.kept
+                && now < *renew_at
+            {
+                return Ok(token.secret.clone());
+            }
+        }
+        let next = Token::issue_scoped_within("orchestration:read", "instrukt-live-read", timeout)?;
+        let renew_at = Instant::now()
+            + Duration::from_secs((TOKEN_LIFETIME_SECONDS - RENEW_BEFORE_SECONDS) as u64);
+        let secret = next.secret.clone();
+        let earlier = {
+            let mut slot = self.lock_slot();
+            if slot.closed {
+                drop(slot);
+                drop(next);
+                return Err(refused("the runner is stopping"));
+            }
+            slot.kept.replace((next, renew_at))
+        };
+        drop(earlier);
+        Ok(secret)
+    }
+
+    fn invalidate_if_matching(&self, stale: &str) {
+        let stale_token = {
+            let mut slot = self.lock_slot();
+            if slot
+                .kept
+                .as_ref()
+                .is_some_and(|(token, _)| token.secret == stale)
+            {
+                slot.kept.take()
+            } else {
+                None
+            }
+        };
+        if let Some((mut token, _)) = stale_token
+            && let Err(error) = token.revoke_quick()
+        {
+            tracing::warn!(event = "t3_live_read_token_cleanup_failed", %error);
+        }
+    }
+
+    pub(crate) fn shutdown(&self) {
+        let kept = {
+            let mut slot = self.lock_slot();
+            slot.closed = true;
+            slot.kept.take()
+        };
+        if let Some((mut token, _)) = kept
+            && let Err(error) = token.revoke_quick()
+        {
+            tracing::warn!(event = "t3_live_read_token_shutdown_failed", %error);
+        }
+    }
+}
+
+impl Drop for ReadTokenLease {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn endpoint(home: &Home, env: &Env) -> Result<url::Url, RuntimeError> {
     let cli = match command(&["--version"], "cannot inspect CLI release") {
         Ok(release) => Some(release),
         Err(error) => {
@@ -314,8 +449,8 @@ fn endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     server_endpoint(home, env)
 }
 
-fn server_endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
-    let location = super::_t3_home::T3Home::discover(home, env);
+fn server_endpoint(home: &Home, env: &Env) -> Result<url::Url, RuntimeError> {
+    let location = crate::_t3_home::T3Home::discover(home, env);
     let bytes = std::fs::read(location.descriptor())
         .map_err(|_| refused("cannot discover the local running server"))?;
     let state: RuntimeState =
@@ -323,7 +458,12 @@ fn server_endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     if state.version != 1 || state.pid == 0 || state.port == 0 {
         return Err(refused("unsupported server runtime descriptor shape"));
     }
-    tracing::debug!(event="t3_readiness_releases",server_release=?state.server_version,descriptor_version=state.version,orchestration_protocol=2);
+    tracing::debug!(
+        event = "t3_readiness_releases",
+        server_release = ?state.server_version,
+        descriptor_version = state.version,
+        orchestration_protocol = 2
+    );
     let mut endpoint =
         url::Url::parse(&state.origin).map_err(|_| refused("invalid local server address"))?;
     if endpoint.scheme() != "http"
@@ -344,48 +484,35 @@ fn server_endpoint(home: &Home, env: &Env) -> Result<url::Url, SessionsError> {
     Ok(endpoint)
 }
 
-/// The snapshot a start reads: the last one any refresh in this process
-/// published, with the time it was observed.
-static LAST: std::sync::RwLock<Option<std::sync::Arc<ObservedSnapshot>>> =
-    std::sync::RwLock::new(None);
+static LAST: RwLock<Option<Arc<ObservedSnapshot>>> = RwLock::new(None);
 
-/// The last snapshot published in this process, if any.
-pub(super) fn last() -> Option<std::sync::Arc<ObservedSnapshot>> {
+pub(crate) fn last() -> Option<Arc<ObservedSnapshot>> {
     match LAST.read() {
         Ok(last) => last.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     }
 }
 
-fn publish(observed: &std::sync::Arc<ObservedSnapshot>) {
-    let next = Some(std::sync::Arc::clone(observed));
+fn publish(observed: &Arc<ObservedSnapshot>) {
+    let next = Some(Arc::clone(observed));
     match LAST.write() {
         Ok(mut last) => *last = next,
         Err(poisoned) => *poisoned.into_inner() = next,
     }
 }
 
-/// The runner's one readiness token and the refresh of the provider
-/// snapshot it reads. The token is issued on the first refresh and replaced
-/// before it expires: the next is issued, then the earlier one revoked. The
-/// last one is revoked when this is dropped. A revocation that fails is
-/// logged; the token lapses with its lifetime.
 pub(crate) struct Readiness {
     env: Env,
-    slot: std::sync::Arc<std::sync::Mutex<Slot>>,
+    slot: Arc<Mutex<Slot>>,
 }
 
-/// The one token the runner keeps: the token reads use and the token a stop
-/// revokes are this slot's, replaced in one step.
 #[derive(Default)]
 struct Slot {
-    /// The kept token and when it is renewed.
     kept: Option<(Token, Timestamp)>,
-    /// A stop has taken the slot: no token is kept in it any more.
     claimed: bool,
 }
 
-fn lock(slot: &std::sync::Mutex<Slot>) -> std::sync::MutexGuard<'_, Slot> {
+fn lock(slot: &Mutex<Slot>) -> MutexGuard<'_, Slot> {
     match slot.lock() {
         Ok(slot) => slot,
         Err(poisoned) => poisoned.into_inner(),
@@ -393,19 +520,14 @@ fn lock(slot: &std::sync::Mutex<Slot>) -> std::sync::MutexGuard<'_, Slot> {
 }
 
 impl Readiness {
-    pub(super) fn new(env: Env) -> Self {
+    pub(crate) fn new(env: Env) -> Self {
         Self {
             env,
-            slot: std::sync::Arc::default(),
+            slot: Arc::default(),
         }
     }
 
-    /// The secret of the token to read with at `now`, issuing or renewing
-    /// it as due. A replacement is issued outside the slot and kept in one
-    /// step; the earlier token is revoked after that, outside the slot. Once
-    /// a stop has claimed the slot nothing is kept: a replacement issued
-    /// meanwhile is revoked here.
-    fn token(&mut self, now: Timestamp) -> Result<String, SessionsError> {
+    fn token(&mut self, now: Timestamp) -> Result<String, RuntimeError> {
         {
             let slot = lock(&self.slot);
             if slot.claimed {
@@ -428,20 +550,17 @@ impl Readiness {
             let mut slot = lock(&self.slot);
             if slot.claimed {
                 drop(slot);
-                // Revoked as it is dropped: the stop took the slot first.
                 drop(next);
                 return Err(refused("the runner is stopping"));
             }
             slot.kept.replace((next, renew_at))
         };
-        // Revoked as it is dropped, the slot already holding the next one.
         drop(earlier);
         Ok(secret)
     }
 }
 
 impl Drop for Readiness {
-    /// A readiness that ends revokes the token it keeps.
     fn drop(&mut self) {
         let kept = {
             let mut slot = lock(&self.slot);
@@ -452,17 +571,16 @@ impl Drop for Readiness {
     }
 }
 
-impl super::Readiness for Readiness {
+impl instrukt_runtime::Readiness for Readiness {
     fn refresh(
         &mut self,
         home: &Home,
         clock: &dyn Fn() -> Timestamp,
-    ) -> Result<std::sync::Arc<ObservedSnapshot>, SessionsError> {
+    ) -> Result<Arc<ObservedSnapshot>, RuntimeError> {
         let endpoint = endpoint(home, &self.env)?;
         let secret = self.token(clock())?;
         let source = read_rpc(&endpoint, &secret)?;
-        // Observed when the read returned, however long it took.
-        let observed = std::sync::Arc::new(ObservedSnapshot {
+        let observed = Arc::new(ObservedSnapshot {
             snapshot: translate(source),
             at: clock(),
         });
@@ -471,7 +589,7 @@ impl super::Readiness for Readiness {
     }
 
     fn stopper(&self) -> Box<dyn Fn() + Send + Sync> {
-        let slot = std::sync::Arc::clone(&self.slot);
+        let slot = Arc::clone(&self.slot);
         Box::new(move || {
             let kept = {
                 let mut slot = lock(&slot);
@@ -481,9 +599,6 @@ impl super::Readiness for Readiness {
             let Some((mut token, _)) = kept else {
                 return;
             };
-            // One attempt at the kept token, bounded in real time whatever
-            // the operator's clock says: past the bound its command's process
-            // group is ended and reaped before the process ends.
             token.revoked = true;
             let attempt =
                 Invocation::program("t3", &["auth", "session", "revoke", "--", &token.session])
@@ -500,9 +615,7 @@ impl super::Readiness for Readiness {
     }
 }
 
-/// One snapshot read with a token of its own, revoked after it: for a
-/// command that reads readiness once, never for a start.
-fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
+fn acquire(home: &Home, env: &Env) -> Result<Snapshot, RuntimeError> {
     let endpoint = endpoint(home, env)?;
     let mut token = Token::issue()?;
     let result = read_rpc(&endpoint, &token.secret);
@@ -516,7 +629,7 @@ fn acquire(home: &Home, env: &Env) -> Result<Snapshot, SessionsError> {
         )),
     }
 }
-// Counts bytes accepted by the TCP stream, including partial writes.
+
 struct FrameStream {
     stream: TcpStream,
     written: usize,
@@ -540,102 +653,255 @@ impl std::io::Write for FrameStream {
     }
 }
 
-use super::DispatchError::{self, AfterFrame, BeforeFrame};
+enum RpcFailure {
+    Unauthorized(RuntimeError),
+    Dispatch(DispatchError),
+}
 
-/// One `orchestration.dispatchCommand` of `payload`, over a token labelled
-/// `label` issued and revoked around it; T3's refusal is attributed to
-/// `operation`.
-pub(super) fn dispatch(
+impl RpcFailure {
+    fn into_dispatch(self) -> DispatchError {
+        match self {
+            Self::Unauthorized(err) => BeforeFrame(err),
+            Self::Dispatch(err) => err,
+        }
+    }
+}
+
+pub(crate) fn dispatch(
     home: &Home,
     env: &Env,
     label: &str,
     operation: &str,
     payload: serde_json::Value,
-    before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+    before_write: &mut (dyn FnMut() -> Result<(), RuntimeError> + Send),
 ) -> Result<(), DispatchError> {
     let endpoint = server_endpoint(home, env).map_err(BeforeFrame)?;
     let mut token = Token::issue_scoped("orchestration:operate", label).map_err(BeforeFrame)?;
-    let outcome = rpc(
+    let outcome = rpc_within(
         &endpoint,
         &token.secret,
         "orchestration.dispatchCommand",
         operation,
         payload,
+        TIMEOUT,
         before_write,
     )
+    .map_err(RpcFailure::into_dispatch)
     .and_then(|value| {
         value["sequence"]
             .as_u64()
             .map(|_| ())
             .ok_or_else(|| AfterFrame(refused("invalid dispatch receipt")))
     });
-    // A cleanup failure cannot undo an accepted dispatch.
-    if let Err(error) = token.revoke() {
-        tracing::warn!(event="t3_dispatch_token_cleanup_failed", error=%error);
+    if let Err(error) = token.revoke_quick() {
+        tracing::warn!(event = "t3_dispatch_token_cleanup_failed", %error);
     }
     outcome
 }
 
-/// One RPC `tag` with `payload`; a refusal of a command or launch carries
-/// T3's detail attributed to `operation`.
-fn rpc(
+/// Calls `orchestration.getThreadProjection` over a held `ReadTokenLease` (in long-lived mode)
+/// or a short-lived one-shot `orchestration:read` token bounded to `timeout`.
+pub(crate) fn get_thread_projection(
+    home: &Home,
+    env: &Env,
+    lease: Option<&ReadTokenLease>,
+    thread_id: &str,
+    timeout: Duration,
+) -> Result<serde_json::Value, RuntimeError> {
+    let endpoint = server_endpoint(home, env)?;
+    let payload = json!({ "threadId": thread_id });
+    if let Some(lease) = lease {
+        let token = lease.get_or_issue(timeout)?;
+        match rpc_within(
+            &endpoint,
+            &token,
+            "orchestration.getThreadProjection",
+            "thread projection",
+            payload.clone(),
+            timeout,
+            &mut || Ok(()),
+        ) {
+            Ok(value) => return Ok(value),
+            Err(RpcFailure::Unauthorized(_)) => {
+                lease.invalidate_if_matching(&token);
+                let fresh = lease.get_or_issue(timeout)?;
+                return rpc_within(
+                    &endpoint,
+                    &fresh,
+                    "orchestration.getThreadProjection",
+                    "thread projection",
+                    payload,
+                    timeout,
+                    &mut || Ok(()),
+                )
+                .map_err(|err| err.into_dispatch().into_inner());
+            }
+            Err(err) => return Err(err.into_dispatch().into_inner()),
+        }
+    }
+
+    // One-shot CLI path: reserve <=1s for synchronous revoke, clamp issue+RPC to remaining budget.
+    let deadline = Instant::now() + timeout;
+    let revoke_reserve = REVOKE_TIMEOUT.min(timeout / 3);
+    let rpc_budget = timeout
+        .saturating_sub(revoke_reserve)
+        .max(Duration::from_millis(250));
+    let mut token =
+        Token::issue_scoped_within("orchestration:read", "instrukt-thread-read", rpc_budget)?;
+    let remaining_for_rpc = deadline
+        .saturating_duration_since(Instant::now())
+        .saturating_sub(revoke_reserve)
+        .max(Duration::from_millis(200));
+    let result = rpc_within(
+        &endpoint,
+        &token.secret,
+        "orchestration.getThreadProjection",
+        "thread projection",
+        payload,
+        remaining_for_rpc,
+        &mut || Ok(()),
+    )
+    .map_err(|err| err.into_dispatch().into_inner());
+    let revoke_bound = deadline
+        .saturating_duration_since(Instant::now())
+        .min(REVOKE_TIMEOUT)
+        .max(Duration::from_millis(100));
+    if let Err(error) = token.revoke_with_timeout(revoke_bound) {
+        tracing::warn!(event = "t3_thread_read_token_cleanup_failed", %error);
+    }
+    result
+}
+
+fn decode_rpc_exit_error(
+    tag: &str,
+    operation: &str,
+    payload: &serde_json::Value,
+    exit: &serde_json::Value,
+) -> RuntimeError {
+    if matches!(
+        tag,
+        "orchestration.dispatchCommand"
+            | "orchestration.launchThread"
+            | "orchestration.getThreadProjection"
+    ) {
+        let error_tag = exit
+            .pointer("/cause/0/error/_tag")
+            .and_then(serde_json::Value::as_str);
+        let detail = exit
+            .pointer("/cause/0/error/detail")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| {
+                exit.pointer("/cause/0/error/message")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .unwrap_or("T3 refused the WebSocket dispatch");
+        if error_tag == Some("ProjectionStoreThreadNotFoundError") {
+            let thread_id = exit
+                .pointer("/cause/0/error/threadId")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| payload.get("threadId").and_then(serde_json::Value::as_str))
+                .unwrap_or_default()
+                .to_owned();
+            return RuntimeError::ThreadNotFound { thread_id };
+        }
+        if error_tag == Some("OrchestratorCommandPreviouslyRejectedError") {
+            let command_id = exit
+                .pointer("/cause/0/error/commandId")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| payload.get("commandId").and_then(serde_json::Value::as_str))
+                .unwrap_or_default()
+                .to_owned();
+            return RuntimeError::CommandPreviouslyRejected {
+                command_id,
+                detail: detail.into(),
+            };
+        }
+        return RuntimeError::Failed {
+            runtime: "t3".into(),
+            operation: operation.into(),
+            detail: detail.into(),
+        };
+    }
+    refused("unrecognized or refused snapshot response")
+}
+
+fn rpc_within(
     endpoint: &url::Url,
     token: &str,
     tag: &str,
     operation: &str,
     payload: serde_json::Value,
-    before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
-) -> Result<serde_json::Value, DispatchError> {
-    let addresses = endpoint
-        .socket_addrs(|| None)
-        .map_err(|_| BeforeFrame(refused("cannot resolve local server address")))?;
-    let deadline = Instant::now() + TIMEOUT;
+    timeout: Duration,
+    before_write: &mut (dyn FnMut() -> Result<(), RuntimeError> + Send),
+) -> Result<serde_json::Value, RpcFailure> {
+    let addresses = endpoint.socket_addrs(|| None).map_err(|_| {
+        RpcFailure::Dispatch(BeforeFrame(refused("cannot resolve local server address")))
+    })?;
+    let deadline = Instant::now() + timeout;
     let mut connected = None;
     for address in addresses {
-        if let Ok(stream) =
-            TcpStream::connect_timeout(&address, deadline.saturating_duration_since(Instant::now()))
-        {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        if let Ok(stream) = TcpStream::connect_timeout(&address, remaining) {
             connected = Some(stream);
             break;
         }
     }
-    let stream = connected.ok_or_else(|| BeforeFrame(refused("cannot connect to local server")))?;
+    let stream = connected.ok_or_else(|| {
+        RpcFailure::Dispatch(BeforeFrame(refused("cannot connect to local server")))
+    })?;
     stream
-        .set_read_timeout(Some(TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(TIMEOUT)))
-        .map_err(|_| BeforeFrame(refused("cannot bound readiness transport")))?;
-    let mut request = endpoint
-        .as_str()
-        .into_client_request()
-        .map_err(|_| BeforeFrame(refused("invalid readiness upgrade request")))?;
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .map_err(|_| {
+            RpcFailure::Dispatch(BeforeFrame(refused("cannot bound readiness transport")))
+        })?;
+    let mut request = endpoint.as_str().into_client_request().map_err(|_| {
+        RpcFailure::Dispatch(BeforeFrame(refused("invalid readiness upgrade request")))
+    })?;
     request.headers_mut().insert(
         "Authorization",
-        format!("Bearer {token}")
-            .parse()
-            .map_err(|_| BeforeFrame(refused("invalid issued bearer token")))?,
+        format!("Bearer {token}").parse().map_err(|_| {
+            RpcFailure::Dispatch(BeforeFrame(refused("invalid issued bearer token")))
+        })?,
     );
     let (mut socket, _) = tungstenite::client(request, FrameStream { stream, written: 0 })
-        .map_err(|_| {
-            BeforeFrame(refused(
-                "WebSocket upgrade refused or protocol version unsupported",
-            ))
+        .map_err(|err| {
+            let unauthorized = matches!(
+                err,
+                tungstenite::handshake::HandshakeError::Failure(tungstenite::Error::Http(ref resp))
+                    if resp.status().as_u16() == 401
+            );
+            let error = refused("WebSocket upgrade refused or protocol version unsupported");
+            if unauthorized {
+                RpcFailure::Unauthorized(error)
+            } else {
+                RpcFailure::Dispatch(BeforeFrame(error))
+            }
         })?;
     socket.set_config(|config| {
         config.max_message_size = Some(8 * 1024 * 1024);
         config.max_frame_size = Some(8 * 1024 * 1024);
     });
-    let frame =
-        json!({"_tag":"Request","id":RPC_REQUEST_ID,"tag":tag,"payload":payload,"headers":[]})
-            .to_string();
-    before_write().map_err(BeforeFrame)?;
+    let frame = json!({
+        "_tag": "Request",
+        "id": RPC_REQUEST_ID,
+        "tag": tag,
+        "payload": &payload,
+        "headers": []
+    })
+    .to_string();
+    before_write().map_err(|err| RpcFailure::Dispatch(BeforeWrite(err)))?;
     socket.get_mut().written = 0;
     if socket.send(Message::Text(frame.into())).is_err() {
         let error = refused("RPC request write failed");
-        return Err(if socket.get_mut().written != 0 {
+        return Err(RpcFailure::Dispatch(if socket.get_mut().written != 0 {
             AfterFrame(error)
         } else {
             BeforeFrame(error)
-        });
+        }));
     }
     for _ in 0..32 {
         socket
@@ -646,18 +912,20 @@ fn rpc(
                     .saturating_duration_since(Instant::now())
                     .max(Duration::from_millis(1)),
             ))
-            .map_err(|_| AfterFrame(refused("cannot bound snapshot read")))?;
-        let message = socket
-            .read()
-            .map_err(|_| AfterFrame(refused("snapshot response failed or timed out")))?;
+            .map_err(|_| RpcFailure::Dispatch(AfterFrame(refused("cannot bound snapshot read"))))?;
+        let message = socket.read().map_err(|_| {
+            RpcFailure::Dispatch(AfterFrame(refused("snapshot response failed or timed out")))
+        })?;
         let Message::Text(text) = message else {
             if matches!(message, Message::Ping(_) | Message::Pong(_)) {
                 continue;
             }
-            return Err(AfterFrame(refused("unexpected snapshot frame")));
+            return Err(RpcFailure::Dispatch(AfterFrame(refused(
+                "unexpected snapshot frame",
+            ))));
         };
         let value: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|_| AfterFrame(refused("unrecognized RPC response")))?;
+            .map_err(|_| RpcFailure::Dispatch(AfterFrame(refused("unrecognized RPC response"))))?;
         let frames = if let Some(frames) = value.as_array() {
             frames.clone()
         } else {
@@ -667,55 +935,44 @@ fn rpc(
             if frame["_tag"] == "Ping" {
                 socket
                     .send(Message::Text(json!({"_tag":"Pong"}).to_string().into()))
-                    .map_err(|_| AfterFrame(refused("RPC keepalive failed")))?;
+                    .map_err(|_| {
+                        RpcFailure::Dispatch(AfterFrame(refused("RPC keepalive failed")))
+                    })?;
                 continue;
             }
             if frame["_tag"] != "Exit" || frame["requestId"] != RPC_REQUEST_ID {
-                return Err(AfterFrame(refused("unrecognized RPC response")));
+                return Err(RpcFailure::Dispatch(AfterFrame(refused(
+                    "unrecognized RPC response",
+                ))));
             }
             let _ = socket.close(None);
             if frame["exit"]["_tag"] == "Success" {
                 return Ok(frame["exit"]["value"].clone());
             }
-            if matches!(
+            return Err(RpcFailure::Dispatch(AfterFrame(decode_rpc_exit_error(
                 tag,
-                "orchestration.dispatchCommand"
-                    | "orchestration.launchThread"
-                    | "orchestration.getThreadProjection"
-            ) {
-                let exit = &frame["exit"];
-                let detail = exit
-                    .pointer("/cause/0/error/detail")
-                    .and_then(serde_json::Value::as_str)
-                    .or_else(|| {
-                        exit.pointer("/cause/0/error/message")
-                            .and_then(serde_json::Value::as_str)
-                    })
-                    .unwrap_or("T3 refused the WebSocket dispatch");
-                return Err(AfterFrame(SessionsError::Failed {
-                    runtime: "t3".into(),
-                    operation: operation.into(),
-                    detail: detail.into(),
-                }));
-            }
-            return Err(AfterFrame(refused(
-                "unrecognized or refused snapshot response",
-            )));
+                operation,
+                &payload,
+                &frame["exit"],
+            ))));
         }
     }
-    Err(AfterFrame(refused("RPC response did not complete")))
+    Err(RpcFailure::Dispatch(AfterFrame(refused(
+        "RPC response did not complete",
+    ))))
 }
 
-fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
-    let value = rpc(
+fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, RuntimeError> {
+    let value = rpc_within(
         endpoint,
         token,
         "server.getConfig",
         "readiness",
         json!({}),
+        TIMEOUT,
         &mut || Ok(()),
     )
-    .map_err(DispatchError::into_inner)?;
+    .map_err(|err| err.into_dispatch().into_inner())?;
     let snapshot: Snapshot = serde_json::from_value(value)
         .map_err(|_| refused("unrecognized provider snapshot shape"))?;
     let mut ids = BTreeSet::new();
@@ -753,10 +1010,7 @@ fn kind(driver: &str) -> Option<HarnessKind> {
         _ => None,
     }
 }
-/// The model family a usage window is scoped to. At the pinned release T3
-/// reports a Claude window scoped to one model as `seven_day_<name>`
-/// (`apps/server/src/provider/claudeUsageLimits.ts`, `scopedWindowId`):
-/// its name lowercased. Every other window applies to all models.
+
 fn scoped_family(id: &str) -> Option<String> {
     id.strip_prefix("seven_day_")
         .filter(|name| !name.is_empty())
@@ -784,8 +1038,6 @@ fn unavailable(provider: &Provider) -> Option<String> {
     if matches!(provider.status, Status::Error) {
         return Some("provider status error".into());
     }
-    // Claude emits warning/unknown and bundled models when its account probe fails.
-    // Codex emits ready/unknown for a successfully probed no-auth custom configuration.
     if provider.driver == "claudeAgent"
         && matches!(provider.status, Status::Warning)
         && matches!(provider.auth.status, AuthStatus::Unknown)
@@ -794,13 +1046,12 @@ fn unavailable(provider: &Provider) -> Option<String> {
     }
     None
 }
-pub(super) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, SessionsError> {
+
+pub(crate) fn snapshot(home: &Home, env: &Env) -> Result<ProviderSnapshot, RuntimeError> {
     Ok(translate(acquire(home, env)?))
 }
 
-/// The enabled instances T3 reports, each with the home this adapter resolves
-/// for it.
-pub(super) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstance>, SessionsError> {
+pub(crate) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstance>, RuntimeError> {
     Ok(configured_instances(
         acquire(home, env)?,
         home.machine_user_home(),
@@ -808,12 +1059,6 @@ pub(super) fn configured(home: &Home, env: &Env) -> Result<Vec<ConfiguredInstanc
     ))
 }
 
-/// An instance with a settings entry is enabled exactly when its settings
-/// say so: T3 reports an instance it failed to create as disabled in the
-/// provider snapshot, and publication can repair only what it is told of.
-/// The snapshot's flag decides only for a default instance (`codex`,
-/// `claudeAgent`) that T3 runs without a settings entry. Homes are
-/// interpreted here and only here, at T3 `v0.1.8`'s semantics.
 fn configured_instances(source: Snapshot, user_home: &Path, env: &Env) -> Vec<ConfiguredInstance> {
     let mut settings = source.settings.provider_instances;
     source
@@ -878,7 +1123,6 @@ fn configured_instances(source: Snapshot, user_home: &Path, env: &Env) -> Vec<Co
                 && !opaque
                 && let Some(name) = variable
             {
-                // v0.1.8 ignores instance CODEX_HOME when shadowHomePath is set.
                 let instance_allowed = runtime != "codex" || link_folders.is_empty();
                 let selected = instance_allowed
                     .then(|| {
@@ -892,8 +1136,6 @@ fn configured_instances(source: Snapshot, user_home: &Path, env: &Env) -> Vec<Co
                         home = value.value.as_str().and_then(|v| read.path(v));
                     }
                 } else {
-                    // A supplied empty instance value replaces the inherited value too.
-                    // Inherited Codex/Claude values are not shell-expanded by pinned T3.
                     home = env.get(name).and_then(|value| {
                         if matches!(runtime.as_str(), "codex" | "claude") {
                             let value = value.trim();
@@ -930,9 +1172,6 @@ fn configured_instances(source: Snapshot, user_home: &Path, env: &Env) -> Vec<Co
             {
                 assurance.push(InstructionAssurance::RuntimeHomeDiffers);
             }
-            // T3 resolves a relative home against its own process working
-            // directory, which it does not report (`ServerConfig.cwd` is its
-            // workspace): such a home cannot be known, and nothing is guessed.
             let unknown_home = home
                 .iter()
                 .chain(&link_folders)
@@ -956,24 +1195,27 @@ fn configured_instances(source: Snapshot, user_home: &Path, env: &Env) -> Vec<Co
         })
         .collect()
 }
-/// One instance's settings, read for its home.
+
 struct Instance<'a> {
     settings: Option<&'a InstanceSettings>,
     user_home: &'a Path,
 }
+
 impl Instance<'_> {
     fn text(&self, key: &str) -> Option<&str> {
         self.settings?.config.get(key)?.as_str()
     }
+
     fn opaque_config(&self, key: &str) -> bool {
         self.settings
             .and_then(|settings| settings.config.get(key))
             .is_some_and(|value| !value.is_string())
     }
+
     fn config(&self, key: &str) -> Option<PathBuf> {
         self.path(self.text(key)?)
     }
-    /// The instance environment only; the server's own is not read.
+
     fn variable(&self, name: &str) -> Option<PathBuf> {
         let variable = self
             .settings?
@@ -986,7 +1228,7 @@ impl Instance<'_> {
         }
         self.path(variable.value.as_str()?)
     }
-    /// A non-empty value, with a leading `~` expanded against the user's home.
+
     fn path(&self, value: &str) -> Option<PathBuf> {
         let value = value.trim();
         match value.strip_prefix('~') {
@@ -1037,32 +1279,24 @@ fn translate(source: Snapshot) -> ProviderSnapshot {
     }
 }
 
-/// One live project of T3's authenticated project snapshot.
-pub(super) struct LiveProject {
+pub(crate) struct LiveProject {
     pub id: String,
     pub root: PathBuf,
 }
 
-/// A snapshot read that failed, by its fixed cause; the checkout it was
-/// read for is named where the failure becomes instrukt's outcome.
-fn root_unavailable(checkout: &Path, cause: ExecutionRootCause) -> SessionsError {
-    SessionsError::ExecutionRootUnavailable {
+fn root_unavailable(checkout: &Path, cause: ExecutionRootCause) -> RuntimeError {
+    RuntimeError::ExecutionRootUnavailable {
         checkout: checkout.to_path_buf(),
         cause,
     }
 }
 
-/// `path` as it is compared with a project root: absolute, and canonical
-/// where it exists.
 fn canonical_root(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     Some(absolute.canonicalize().unwrap_or(absolute))
 }
 
-/// The live projects `GET /api/projects` lists; deleted ones are left out.
-/// An unreachable server or malformed metadata is a cause, never an empty
-/// table.
-pub(super) fn fetch_live_projects(
+pub(crate) fn fetch_live_projects(
     endpoint: &url::Url,
     token: &str,
 ) -> Result<Vec<LiveProject>, ExecutionRootCause> {
@@ -1110,7 +1344,6 @@ pub(super) fn fetch_live_projects(
     live_projects(&text)
 }
 
-/// The live projects of one project snapshot response body.
 fn live_projects(text: &str) -> Result<Vec<LiveProject>, ExecutionRootCause> {
     let malformed = ExecutionRootCause::MalformedMetadata;
     let snapshot: serde_json::Value = serde_json::from_str(text).map_err(|_| malformed)?;
@@ -1132,13 +1365,10 @@ fn live_projects(text: &str) -> Result<Vec<LiveProject>, ExecutionRootCause> {
     Ok(live)
 }
 
-/// The one live project rooted exactly at `checkout`. A project rooted at
-/// an ancestor or a descendant never stands in for it; two live projects at
-/// that root are contradictory evidence.
-pub(super) fn exact_project_id_in(
+pub(crate) fn exact_project_id_in(
     projects: &[LiveProject],
     checkout: &Path,
-) -> Result<Option<String>, SessionsError> {
+) -> Result<Option<String>, RuntimeError> {
     let wanted = canonical_root(checkout)
         .ok_or_else(|| root_unavailable(checkout, ExecutionRootCause::Missing))?;
     let mut found: Option<&LiveProject> = None;
@@ -1156,17 +1386,13 @@ pub(super) fn exact_project_id_in(
     Ok(found.map(|project| project.id.clone()))
 }
 
-/// The live project rooted exactly at `checkout`, read now with a
-/// short-lived read-scoped token that is revoked after the read.
-pub(super) fn exact_project_id(
+pub(crate) fn exact_project_id(
     home: &Home,
     env: &Env,
     checkout: &Path,
-) -> Result<Option<String>, SessionsError> {
+) -> Result<Option<String>, RuntimeError> {
     let endpoint = server_endpoint(home, env).map_err(|_| {
-        // A descriptor that exists but is refused is malformed; without one
-        // the server is unreachable.
-        let cause = if super::_t3_home::T3Home::discover(home, env)
+        let cause = if crate::_t3_home::T3Home::discover(home, env)
             .descriptor()
             .exists()
         {
@@ -1181,21 +1407,18 @@ pub(super) fn exact_project_id(
     let result = fetch_live_projects(&endpoint, &token.secret)
         .map_err(|cause| root_unavailable(checkout, cause))
         .and_then(|projects| exact_project_id_in(&projects, checkout));
-    if let Err(cleanup) = token.revoke() {
-        // The read-only credential expires; the observed snapshot stands.
-        tracing::warn!(event="t3_project_snapshot_token_cleanup_failed",%cleanup);
+    if let Err(cleanup) = token.revoke_quick() {
+        tracing::warn!(event = "t3_project_snapshot_token_cleanup_failed", %cleanup);
     }
     result
 }
 
-/// Launch metadata is acquired independently of provider readiness/capacity.
-pub(super) fn resolve_launch(
+pub(crate) fn resolve_launch(
     home: &Home,
     env: &Env,
-    input: &super::RuntimeStart,
-    existing: Option<&instrukt_core::ids::SessionRef>,
-) -> Result<super::RuntimeStart, SessionsError> {
-    use super::{LaunchInteractionMode, LaunchRuntimeMode, ResolvedLaunchModes};
+    input: &RuntimeStart,
+    existing: Option<&SessionRef>,
+) -> Result<RuntimeStart, RuntimeError> {
     let endpoint = server_endpoint(home, env)?;
     let mut token = Token::issue_scoped("orchestration:read", "instrukt-launch-metadata")?;
     let result = (|| {
@@ -1207,8 +1430,6 @@ pub(super) fn resolve_launch(
         {
             let projects = fetch_live_projects(&endpoint, &token.secret)
                 .map_err(|cause| root_unavailable(&request.checkout, cause))?;
-            // A miss is the caller's to answer: launch registers the
-            // checkout, adoption of a present thread never does.
             let project_id = exact_project_id_in(&projects, &request.checkout)?
                 .ok_or_else(|| root_unavailable(&request.checkout, ExecutionRootCause::Missing))?;
             let launch = request.native_launch.as_mut().ok_or_else(|| {
@@ -1218,15 +1439,16 @@ pub(super) fn resolve_launch(
         }
         if request.launch_modes.is_none() {
             let modes = if let Some(session) = existing {
-                let projection = rpc(
+                let projection = rpc_within(
                     &endpoint,
                     &token.secret,
                     "orchestration.getThreadProjection",
                     "thread projection",
                     json!({"threadId": session.id}),
+                    TIMEOUT,
                     &mut || Ok(()),
                 )
-                .map_err(super::DispatchError::into_inner)?;
+                .map_err(|err| err.into_dispatch().into_inner())?;
                 let thread = projection
                     .get("thread")
                     .ok_or_else(|| launch_error("missing legacy thread projection"))?;
@@ -1253,15 +1475,16 @@ pub(super) fn resolve_launch(
                     source: "native legacy thread projection".into(),
                 }
             } else {
-                let config = rpc(
+                let config = rpc_within(
                     &endpoint,
                     &token.secret,
                     "server.getConfig",
                     "readiness",
                     json!({}),
+                    TIMEOUT,
                     &mut || Ok(()),
                 )
-                .map_err(super::DispatchError::into_inner)?;
+                .map_err(|err| err.into_dispatch().into_inner())?;
                 let settings = &config["settings"];
                 let project_id = &request
                     .native_launch
@@ -1301,7 +1524,7 @@ pub(super) fn resolve_launch(
                     .iter()
                     .find(|p| p["instanceId"].as_str() == Some(selection.instance.as_str()))
                     .ok_or_else(|| launch_error("selected native provider instance missing"))?;
-                super::_t3_options::admit(provider, selection)?;
+                crate::_t3_options::admit(provider, selection)?;
                 if let Some(value) = provider.get("supportedRuntimeModes") {
                     let supported: Vec<LaunchRuntimeMode> =
                         serde_json::from_value(value.clone())
@@ -1325,78 +1548,120 @@ pub(super) fn resolve_launch(
         }
         Ok(request)
     })();
-    let cleanup = token.revoke();
-    match (result, cleanup) {
-        (Ok(request), Ok(())) => Ok(request),
-        (Err(error), Err(cleanup)) => {
-            tracing::warn!(event="t3_launch_metadata_token_cleanup_failed",%cleanup);
-            Err(error)
-        }
-        (Ok(request), Err(cleanup)) => {
-            // A cleanup failure does not erase observed metadata; the read-only credential expires.
-            tracing::warn!(event="t3_launch_metadata_token_cleanup_failed",%cleanup);
-            Ok(request)
-        }
-        (Err(error), Ok(())) => Err(error),
+    if let Err(cleanup) = token.revoke_quick() {
+        tracing::warn!(event = "t3_launch_metadata_token_cleanup_failed", %cleanup);
     }
+    result
 }
 
-fn launch_error(cause: &str) -> SessionsError {
-    SessionsError::Failed {
+fn launch_error(cause: &str) -> RuntimeError {
+    RuntimeError::Failed {
         runtime: "t3".into(),
         operation: "launch".into(),
         detail: cause.into(),
     }
 }
 
-pub(super) fn launch(
+pub(crate) fn launch(
     home: &Home,
     env: &Env,
     payload: serde_json::Value,
-) -> Result<serde_json::Value, SessionsError> {
+) -> Result<serde_json::Value, RuntimeError> {
     let endpoint = server_endpoint(home, env)?;
     let mut token = Token::issue_scoped("orchestration:operate", "instrukt-keyed-launch")?;
-    let result = rpc(
+    let result = rpc_within(
         &endpoint,
         &token.secret,
         "orchestration.launchThread",
         "launch",
         payload,
+        TIMEOUT,
         &mut || Ok(()),
     )
-    .map_err(|error| launch_error(&error.into_inner().to_string()));
-    if let Err(error) = token.revoke() {
-        tracing::warn!(event="t3_launch_token_cleanup_failed", %error);
+    .map_err(|error| launch_error(&error.into_dispatch().into_inner().to_string()));
+    if let Err(error) = token.revoke_quick() {
+        tracing::warn!(event = "t3_launch_token_cleanup_failed", %error);
     }
     result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandFailure, Snapshot, command_output, configured_instances};
-    use crate::process::{Finished, ProcessError};
-    use instrukt_core::{ids::ProviderInstanceId, interfaces::ConfiguredInstance};
-    use serde_json::json;
-    use std::{
-        io,
-        path::{Path, PathBuf},
-        time::Duration,
+    use super::{
+        CommandFailure, Snapshot, Token, command_output, configured_instances,
+        decode_rpc_exit_error,
     };
+    use instrukt_core::ids::ProviderInstanceId;
+    use instrukt_core::interfaces::ConfiguredInstance;
+    use instrukt_core::process::{Finished, ProcessError};
+    use instrukt_runtime::{ExecutionRootCause, RuntimeError};
+    use serde_json::json;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
-    /// A provider entry as T3 `v0.1.8` reports it (`ServerProvider`), with
-    /// only the fields this adapter decodes.
     fn provider(id: &str, driver: &str, enabled: bool) -> serde_json::Value {
         json!({"instanceId":id,"driver":driver,"enabled":enabled,"installed":true,
             "status":if enabled {"ready"} else {"disabled"},"auth":{"status":"unknown"},
             "checkedAt":"2026-11-19T10:00:00.000Z","models":[]})
     }
+
     fn variable(name: &str, value: &str) -> serde_json::Value {
         json!({"name":name,"value":value,"sensitive":false})
     }
 
-    /// u15: the `server.getConfig` value of a T3 `v0.1.8` server, shaped by
-    /// its contracts (`ServerConfig`, `ProviderInstanceConfig`, the redaction
-    /// of `redactServerSettingsForClient`), resolved to homes.
+    #[test]
+    fn decodes_typed_t3_rpc_errors_from_cause_tag() {
+        let not_found = decode_rpc_exit_error(
+            "orchestration.getThreadProjection",
+            "thread projection",
+            &json!({"threadId": "thr-1"}),
+            &json!({
+                "_tag": "Failure",
+                "cause": [{"_tag": "Fail", "error": {
+                    "_tag": "ProjectionStoreThreadNotFoundError",
+                    "threadId": "thr-1",
+                    "message": "Thread not found"
+                }}]
+            }),
+        );
+        assert!(matches!(
+            not_found,
+            RuntimeError::ThreadNotFound { ref thread_id } if thread_id == "thr-1"
+        ));
+
+        let rejected = decode_rpc_exit_error(
+            "orchestration.dispatchCommand",
+            "send",
+            &json!({"commandId": "cmd-9"}),
+            &json!({
+                "_tag": "Failure",
+                "cause": [{"_tag": "Fail", "error": {
+                    "_tag": "OrchestratorCommandPreviouslyRejectedError",
+                    "commandId": "cmd-9",
+                    "detail": "previously rejected"
+                }}]
+            }),
+        );
+        assert!(matches!(
+            rejected,
+            RuntimeError::CommandPreviouslyRejected { ref command_id, ref detail }
+                if command_id == "cmd-9" && detail == "previously rejected"
+        ));
+    }
+
+    #[test]
+    fn token_marks_revoked_before_running_revoke_preventing_double_revoke_on_drop() {
+        let mut token = Token {
+            secret: "payload.sig".into(),
+            session: "sid-1".into(),
+            revoked: false,
+        };
+        // Even if the revoke command fails, `revoked` is already marked true so Drop won't retry.
+        let _ = token.revoke_with_timeout(Duration::from_millis(1));
+        assert!(token.revoked);
+    }
+
     #[test]
     fn configured_instances_carry_the_homes_the_adapter_resolves() {
         let mut managed = provider("codex-managed", "codex", true);
@@ -1444,7 +1709,7 @@ mod tests {
                 "pi-empty": {"driver":"pi","environment":[variable("PI_CODING_AGENT_DIR", "")]},
             }},
         });
-        let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
+        let snapshot: Snapshot = serde_json::from_value(value).unwrap();
         let instances = configured_instances(
             snapshot,
             Path::new("/home/user"),
@@ -1461,7 +1726,7 @@ mod tests {
                         registry_agent: Option<&str>,
                         home: Option<&str>,
                         link_folders: &[&str]| ConfiguredInstance {
-            instance: ProviderInstanceId::parse(id).expect("instance id"),
+            instance: ProviderInstanceId::parse(id).unwrap(),
             runtime: runtime.into(),
             native_runtime: if id == "unrecognised-claude"
                 || matches!(runtime, "acpRegistry" | "FutureHarness")
@@ -1558,9 +1823,6 @@ mod tests {
         );
     }
 
-    /// T3 resolves a relative home against its own process working
-    /// directory, which it does not report: such an instance's home is not
-    /// known, and none of its paths is reported for publication to write.
     #[test]
     fn a_home_named_relative_to_t3s_own_working_directory_is_not_known() {
         let value = json!({
@@ -1576,9 +1838,9 @@ mod tests {
                     "homePath":"/srv/codex","shadowHomePath":"overlay"}},
             }},
         });
-        let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
+        let snapshot: Snapshot = serde_json::from_value(value).unwrap();
         let unknown = |id: &str, path: &str| ConfiguredInstance {
-            instance: ProviderInstanceId::parse(id).expect("instance id"),
+            instance: ProviderInstanceId::parse(id).unwrap(),
             runtime: "codex".into(),
             native_runtime: Some("codex".into()),
             registry_agent: None,
@@ -1602,11 +1864,6 @@ mod tests {
         );
     }
 
-    /// T3 reports an instance it failed to create as disabled in the provider
-    /// snapshot; its settings still enable it, so it is reported with its
-    /// link folder and publication can repair the link. A default instance
-    /// without a settings entry follows the snapshot, and a settings entry
-    /// switched off is not reported.
     #[test]
     fn an_instance_t3_failed_to_create_is_still_configured_by_its_settings() {
         let mut failed = provider("codex-overlay", "codex", false);
@@ -1625,7 +1882,7 @@ mod tests {
                 "codex-off": {"driver":"codex","enabled":false},
             }},
         });
-        let snapshot: Snapshot = serde_json::from_value(value).expect("v0.1.8 config value");
+        let snapshot: Snapshot = serde_json::from_value(value).unwrap();
         assert_eq!(
             configured_instances(
                 snapshot,
@@ -1633,7 +1890,7 @@ mod tests {
                 &instrukt_core::config::Env::default()
             ),
             vec![ConfiguredInstance {
-                instance: ProviderInstanceId::parse("codex-overlay").expect("instance id"),
+                instance: ProviderInstanceId::parse("codex-overlay").unwrap(),
                 runtime: "codex".into(),
                 native_runtime: Some("codex".into()),
                 registry_agent: None,
@@ -1645,41 +1902,40 @@ mod tests {
             }]
         );
     }
+
     #[test]
-    fn launch_failure_keeps_its_safe_category() {
-        let result = command_output(Err(ProcessError::Spawn {
-            program: "t3".into(),
-            source: io::Error::new(io::ErrorKind::NotFound, "private detail"),
-        }));
-        assert_eq!(result, Err(CommandFailure::Launch));
-    }
-    #[test]
-    fn timeout_keeps_its_safe_category() {
-        let result = command_output(Err(ProcessError::Timeout {
-            program: "t3".into(),
-            timeout: Duration::from_secs(10),
-        }));
-        assert_eq!(result, Err(CommandFailure::Timeout));
-    }
-    #[test]
-    fn io_failure_keeps_its_safe_category() {
-        let result = command_output(Err(ProcessError::Io {
-            program: "t3".into(),
-            source: io::Error::other("private detail"),
-        }));
-        assert_eq!(result, Err(CommandFailure::Io));
-    }
-    #[test]
-    fn unsuccessful_exit_keeps_its_category_and_discards_raw_output() {
-        let result = command_output(Ok(Finished {
-            success: false,
-            stdout: "private stdout".into(),
-            stderr: "private stderr".into(),
-        }));
-        assert_eq!(result, Err(CommandFailure::Exit));
+    fn command_failure_categories_preserve_safe_classification() {
+        assert_eq!(
+            command_output(Err(ProcessError::Spawn {
+                program: "t3".into(),
+                source: io::Error::new(io::ErrorKind::NotFound, "private detail"),
+            })),
+            Err(CommandFailure::Launch)
+        );
+        assert_eq!(
+            command_output(Err(ProcessError::Timeout {
+                program: "t3".into(),
+                timeout: Duration::from_secs(10),
+            })),
+            Err(CommandFailure::Timeout)
+        );
+        assert_eq!(
+            command_output(Err(ProcessError::Io {
+                program: "t3".into(),
+                source: io::Error::other("private detail"),
+            })),
+            Err(CommandFailure::Io)
+        );
+        assert_eq!(
+            command_output(Ok(Finished {
+                success: false,
+                stdout: "private stdout".into(),
+                stderr: "private stderr".into(),
+            })),
+            Err(CommandFailure::Exit)
+        );
     }
 
-    /// A snapshot listing projects at `roots`, each `(id, root, deleted)`.
     fn snapshot_of(roots: &[(&str, &Path, bool)]) -> Vec<super::LiveProject> {
         let projects: Vec<_> = roots
             .iter()
@@ -1691,68 +1947,37 @@ mod tests {
     }
 
     #[test]
-    fn the_project_rooted_exactly_at_the_checkout_is_selected() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
+    fn exact_project_root_matching_rules() {
+        let root = std::env::temp_dir().join(format!(
+            "instrukt-runtime-t3-root-test-{}",
+            std::process::id()
+        ));
+        let home = root.join("home");
         let company = home.join(".instrukt/companies/acme");
-        std::fs::create_dir_all(&company).unwrap();
+        instrukt_core::fsx::create_dir_all(&company).unwrap();
         let projects = snapshot_of(&[("home", &home, false), ("acme", &company, false)]);
         assert_eq!(
             super::exact_project_id_in(&projects, &company).unwrap(),
             Some("acme".to_owned())
         );
-    }
-
-    #[test]
-    fn an_ancestor_project_never_stands_in_for_the_checkout() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        let company = home.join(".instrukt/companies/acme");
-        std::fs::create_dir_all(&company).unwrap();
-        let projects = snapshot_of(&[("home", &home, false)]);
+        let ancestor_only = snapshot_of(&[("home", &home, false)]);
         assert_eq!(
-            super::exact_project_id_in(&projects, &company).unwrap(),
+            super::exact_project_id_in(&ancestor_only, &company).unwrap(),
             None
         );
-    }
-
-    #[test]
-    fn a_descendant_project_never_stands_in_for_the_checkout() {
-        let dir = tempfile::tempdir().unwrap();
-        let checkout = dir.path().join("project");
-        let nested = checkout.join("nested");
-        std::fs::create_dir_all(&nested).unwrap();
-        let projects = snapshot_of(&[("nested", &nested, false)]);
-        assert_eq!(
-            super::exact_project_id_in(&projects, &checkout).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn two_live_projects_at_the_checkout_are_contradictory() {
-        let dir = tempfile::tempdir().unwrap();
-        let checkout = dir.path().join("project");
-        std::fs::create_dir_all(&checkout).unwrap();
-        let projects = snapshot_of(&[("one", &checkout, false), ("two", &checkout, false)]);
+        let dup = snapshot_of(&[("one", &company, false), ("two", &company, false)]);
         assert!(matches!(
-            super::exact_project_id_in(&projects, &checkout),
-            Err(crate::sessions::SessionsError::ExecutionRootUnavailable {
-                cause: crate::sessions::ExecutionRootCause::DuplicateRoots,
+            super::exact_project_id_in(&dup, &company),
+            Err(RuntimeError::ExecutionRootUnavailable {
+                cause: ExecutionRootCause::DuplicateRoots,
                 ..
             })
         ));
-    }
-
-    #[test]
-    fn a_deleted_project_at_the_checkout_is_not_live() {
-        let dir = tempfile::tempdir().unwrap();
-        let checkout = dir.path().join("project");
-        std::fs::create_dir_all(&checkout).unwrap();
-        let projects = snapshot_of(&[("gone", &checkout, true)]);
+        let deleted = snapshot_of(&[("gone", &company, true)]);
         assert_eq!(
-            super::exact_project_id_in(&projects, &checkout).unwrap(),
+            super::exact_project_id_in(&deleted, &company).unwrap(),
             None
         );
+        let _ = instrukt_core::fsx::remove_dir_all(&root);
     }
 }

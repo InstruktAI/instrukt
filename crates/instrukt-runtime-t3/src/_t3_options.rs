@@ -2,14 +2,10 @@
 //! the provider's native option ids, carried by a native launch's model
 //! selection, and admitted against what T3 reports the selected model takes.
 use instrukt_core::config::{AgentSelection, Effort, HarnessKind};
+use instrukt_runtime::RuntimeError;
 use serde_json::{Value, json};
 
-use crate::sessions::SessionsError;
-
-/// The selection with its effort as the native option of its harness kind,
-/// beside its extra settings. Effort remains a closed semantic variant until
-/// this native boundary.
-pub(super) fn native(selection: &AgentSelection) -> AgentSelection {
+pub(crate) fn native(selection: &AgentSelection) -> AgentSelection {
     let mut native = selection.clone();
     if let Some(effort) = selection.effort {
         let key = match selection.kind {
@@ -44,10 +40,7 @@ pub(super) fn native(selection: &AgentSelection) -> AgentSelection {
     native
 }
 
-/// A native launch's `modelSelection` (T3 `ModelSelection`): the instance and
-/// model, and the native options as T3's list of option `id` and `value`;
-/// a selection without effort or settings sends no options.
-pub(super) fn model_selection(selection: &AgentSelection) -> Value {
+pub(crate) fn model_selection(selection: &AgentSelection) -> Value {
     let options = native(selection).options;
     let mut value = json!({"instanceId": selection.instance, "model": selection.model});
     if !options.is_empty() {
@@ -59,11 +52,7 @@ pub(super) fn model_selection(selection: &AgentSelection) -> Value {
     value
 }
 
-/// Admits a new launch's native options against the option descriptors the
-/// selected model has in `provider`, a `server.getConfig` provider entry. A
-/// launch never drops an option it cannot apply: the start is refused before
-/// creation, naming each rejected option.
-pub(super) fn admit(provider: &Value, selection: &AgentSelection) -> Result<(), SessionsError> {
+pub(crate) fn admit(provider: &Value, selection: &AgentSelection) -> Result<(), RuntimeError> {
     let model = selection.model.as_str();
     let descriptors = provider["models"]
         .as_array()
@@ -81,7 +70,7 @@ pub(super) fn admit(provider: &Value, selection: &AgentSelection) -> Result<(), 
     if problems.is_empty() {
         return Ok(());
     }
-    Err(SessionsError::Refused(format!(
+    Err(RuntimeError::Refused(format!(
         "T3 model `{model}` of provider instance `{}` does not accept the options of profile `{}`: {}; change that profile's effort or options in agents.yaml",
         selection.instance,
         selection.profile,
@@ -89,10 +78,6 @@ pub(super) fn admit(provider: &Value, selection: &AgentSelection) -> Result<(), 
     )))
 }
 
-/// The options T3 cannot apply, by the rules T3 0.1.8 checks a delegated
-/// task's options with (`OrchestratorMcpService.invalidOptionSelections`): a
-/// model reported without descriptors is not checked. T3 carries an option
-/// value only as text or a boolean.
 fn rejected(
     options: &std::collections::BTreeMap<String, Value>,
     descriptors: Option<&Vec<Value>>,
@@ -146,9 +131,9 @@ fn rejected(
 #[cfg(test)]
 mod tests {
     use super::{admit, model_selection, native, rejected};
-    use crate::sessions::SessionsError;
     use instrukt_core::config::{AgentSelection, Effort, HarnessKind};
     use instrukt_core::ids::{ProfileName, ProviderInstanceId};
+    use instrukt_runtime::RuntimeError;
     use serde_json::json;
 
     fn opus(effort: Option<Effort>, settings: serde_json::Value) -> AgentSelection {
@@ -161,8 +146,7 @@ mod tests {
             options: serde_json::from_value(settings).unwrap(),
         }
     }
-    /// A `server.getConfig` provider entry of T3 `v0.1.8` (`ServerProvider`)
-    /// whose Opus model reports Claude's effort and fast-mode descriptors.
+
     fn provider() -> serde_json::Value {
         let efforts: Vec<_> = ["low", "medium", "high", "xhigh", "max", "ultrathink"]
             .map(|id| json!({"id":id,"label":id}))
@@ -174,7 +158,6 @@ mod tests {
             {"slug":"claude-custom","name":"Custom","isCustom":true,"capabilities":null}]})
     }
 
-    // Kills: a launch sending only instance and model, or options in another shape.
     #[test]
     fn a_launch_carries_the_translated_effort_and_settings() {
         assert_eq!(
@@ -184,7 +167,6 @@ mod tests {
         );
     }
 
-    // Kills: a launch sending an options list for a selection that has none.
     #[test]
     fn a_launch_without_effort_or_settings_sends_no_options() {
         assert_eq!(
@@ -193,8 +175,6 @@ mod tests {
         );
     }
 
-    // Kills: admitting an effort or setting the selected model does not take,
-    // or passing over any one of the three rejected options.
     #[test]
     fn a_launch_is_refused_for_options_the_model_does_not_take() {
         let selection = opus(
@@ -203,7 +183,7 @@ mod tests {
         );
         let refused = admit(&provider(), &selection);
         assert!(
-            matches!(&refused, Err(SessionsError::Refused(reason)) if !reason.is_empty()),
+            matches!(&refused, Err(RuntimeError::Refused(reason)) if !reason.is_empty()),
             "expected a refusal with its reason, got {refused:?}"
         );
         let descriptors = provider()["models"][0]["capabilities"]["optionDescriptors"].clone();
@@ -211,14 +191,12 @@ mod tests {
         assert_eq!(problems.len(), 3, "{problems:?}");
     }
 
-    // Kills: refusing an effort and setting the model's descriptors offer.
     #[test]
     fn a_launch_is_admitted_with_options_the_model_takes() {
         let selection = opus(Some(Effort::High), json!({"fastMode": true}));
         assert!(admit(&provider(), &selection).is_ok());
     }
 
-    // Kills: refusing options for a model T3 reports no option descriptors for.
     #[test]
     fn a_launch_is_admitted_unchecked_for_a_model_without_descriptors() {
         let mut custom = opus(Some(Effort::Ultra), json!({}));

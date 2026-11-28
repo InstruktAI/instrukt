@@ -63,12 +63,22 @@ Excluded unconditionally from every snapshot:
   containing `.git` under `git/`;
 - published and rendered documentation rebuilt by sync (`docs/`, `rendered/`,
   `state/index.yaml`, `state/publication/`);
+<!-- planned-change:thin-live-runtime-boundary -->
 - regenerable and ephemeral state (`state/blueprint/`, `state/configuration/`,
   `state/installation/`, `state/hook-runs/`, `state/redis/`,
   `state/consumer-locks/`, `state/runner-hosts.json`, `state/backup-state.json`,
   `state/backup-staleness-notified.json`, `state/.backup-staging-*`,
   `state/.backup-restore-staging-*`, `state/.backup-restore-rollback-*`,
   `locks/`, all `*.lock` files, and `companies/<name>/.instrukt/schemas/`);
+<!-- change:thin-live-runtime-boundary -->
+- regenerable and ephemeral state (`state/blueprint/`, `state/configuration/`,
+  `state/installation/`, `state/hook-runs/`, `state/redis/`,
+  `state/consumer-locks/`, `state/company-turn-status/`,
+  `state/runner-hosts.json`, `state/backup-state.json`,
+  `state/backup-staleness-notified.json`, `state/.backup-staging-*`,
+  `state/.backup-restore-staging-*`, `state/.backup-restore-rollback-*`,
+  `locks/`, all `*.lock` files, and `companies/<name>/.instrukt/schemas/`);
+<!-- /planned-change:thin-live-runtime-boundary -->
 - live SQLite sidecars (`*-wal`, `*-shm`, `*-journal`), stray recovery copies
   (`*.corrupt.*`, `*.pre-*`, `*.recovered-*`), and ad-hoc local `backups/`;
 - git-tracked company repository working trees under `companies/<name>/`

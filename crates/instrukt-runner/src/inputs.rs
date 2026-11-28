@@ -291,7 +291,7 @@ fn pump_inner(
             && observation.state == crate::runtime::InputState::Consumed
         {
             state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_inputs SET state='entered',waiting=0,entered_run=?4,failure=NULL,evidence_source=?5,evidence_at=?6 WHERE runtime=?1 AND session=?2 AND group_id=?3",params![target.runtime.as_str(),target.id.as_str(),id,observation.reference,observation.source,observation.observed_at.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
-        } else if matches!(&observation, Err(SessionsError::Gone(_)))
+        } else if matches!(&observation, Err(error) if error.is_gone())
             && is_verdict_only_batch(state, target, &id)?
         {
             return close_verdict_waiting_batch_gone(state, target, &id);
@@ -386,11 +386,6 @@ fn pump_inner(
         || state.read(|conn,path|conn.query_row("SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE runtime=?1 AND session=?2 AND state='pending')",params![target.runtime.as_str(),target.id.as_str()],|r|r.get::<_,bool>(0)).map_err(state::sql(path)))?.unwrap_or(false);
     if deliverable {
         crate::keyed::verify_delivery_project(state, adapter, work, &thread, now)?;
-    }
-    if thread.state == SessionState::Unknown {
-        return Err(SessionsError::Refused(
-            "runtime input readiness is unknown; pending delivery retained".into(),
-        ));
     }
     let idle = matches!(
         thread.state,
@@ -710,15 +705,15 @@ mod tests {
     use std::path::Path;
     use std::sync::Mutex;
 
-    use instrukt_core::config::{AgentSelection, Env, Runtime};
+    use instrukt_core::config::{AgentSelection, Env};
     use instrukt_core::home::Home;
     use instrukt_core::interfaces::CallerIdentityLookup;
 
     use super::*;
     use crate::runtime::{
-        Capability, Conversation, DeliveryRealization, DispatchError, ExecutionRootMode,
-        ExecutionRootStatus, InputObservation, InputState, Presence, ProviderSnapshot,
-        RuntimeAssignment, RuntimeStart, SelectionOperation, SendEvidence, Thread,
+        Capability, DeliveryRealization, DispatchError, ExecutionRootMode, ExecutionRootStatus,
+        InputObservation, InputState, Presence, ProviderSnapshot, RuntimeStart, SelectionOperation,
+        SendEvidence, Thread,
     };
 
     struct StubAdapter {
@@ -747,11 +742,14 @@ mod tests {
     }
 
     impl RuntimeAdapter for StubAdapter {
-        fn runtime(&self) -> Runtime {
-            Runtime::T3
+        fn runtime_name(&self) -> &'static str {
+            "t3"
         }
-        fn provider_snapshot(&self, _home: &Home) -> Result<ProviderSnapshot, SessionsError> {
-            Err(SessionsError::Refused("unused".into()))
+        fn provider_snapshot(
+            &self,
+            _home: &Home,
+        ) -> Result<ProviderSnapshot, crate::runtime::RuntimeError> {
+            Err(crate::runtime::RuntimeError::Refused("unused".into()))
         }
         fn selection_realization(&self, _operation: SelectionOperation) -> String {
             String::new()
@@ -766,27 +764,33 @@ mod tests {
             &self,
             request: &RuntimeStart,
             _existing: Option<&SessionRef>,
-        ) -> Result<RuntimeStart, SessionsError> {
+        ) -> Result<RuntimeStart, crate::runtime::RuntimeError> {
             Ok(request.clone())
         }
-        fn accepted_start(&self, _request: &RuntimeStart) -> Result<bool, SessionsError> {
+        fn accepted_start(
+            &self,
+            _request: &RuntimeStart,
+        ) -> Result<bool, crate::runtime::RuntimeError> {
             Ok(false)
         }
-        fn create_thread(&self, _request: &RuntimeStart) -> Result<SessionRef, SessionsError> {
-            Err(SessionsError::Refused("unused".into()))
+        fn create_thread(
+            &self,
+            _request: &RuntimeStart,
+        ) -> Result<SessionRef, crate::runtime::RuntimeError> {
+            Err(crate::runtime::RuntimeError::Refused("unused".into()))
         }
         fn verify_start(
             &self,
             _request: &RuntimeStart,
             _thread: &Thread,
-        ) -> Result<(), SessionsError> {
+        ) -> Result<(), crate::runtime::RuntimeError> {
             Ok(())
         }
         fn verify_placement(
             &self,
             _request: &RuntimeStart,
             _thread: &Thread,
-        ) -> Result<(), SessionsError> {
+        ) -> Result<(), crate::runtime::RuntimeError> {
             Ok(())
         }
         fn verify_thread_project(
@@ -794,15 +798,15 @@ mod tests {
             _checkout: &Path,
             _thread: &Thread,
             _key: Option<&str>,
-        ) -> Result<(), SessionsError> {
+        ) -> Result<(), crate::runtime::RuntimeError> {
             Ok(())
         }
         fn execution_root(
             &self,
             _root: &Path,
             _mode: ExecutionRootMode,
-        ) -> Result<ExecutionRootStatus, SessionsError> {
-            Err(SessionsError::Refused("unused".into()))
+        ) -> Result<ExecutionRootStatus, crate::runtime::RuntimeError> {
+            Err(crate::runtime::RuntimeError::Refused("unused".into()))
         }
         fn delivery_realization(&self) -> DeliveryRealization {
             DeliveryRealization::Queued
@@ -815,7 +819,7 @@ mod tests {
             _session: &SessionRef,
             _text: &str,
             _command_id: Option<&str>,
-        ) -> Result<SendEvidence, SessionsError> {
+        ) -> Result<SendEvidence, crate::runtime::RuntimeError> {
             Ok(SendEvidence::Unresolved)
         }
         fn observe_input(
@@ -823,7 +827,7 @@ mod tests {
             session: &SessionRef,
             _text: &str,
             now: Timestamp,
-        ) -> Result<InputObservation, SessionsError> {
+        ) -> Result<InputObservation, crate::runtime::RuntimeError> {
             match *self.observe.lock().unwrap() {
                 Ok(state) => Ok(InputObservation {
                     state,
@@ -831,35 +835,38 @@ mod tests {
                     source: "stub".into(),
                     observed_at: now,
                 }),
-                Err(()) => Err(SessionsError::Gone(session.clone())),
+                Err(()) => Err(crate::runtime::RuntimeError::ThreadNotFound {
+                    thread_id: session.id.to_string(),
+                }),
             }
         }
-        fn list(&self, _checkout: &Path) -> Result<Vec<Thread>, SessionsError> {
+        fn list(&self, _checkout: &Path) -> Result<Vec<Thread>, crate::runtime::RuntimeError> {
             Ok(Vec::new())
-        }
-        fn start_or_wake(
-            &self,
-            _assignment: &RuntimeAssignment<'_>,
-        ) -> Result<Thread, SessionsError> {
-            Err(SessionsError::Refused("unused".into()))
-        }
-        fn start(&self, _request: &RuntimeAssignment<'_>) -> Result<Thread, SessionsError> {
-            Err(SessionsError::Refused("unused".into()))
         }
         fn dispatch_send(
             &self,
             _session: &SessionRef,
             _command_id: &str,
             _text: &str,
-            _before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
+            _before_write: &mut (dyn FnMut() -> Result<(), crate::runtime::RuntimeError> + Send),
         ) -> Result<(), DispatchError> {
             Ok(())
         }
-        fn send(&self, _session: &SessionRef, text: &str) -> Result<(), SessionsError> {
+        fn read_conversation(
+            &self,
+            _session: &SessionRef,
+        ) -> Result<crate::runtime::Conversation, crate::runtime::RuntimeError> {
+            Err(crate::runtime::RuntimeError::Refused("unused".into()))
+        }
+        fn send(
+            &self,
+            _session: &SessionRef,
+            text: &str,
+        ) -> Result<(), crate::runtime::RuntimeError> {
             self.sent.lock().unwrap().push(text.to_owned());
             Ok(())
         }
-        fn read_state(&self, session: &SessionRef) -> Result<Thread, SessionsError> {
+        fn read_state(&self, session: &SessionRef) -> Result<Thread, crate::runtime::RuntimeError> {
             let state = *self.state.lock().unwrap();
             let presence = if state == SessionState::Gone {
                 Presence::Absent
@@ -883,11 +890,10 @@ mod tests {
                 native_status: String::new(),
                 run_id: None,
                 activity: None,
+                active_turn: None,
+                recent_turns: Vec::new(),
                 native_details: serde_json::Value::Null,
             })
-        }
-        fn read_conversation(&self, _session: &SessionRef) -> Result<Conversation, SessionsError> {
-            Err(SessionsError::Refused("unused".into()))
         }
     }
 

@@ -331,7 +331,7 @@ mod tests {
         (root, home, dir)
     }
 
-    const LEGACY: &str = "schema_version: 6\ncompany: acme\nmembers:\n  ana: {}\n";
+    const LEGACY: &str = "schema_version: 7\ncompany: acme\nmembers:\n  ana: {}\n";
     const COMPANY_YAML: &str = "company: acme\n";
     const PROJECT_LAYER: &str =
         "schema_version: 6\nproject: company-acme\ncompany_repository: true\n";

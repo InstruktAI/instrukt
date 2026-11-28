@@ -28,9 +28,25 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<Recorded>> {
 /// that role's grants.
 pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<Recorded>)> {
     let inspection = ctx.home.for_inspection();
-    let config = Configuration::load_global(&inspection)?;
     let env = wiring::environment(ctx)?;
-    let Some(session) = config.caller(&env)? else {
+    let (session, global_broken) = match Configuration::load_global(&inspection) {
+        Ok(config) => (config.caller(&env)?, false),
+        Err(load_err) => {
+            let caller = crate::runtimes::DECLARATIONS
+                .iter()
+                .find_map(|decl| {
+                    crate::runtimes::adapter(decl.name, &env)
+                        .ok()
+                        .and_then(|adapter| adapter.lookup_caller(&env))
+                })
+                .map(|c| c.session);
+            match caller {
+                Some(session) => (Some(session), true),
+                None => return Err(load_err.into()),
+            }
+        }
+    };
+    let Some(session) = session else {
         return Ok((None, None));
     };
     let assignment = instrukt_runner::assignments::resolve(
@@ -41,7 +57,12 @@ pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<
     )?;
     let recorded = assignment
         .map(|assignment| {
-            let grants = Agents::load(&inspection)?.capabilities(assignment.role.as_str())?;
+            let agents = if global_broken {
+                Agents::load_agents_only(&inspection)?
+            } else {
+                Agents::load(&inspection)?
+            };
+            let grants = agents.capabilities(assignment.role.as_str())?;
             Ok::<_, anyhow::Error>((assignment, grants))
         })
         .transpose()?;
@@ -68,7 +89,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "todo",
             "create" | "update" | "freeze" | "unfreeze" | "remove" | "reactivate",
         ] => TodoWrite,
-        ["company", "reply"] => CompanyReply,
+        ["company", "reply" | "status"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
         ["history", "extract"] => HistoryRead,

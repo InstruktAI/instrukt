@@ -231,8 +231,12 @@ fn native_selection(
         .into_iter()
         .next();
     let runtime = s.config.runner_runtime()?;
-    Ok(selection
-        .map(|selection| instrukt_runner::runtime::adapter(runtime).native_selection(&selection)))
+    let adapter = s
+        .work
+        .runtimes()
+        .adapter(runtime.name(), s.work.env())
+        .map_err(|e| WorkError::refused(e.to_string()))?;
+    Ok(selection.map(|selection| adapter.native_selection(&selection)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,7 +244,7 @@ pub struct NativeAssignment {
     pub dispatcher: Option<SessionRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<instrukt_core::config::AgentSelection>,
-    pub runtime: instrukt_core::config::Runtime,
+    pub runtime: instrukt_core::ids::RuntimeName,
     pub dispatch_allowed: bool,
     pub brief: String,
     pub procedure: Option<String>,
@@ -291,7 +295,7 @@ fn prior_session(
     bindings: &[Binding],
     role: &RoleName,
     attempt: u64,
-    runtime: instrukt_core::config::Runtime,
+    runtime: &instrukt_core::ids::RuntimeName,
 ) -> Option<PriorSession> {
     bindings
         .iter()
@@ -304,10 +308,7 @@ fn prior_session(
                 )
         })
         .filter_map(|b| {
-            let session = b
-                .session
-                .as_ref()
-                .filter(|s| s.runtime.as_str() == runtime.name())?;
+            let session = b.session.as_ref().filter(|s| &s.runtime == runtime)?;
             Some((b, session))
         })
         .max_by_key(|(b, _)| b.attempt.number)
@@ -398,7 +399,8 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(todo)?;
         orchestrator(&s, index)?;
-        let runtime = s.config.runner_runtime()?;
+        let runtime = instrukt_core::ids::RuntimeName::parse(s.config.runner_runtime()?.name())
+            .map_err(|e| WorkError::refused(e.to_string()))?;
         let record = &s.items[index].record;
         if let Some(active) = record.bindings.iter().find(|b| b.is_open_role_attempt()) {
             let assignment = active.attempt.native_assignment.as_ref().ok_or_else(|| {
@@ -418,7 +420,7 @@ impl Work {
                     "outstanding reservation belongs to a different selected runtime",
                 ));
             }
-            let prior = prior_session(&record.bindings, role, active.attempt.number, runtime);
+            let prior = prior_session(&record.bindings, role, active.attempt.number, &runtime);
             let mut result = assignment.clone();
             result.dispatch_allowed = active.attempt.no_start_reason.is_some();
             if result.dispatch_allowed {
@@ -509,12 +511,12 @@ impl Work {
             role.as_str(),
             number,
         );
-        let prior = prior_session(&record.bindings, role, number, runtime);
+        let prior = prior_session(&record.bindings, role, number, &runtime);
         let selection = native_selection(&s, record, procedure)?;
         let assignment = NativeAssignment {
             dispatcher: s.caller_session()?,
             selection,
-            runtime,
+            runtime: runtime.clone(),
             dispatch_allowed: true,
             brief: brief.into(),
             procedure: procedure.map(str::to_owned),
@@ -579,8 +581,9 @@ impl Work {
                 "native child identity must differ from its coordinating parent",
             ));
         }
-        let runtime = s.config.runner_runtime()?;
-        if session.runtime.as_str() != runtime.name() {
+        let runtime = instrukt_core::ids::RuntimeName::parse(s.config.runner_runtime()?.name())
+            .map_err(|e| WorkError::refused(e.to_string()))?;
+        if session.runtime != runtime {
             return Err(WorkError::refused(
                 "child identity belongs to another runtime",
             ));
@@ -1066,7 +1069,7 @@ fn admit_driver<'a>(
     claim: DriverClaim<'a>,
     placement: &Placement,
     evidence: Option<&DriverPlacement>,
-    runtime: instrukt_core::config::Runtime,
+    runtime: &instrukt_core::ids::RuntimeName,
     project: &str,
 ) -> Result<EntryAdmission<'a>, WorkError> {
     let DriverClaim {
@@ -1088,7 +1091,7 @@ fn admit_driver<'a>(
     // session in the same worktree, branch and runtime needs no new proof.
     let resumable = match recorded {
         Some(b) if *in_workspace && own_placement(b, caller, path.as_deref(), branch)? => {
-            b.attempt.runtime == Some(runtime)
+            b.attempt.runtime.as_ref() == Some(runtime)
         }
         _ => false,
     };
@@ -1200,7 +1203,8 @@ impl Work {
         let machine = s.machine()?;
         let caller = s.caller_session()?;
         // Resolving the caller already read the runner runtime.
-        let runtime = s.config.runner_runtime()?;
+        let runtime = instrukt_core::ids::RuntimeName::parse(s.config.runner_runtime()?.name())
+            .map_err(|e| WorkError::refused(e.to_string()))?;
         let record = &s.items[index].record;
         if record.status != TodoStatus::Active
             || record.kind == instrukt_runner::interfaces::TodoKind::Task
@@ -1214,7 +1218,7 @@ impl Work {
         let branch = claim.branch(todo);
         let default = instrukt_core::github::default_branch(&project.root)?;
         let placement = placement(&project.root, branch, cwd)?;
-        let entry = admit_driver(claim, &placement, evidence, runtime, project.slug.as_str())?;
+        let entry = admit_driver(claim, &placement, evidence, &runtime, project.slug.as_str())?;
         let title = entry
             .driver
             .and_then(|b| b.attempt.native_placement.as_ref())
@@ -1400,6 +1404,10 @@ mod tests {
         }
     }
 
+    fn t3_runtime() -> instrukt_core::ids::RuntimeName {
+        instrukt_core::ids::RuntimeName::parse("t3").unwrap()
+    }
+
     #[test]
     fn prior_session_is_the_roles_latest_earlier_bound_attempt() {
         let bindings = [
@@ -1409,7 +1417,7 @@ mod tests {
             worker_binding("plan-reviewer", 4, Some(session("reviewer-4"))),
         ];
         let planner = RoleName::parse("planner").unwrap();
-        let prior = prior_session(&bindings, &planner, 3, instrukt_core::config::Runtime::T3);
+        let prior = prior_session(&bindings, &planner, 3, &t3_runtime());
         assert_eq!(
             prior.map(|p| (p.session, p.attempt)),
             Some((session("planner-2"), 2))
@@ -1423,10 +1431,7 @@ mod tests {
             worker_binding("plan-reviewer", 1, Some(session("reviewer-1"))),
         ];
         let planner = RoleName::parse("planner").unwrap();
-        assert_eq!(
-            prior_session(&bindings, &planner, 2, instrukt_core::config::Runtime::T3),
-            None
-        );
+        assert_eq!(prior_session(&bindings, &planner, 2, &t3_runtime()), None);
     }
 
     #[test]
@@ -1434,7 +1439,7 @@ mod tests {
         let planner = RoleName::parse("planner").unwrap();
         let mut migrated = worker_binding("planner", 1, Some(session("planner-1")));
         migrated.attempt.assignment = AssignmentKind::Unspecified;
-        let prior = prior_session(&[migrated], &planner, 2, instrukt_core::config::Runtime::T3);
+        let prior = prior_session(&[migrated], &planner, 2, &t3_runtime());
         assert_eq!(
             prior,
             Some(PriorSession {
@@ -1453,7 +1458,7 @@ mod tests {
         bound.attempt.native_assignment = Some(NativeAssignment {
             dispatcher: Some(session("lead-1")),
             selection: None,
-            runtime: instrukt_core::config::Runtime::T3,
+            runtime: t3_runtime(),
             dispatch_allowed: true,
             brief: "Plan the change.".into(),
             procedure: None,
@@ -1466,7 +1471,7 @@ mod tests {
             branch: None,
             base: None,
         });
-        let prior = prior_session(&[bound], &planner, 2, instrukt_core::config::Runtime::T3);
+        let prior = prior_session(&[bound], &planner, 2, &t3_runtime());
         assert_eq!(prior.and_then(|p| p.dispatcher), Some(session("lead-1")));
     }
 
@@ -1552,7 +1557,7 @@ mod tests {
             session: Some(session(bound)),
             worktree: Some(tree.to_path_buf()),
             attempt: Attempt {
-                runtime: Some(instrukt_core::config::Runtime::T3),
+                runtime: Some(t3_runtime()),
                 assignment: AssignmentKind::Driver,
                 number: 1,
                 semantic_key: "demo/bug-fix:todo-orchestrator:1".into(),
@@ -1590,13 +1595,7 @@ mod tests {
         evidence: Option<&DriverPlacement>,
     ) -> Result<EntryAdmission<'a>, WorkError> {
         let claim = driver_claim(record, role, &this_machine(), caller)?;
-        admit_driver(
-            claim,
-            placement,
-            evidence,
-            instrukt_core::config::Runtime::T3,
-            "demo",
-        )
+        admit_driver(claim, placement, evidence, &t3_runtime(), "demo")
     }
 
     fn admission_of(result: Result<EntryAdmission<'_>, WorkError>) -> Option<Admission> {

@@ -52,9 +52,17 @@ every visit with it.
 - For a position the repository holds that another project owns, the report
   names that owner: the conflict the repository's first sync would be
   refused on (`project/instrukt/spec/feature/repository/project-initialization`).
+<!-- planned-change:thin-live-runtime-boundary -->
 - Which capabilities a feature needs is the runtime adapter's contract
   (`project/instrukt/spec/feature/runner/session-continuity`); status
   reports that judgment and adds none of its own.
+<!-- change:thin-live-runtime-boundary -->
+- Which capabilities a feature needs is declared by each consuming context
+  (`project/instrukt/spec/feature/runner/session-continuity`,
+  `project/instrukt/spec/feature/company/conversations`) in the capability
+  vocabulary of `project/instrukt/spec/feature/runtime/adapter`; status
+  reports that judgment and adds none of its own.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### Current instruction targets
 
@@ -169,6 +177,9 @@ Then the backup section reports that state clearly and status still succeeds
 ## See Also
 
 - [project/instrukt/spec/domain/publication](../../domain/publication.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 
 - [project/instrukt/spec/feature/distribution/agent-skill](../distribution/agent-skill.md)
 

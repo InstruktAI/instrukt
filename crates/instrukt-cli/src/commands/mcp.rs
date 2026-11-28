@@ -449,9 +449,11 @@ fn require_operator_or_admin_dm(
         }
         .into());
     }
+    let env = wiring::environment(ctx)?;
     let runtime = Configuration::load_global(&ctx.home.for_inspection())?.runner_runtime()?;
-    let adapter = instrukt_runner::runtime::adapter(runtime);
-    let speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())?
+    let adapter = crate::runtimes::adapter(runtime.name(), &env)?;
+    let speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())
+        .map_err(map_speaker_error)?
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "refused: this command requires a verified workspace administrator speaking in a direct message, or the local operator outside any session"
@@ -493,10 +495,23 @@ fn speak(ctx: &Ctx, caller: &Caller, view: &mut View) -> anyhow::Result<()> {
     let (Some(session), Some(_)) = (&caller.session, &caller.company) else {
         return Ok(());
     };
+    let env = wiring::environment(ctx)?;
     let runtime = Configuration::load_global(&ctx.home.for_inspection())?.runner_runtime()?;
-    let adapter = instrukt_runner::runtime::adapter(runtime);
-    view.speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())?;
+    let adapter = crate::runtimes::adapter(runtime.name(), &env)?;
+    view.speaker = instrukt_company::conversations::speaker(&ctx.home, session, adapter.as_ref())
+        .map_err(map_speaker_error)?;
     Ok(())
+}
+
+fn map_speaker_error(error: instrukt_company::conversations::SpeakerError) -> McpError {
+    match error {
+        instrukt_company::conversations::SpeakerError::Unbound { company } => {
+            McpError::Unbound { company }
+        }
+        other => McpError::Turn {
+            cause: other.to_string(),
+        },
+    }
 }
 
 /// One completion record per catalog or tool operation, naming no value.

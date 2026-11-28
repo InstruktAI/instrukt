@@ -51,9 +51,10 @@ pub fn run(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 fn execute(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let env = crate::wiring::environment(ctx)?;
+    let runtimes = crate::runtimes::registry();
     match args.command {
         Command::Extract { json } => {
-            let result = history::extract(&ctx.home, &env)?;
+            let result = history::extract(&ctx.home, &env, &runtimes)?;
             let computer = instrukt_core::machine::machine_id(&ctx.home)?;
             if json {
                 ctx.out.json(&serde_json::json!({"computer":computer,"loaded":result.loaded,"position":result.position}))?;
@@ -74,6 +75,7 @@ fn execute(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             let result = history::search(
                 &ctx.home,
                 &env,
+                &runtimes,
                 &history::Search {
                     query: &query,
                     limit: usize::from(limit),

@@ -27,6 +27,7 @@ const FIXED_STATE_LOCKS: &[&str] = &[
     "withdrawal.lock",
     "delivered-release.lock",
     "company-generation.lock",
+    "company-replies.lock",
     "review.lock",
     "review-publication.lock",
     "review-observation.lock",
@@ -271,5 +272,27 @@ mod tests {
         let msg = err.to_string();
         assert!(matches!(err, BackupError::LiveHomeBusy { .. }), "{msg}");
         assert!(msg.contains("--into"), "{msg}");
+    }
+
+    #[test]
+    fn refuses_held_company_replies_lock_on_live_home_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        std::fs::create_dir_all(home.state_dir()).unwrap();
+        let resolved_home = home.root().canonicalize().unwrap();
+        let resolved_state = home.state_dir().canonicalize().unwrap();
+
+        let replies_lock = home.company_replies_lock_file();
+        let _held = LockGuard::try_acquire(&replies_lock).unwrap().unwrap();
+
+        let err = acquire_live_home_locks(
+            &home,
+            &resolved_home,
+            &resolved_state,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, BackupError::LiveHomeBusy { .. }), "{err:?}");
     }
 }

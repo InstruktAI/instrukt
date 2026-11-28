@@ -1,9 +1,9 @@
 //! Parse the T3 CLI's declared failure formats, not arbitrary server/tool prose.
-use super::NativeCause;
+use instrukt_runtime::NativeCause;
 
 // The native error constructors own these wire formats: apps/server/src/cli/thread.ts
 // at T3 6417151c093e54dbba0e6c824c69d03983793b9a. Opaque detail stays fingerprinted.
-pub(super) fn cause(detail: &str) -> Option<NativeCause> {
+pub(crate) fn cause(detail: &str) -> Option<NativeCause> {
     let line = detail.lines().next()?.trim();
     if line.starts_with("No running T3 Code server uses ")
         && line.ends_with(". Start T3 Code, then retry.")
@@ -36,6 +36,7 @@ pub(super) fn cause(detail: &str) -> Option<NativeCause> {
     }
     None
 }
+
 fn transport_code(value: &str) -> Option<String> {
     let mut fields = value.split_whitespace();
     if !matches!(fields.next()?, "connect" | "read" | "write" | "getaddrinfo") {
@@ -60,10 +61,12 @@ fn transport_code(value: &str) -> Option<String> {
         None
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::cause;
-    use crate::runtime::NativeCause;
+    use instrukt_runtime::NativeCause;
+
     #[test]
     fn declared_transport_codes_survive_while_payload_and_authorization_lines_are_excluded() {
         assert_eq!(
@@ -75,6 +78,7 @@ mod tests {
             })
         );
     }
+
     #[test]
     fn opaque_tool_detail_does_not_become_diagnostic_prose() {
         assert_eq!(

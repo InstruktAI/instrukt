@@ -30,17 +30,10 @@ enum Turn {
     Idle,
 }
 
-fn turn(thread: &Thread) -> Result<Turn, AskError> {
+fn turn(thread: &Thread) -> Turn {
     match thread.state {
-        SessionState::Running | SessionState::NeedsInput => Ok(Turn::InProgress),
-        SessionState::InputReady | SessionState::EndedFailed | SessionState::Gone => Ok(Turn::Idle),
-        SessionState::Unknown => Err(refused(
-            Check::Runtime,
-            format!(
-                "the runtime cannot say whether the requested reviewer {} has a turn in progress; run the same command again once it answers",
-                thread.session
-            ),
-        )),
+        SessionState::Running | SessionState::NeedsInput => Turn::InProgress,
+        SessionState::InputReady | SessionState::EndedFailed | SessionState::Gone => Turn::Idle,
     }
 }
 
@@ -90,7 +83,7 @@ impl Delivering<'_> {
     fn read_present(&self, session: &SessionRef) -> Result<Option<Thread>, AskError> {
         let thread = match self.adapter.read_state(session) {
             Ok(thread) => Some(thread),
-            Err(SessionsError::Gone(_)) => None,
+            Err(error) if error.is_gone() => None,
             Err(error) => return Err(failed(error)),
         };
         Ok(thread.filter(|t| t.presence == Presence::Present && t.state != SessionState::Gone))
@@ -107,7 +100,7 @@ impl Delivering<'_> {
         requests: &[crate::review::Request],
         mut rereview_plan: Option<ReReviewPlan>,
     ) -> Result<Reply, AskError> {
-        let runtime = self.adapter.runtime().name();
+        let runtime = self.adapter.runtime_name();
         let asks = _store::asks(self.context.home, self.slug(), self.head()).map_err(failed)?;
         let latest_unclosed = asks.iter().rev().find(|ask| ask.closed_at.is_none());
         let mut expected_last_number = latest_unclosed.map(|ask| ask.number);
@@ -121,7 +114,7 @@ impl Delivering<'_> {
             .map(|bound| self.read_present(&bound.session))
             .transpose()?
             .flatten();
-        let last_turn = last_present.as_ref().map(turn).transpose()?;
+        let last_turn = last_present.as_ref().map(turn);
         let mut outstanding = latest_unclosed
             .filter(|ask| ask.accepted_at.is_none() || last_turn == Some(Turn::InProgress));
 
@@ -280,14 +273,14 @@ impl Delivering<'_> {
     /// (`requested-review`, Reaching the reviewer): none yet -> Start,
     /// idle -> Wake, busy -> Outstanding, archived/deleted -> Successor.
     fn plan_head_key(&self, state: &RunnerState) -> Result<Route, AskError> {
-        let runtime = self.adapter.runtime().name();
+        let runtime = self.adapter.runtime_name();
         let Some(bound) = keyed::bound(state, runtime, self.key).map_err(failed)? else {
             return Ok(Route::Start);
         };
         let Some(thread) = self.read_present(&bound.session)? else {
             return Ok(Route::Successor);
         };
-        if turn(&thread)? == Turn::InProgress {
+        if turn(&thread) == Turn::InProgress {
             return Err(refused(
                 Check::Outstanding,
                 format!(
@@ -474,7 +467,7 @@ impl Delivering<'_> {
             }
             Delivery::Send => {
                 let target_guard = self.claim_target_if_distinct(&ask.start_key)?;
-                let runtime = self.adapter.runtime().name();
+                let runtime = self.adapter.runtime_name();
                 let current_bound = keyed::bound(state, runtime, &ask.start_key).map_err(failed)?;
                 let target_lookup = match &current_bound {
                     Some(b) if Some(b.generation) == ask.generation => {
@@ -522,7 +515,7 @@ impl Delivering<'_> {
     }
 
     fn start_replay_needs_successor(&self, state: &RunnerState) -> Result<bool, AskError> {
-        let runtime = self.adapter.runtime().name();
+        let runtime = self.adapter.runtime_name();
         let Some(bound) = keyed::bound(state, runtime, self.key).map_err(failed)? else {
             return Ok(false);
         };
@@ -697,7 +690,7 @@ impl Delivering<'_> {
             let result = keyed::start_owned(self.adapter, &assignment, self.guard);
             keyed::note(
                 &RunnerState::new(context.home),
-                self.adapter.runtime(),
+                self.adapter.runtime_name(),
                 self.key,
                 context.now,
                 result.as_ref().map(|_| ()),
@@ -764,7 +757,7 @@ impl Delivering<'_> {
             Check::Runtime,
             format!(
                 "the {} runtime did not accept the {what} of {}'s requested reviewer: {error}; run the same command again: it replays this ask with the identities it recorded",
-                self.adapter.runtime().name(),
+                self.adapter.runtime_name(),
                 self.head()
             ),
         )
@@ -782,7 +775,7 @@ impl Delivering<'_> {
         let state = RunnerState::new(context.home);
         let generation = match ask.delivery {
             Delivery::Send => ask.generation,
-            Delivery::Start => keyed::bound(&state, self.adapter.runtime().name(), &ask.start_key)
+            Delivery::Start => keyed::bound(&state, self.adapter.runtime_name(), &ask.start_key)
                 .map_err(failed)?
                 .map(|bound| bound.generation),
         }

@@ -251,6 +251,24 @@ pub fn worktree_root(dir: &Path) -> Result<Option<PathBuf>, GitError> {
     Ok(Some(PathBuf::from(text.trim_end_matches('\n'))))
 }
 
+/// Whether `path` is a worktree `git worktree list --porcelain` lists in
+/// `checkout` on `branch`.
+pub fn registered_worktree(checkout: &Path, path: &Path, branch: &str) -> Result<bool, GitError> {
+    let listing = run(checkout, ["worktree", "list", "--porcelain"])?;
+    Ok(listed_worktree(&listing, path, branch))
+}
+
+fn listed_worktree(listing: &str, path: &Path, branch: &str) -> bool {
+    listing.split("\n\n").any(|entry| {
+        entry
+            .lines()
+            .any(|line| line == format!("worktree {}", path.display()))
+            && entry
+                .lines()
+                .any(|line| line == format!("branch refs/heads/{branch}"))
+    })
+}
+
 /// Removes from `command` the variables through which git locates a
 /// repository, for a process started from inside a git hook that must find
 /// its repository from its own working directory.
@@ -374,4 +392,34 @@ where
         }
     })?;
     Ok((args_text, output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::listed_worktree;
+    use std::path::Path;
+
+    #[test]
+    fn listed_worktree_matches_both_path_and_branch() {
+        let porcelain = "\
+worktree /repo
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /repo-wt
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/slug/work
+";
+        assert!(listed_worktree(
+            porcelain,
+            Path::new("/repo-wt"),
+            "slug/work"
+        ));
+        assert!(!listed_worktree(porcelain, Path::new("/repo-wt"), "main"));
+        assert!(!listed_worktree(
+            porcelain,
+            Path::new("/other"),
+            "slug/work"
+        ));
+    }
 }

@@ -209,6 +209,7 @@ pub struct Request<'a> {
     pub home: &'a Home,
     pub cwd: &'a std::path::Path,
     pub env: &'a Env,
+    pub runtimes: &'a crate::runtime::RuntimeRegistry,
     pub scheduler: Scheduler,
     pub wake: WakeUp<'a>,
     pub check: bool,
@@ -419,23 +420,30 @@ fn runtime_projects(request: &Request<'_>, demand: &Demand, report: &mut Report)
     if roots.is_empty() {
         return;
     }
-    let adapter =
-        match Configuration::load_global(request.home).and_then(|global| global.runner_runtime()) {
-            Ok(runtime) => crate::runtime::adapter(runtime),
-            Err(error) => {
-                for (root, _, labels) in &roots {
-                    report.resource(
-                        ResourceKind::RuntimeProject,
-                        Disposition::Unmet,
-                        vec![root.clone()],
-                        labels,
-                        error.to_string(),
-                    );
-                    report.finding(format!("runtime project {}", root.display()), &error);
-                }
-                return;
+    let adapter = match Configuration::load_global(request.home)
+        .and_then(|global| global.runner_runtime())
+        .map_err(|error| error.to_string())
+        .and_then(|runtime| {
+            request
+                .runtimes
+                .adapter(runtime.name(), request.env)
+                .map_err(|error| error.to_string())
+        }) {
+        Ok(adapter) => adapter,
+        Err(error) => {
+            for (root, _, labels) in &roots {
+                report.resource(
+                    ResourceKind::RuntimeProject,
+                    Disposition::Unmet,
+                    vec![root.clone()],
+                    labels,
+                    error.to_string(),
+                );
+                report.finding(format!("runtime project {}", root.display()), &error);
             }
-        };
+            return;
+        }
+    };
     let mode = if request.check {
         ExecutionRootMode::Check
     } else {

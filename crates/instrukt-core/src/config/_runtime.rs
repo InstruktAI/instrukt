@@ -1,5 +1,9 @@
-//! Compiled runtime selection and caller context. No executable configuration.
+//! Compiled runtime declarations, fail-closed selection, and caller context.
+//! No executable configuration.
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+use super::_error::ConfigError;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Env {
@@ -68,37 +72,137 @@ impl Env {
     }
 }
 
-/// A runtime compiled into instrukt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Runtime {
-    T3,
+/// Pure static hook a runtime declaration supplies to normalize legacy
+/// retained history message records during storage migration: returns `true`
+/// to retain the normalized record, or `false` to drop it.
+pub type LegacyHistoryNormalizer = fn(&mut serde_json::Value) -> bool;
+
+/// Native agent operations are independent of unattended host-CLI support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeCapabilities {
+    pub shared_delegation: bool,
+    pub worktree_attach: bool,
+    pub agent_selection: bool,
 }
-impl Runtime {
-    /// The one runtime compiled into this instrukt: what an unset
-    /// `runner.runtime` means.
-    pub const COMPILED: Self = Self::T3;
-    pub fn named(name: &str) -> Option<Self> {
-        match name {
-            "t3" => Some(Self::T3),
-            _ => None,
-        }
+
+/// Static capability and defaults metadata for one compiled runtime adapter,
+/// installed once by the CLI composition root before configuration is read.
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeDeclaration {
+    pub name: &'static str,
+    pub archives_threads: bool,
+    pub worktree_create: bool,
+    pub worktree_attach: bool,
+    pub cold_text_source: bool,
+    pub link: bool,
+    pub notify: bool,
+    pub unattended_agent_selection: bool,
+    pub native_capabilities: NativeCapabilities,
+    pub shipped_yaml: &'static str,
+    pub legacy_history_normalizer: Option<LegacyHistoryNormalizer>,
+}
+
+impl RuntimeDeclaration {
+    pub fn name(&self) -> &'static str {
+        self.name
     }
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::T3 => "t3",
-        }
+
+    pub fn caller(&self, env: &Env) -> Option<crate::ids::SessionRef> {
+        env.caller_identity(self.name).map(|caller| caller.session)
     }
-    pub fn caller(self, env: &Env) -> Option<crate::ids::SessionRef> {
-        env.caller_identity(self.name())
-            .map(|caller| caller.session)
+
+    pub fn archives_threads(&self) -> bool {
+        self.archives_threads
     }
-    /// Whether the runtime's adapter archives threads, which thread
-    /// retention needs (`project/instrukt/spec/feature/runner/session-continuity`).
-    pub fn archives_threads(self) -> bool {
-        match self {
-            Self::T3 => true,
-        }
+
+    pub fn native_capabilities(&self) -> NativeCapabilities {
+        self.native_capabilities
+    }
+}
+
+impl PartialEq for RuntimeDeclaration {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl Eq for RuntimeDeclaration {}
+
+static DECLARATIONS: OnceLock<&'static [&'static RuntimeDeclaration]> = OnceLock::new();
+
+/// Install the compiled runtime declarations this binary supports. The first
+/// installation holds for the life of the process; a later call changes nothing.
+pub fn install_runtime_declarations(declarations: &'static [&'static RuntimeDeclaration]) {
+    let _ = DECLARATIONS.set(declarations);
+}
+
+/// All installed compiled runtime declarations; empty before installation.
+pub fn runtime_declarations() -> &'static [&'static RuntimeDeclaration] {
+    DECLARATIONS.get().copied().unwrap_or(&[])
+}
+
+/// The installed declaration matching `name`, if registered.
+pub fn runtime_declaration(name: &str) -> Option<&'static RuntimeDeclaration> {
+    runtime_declarations()
+        .iter()
+        .copied()
+        .find(|declaration| declaration.name == name)
+}
+
+/// Fail-closed runtime resolution: when `configured` names a runtime, it must
+/// match a registered declaration; when unset, it selects the sole registered
+/// declaration and fails closed if zero or multiple declarations are installed.
+pub fn resolve_runtime(
+    configured: Option<&str>,
+) -> Result<&'static RuntimeDeclaration, ConfigError> {
+    resolve_runtime_from(configured, runtime_declarations())
+}
+
+pub(crate) fn resolve_runtime_from(
+    configured: Option<&str>,
+    declarations: &[&'static RuntimeDeclaration],
+) -> Result<&'static RuntimeDeclaration, ConfigError> {
+    let available = || {
+        declarations
+            .iter()
+            .map(|d| d.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match configured {
+        Some(name) => declarations
+            .iter()
+            .copied()
+            .find(|declaration| declaration.name == name)
+            .ok_or_else(|| {
+                let message = if declarations.is_empty() {
+                    format!(
+                        "unknown compiled runtime adapter `{name}`; no compiled runtime adapters are registered"
+                    )
+                } else {
+                    format!(
+                        "unknown compiled runtime adapter `{name}`; available: {}",
+                        available()
+                    )
+                };
+                ConfigError::InvalidValue {
+                    key: "runner.runtime".into(),
+                    message,
+                }
+            }),
+        None => match declarations {
+            [only] => Ok(*only),
+            [] => Err(ConfigError::InvalidValue {
+                key: "runner.runtime".into(),
+                message: "no compiled runtime adapters are registered".into(),
+            }),
+            _ => Err(ConfigError::InvalidValue {
+                key: "runner.runtime".into(),
+                message: format!(
+                    "multiple compiled runtime adapters are registered ({}); set runner.runtime explicitly",
+                    available()
+                ),
+            }),
+        },
     }
 }
 
@@ -113,33 +217,15 @@ pub enum WorkflowCapability {
     Notify,
     AgentSelection,
 }
-/// Native agent operations are independent of unattended host-CLI support.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NativeCapabilities {
-    pub shared_delegation: bool,
-    pub worktree_attach: bool,
-    pub agent_selection: bool,
-}
-impl Runtime {
-    pub fn native_capabilities(self) -> NativeCapabilities {
-        match self {
-            Self::T3 => NativeCapabilities {
-                shared_delegation: true,
-                worktree_attach: true,
-                agent_selection: true,
-            },
-        }
-    }
-}
 impl WorkflowCapability {
-    pub fn supported_by(self, runtime: Runtime) -> bool {
+    pub fn supported_by(self, runtime: &RuntimeDeclaration) -> bool {
         match self {
-            Self::SharedDelegation => runtime.native_capabilities().shared_delegation,
-            // These requirements describe unattended placement/adapter operations.
-            // Native model options remain distinct from the consumed launch operations.
-            other => match runtime {
-                Runtime::T3 => matches!(other, Self::WorktreeCreate | Self::WorktreeAttach),
-            },
+            Self::SharedDelegation => runtime.native_capabilities.shared_delegation,
+            Self::WorktreeCreate => runtime.worktree_create,
+            Self::WorktreeAttach => runtime.worktree_attach,
+            Self::Link => runtime.link,
+            Self::Notify => runtime.notify,
+            Self::AgentSelection => runtime.unattended_agent_selection,
         }
     }
 }
@@ -154,6 +240,48 @@ impl std::fmt::Display for WorkflowCapability {
             Self::AgentSelection => "agent_selection",
         })
     }
+}
+
+/// A declaration with the capabilities of the default runtime and short
+/// stand-in shipped actions, installed by core's own unit tests.
+#[cfg(test)]
+pub(crate) fn install_fixture() {
+    static FIXTURE: RuntimeDeclaration = RuntimeDeclaration {
+        name: "t3",
+        archives_threads: true,
+        worktree_create: true,
+        worktree_attach: true,
+        cold_text_source: true,
+        link: false,
+        notify: false,
+        unattended_agent_selection: false,
+        native_capabilities: NativeCapabilities {
+            shared_delegation: true,
+            worktree_attach: true,
+            agent_selection: true,
+        },
+        shipped_yaml: "\
+runtimes:
+  t3:
+    dispatch: fixture dispatch
+    message_child: fixture message_child
+    message_peer: fixture message_peer
+    read_thread: fixture read_thread
+    inspect_thread: fixture inspect_thread
+    schedule_check: fixture schedule_check
+    look_around: fixture look_around
+    steer: fixture steer
+    start_thread: fixture start_thread
+    cancel_child: fixture cancel_child
+    finish_thread: fixture finish_thread
+    discover_environments: fixture discover_environments
+    connect_environment: fixture connect_environment
+    dispatch_remote: fixture dispatch_remote
+",
+        legacy_history_normalizer: None,
+    };
+    static INSTALLED: [&RuntimeDeclaration; 1] = [&FIXTURE];
+    install_runtime_declarations(&INSTALLED);
 }
 
 /// Agent actions as `(name, contract)`: the contract is the one line the
@@ -217,3 +345,113 @@ pub(crate) const ACTIONS: [(&str, &str); 14] = [
         "Assign a brief to an explicitly addressed connected environment.",
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AgentPreference, Tier};
+    use crate::ids::ProfileName;
+
+    static ALPHA: RuntimeDeclaration = RuntimeDeclaration {
+        name: "alpha",
+        archives_threads: true,
+        worktree_create: true,
+        worktree_attach: true,
+        cold_text_source: true,
+        link: false,
+        notify: false,
+        unattended_agent_selection: false,
+        native_capabilities: NativeCapabilities {
+            shared_delegation: true,
+            worktree_attach: true,
+            agent_selection: true,
+        },
+        shipped_yaml: "",
+        legacy_history_normalizer: None,
+    };
+
+    static BETA: RuntimeDeclaration = RuntimeDeclaration {
+        name: "beta",
+        archives_threads: false,
+        worktree_create: false,
+        worktree_attach: false,
+        cold_text_source: false,
+        link: false,
+        notify: false,
+        unattended_agent_selection: false,
+        native_capabilities: NativeCapabilities {
+            shared_delegation: false,
+            worktree_attach: false,
+            agent_selection: false,
+        },
+        shipped_yaml: "",
+        legacy_history_normalizer: None,
+    };
+
+    #[test]
+    fn resolve_runtime_fails_closed_when_zero_or_ambiguous_or_unregistered() {
+        assert!(matches!(
+            resolve_runtime_from(None, &[]),
+            Err(ConfigError::InvalidValue { ref key, .. }) if key == "runner.runtime"
+        ));
+        assert!(matches!(
+            resolve_runtime_from(Some("alpha"), &[]),
+            Err(ConfigError::InvalidValue { ref key, .. }) if key == "runner.runtime"
+        ));
+        assert_eq!(
+            resolve_runtime_from(None, &[&ALPHA]).unwrap().name(),
+            "alpha"
+        );
+        assert_eq!(
+            resolve_runtime_from(Some("alpha"), &[&ALPHA])
+                .unwrap()
+                .name(),
+            "alpha"
+        );
+        assert!(matches!(
+            resolve_runtime_from(Some("unknown"), &[&ALPHA]),
+            Err(ConfigError::InvalidValue { ref key, .. }) if key == "runner.runtime"
+        ));
+        assert!(matches!(
+            resolve_runtime_from(None, &[&ALPHA, &BETA]),
+            Err(ConfigError::InvalidValue { ref key, .. }) if key == "runner.runtime"
+        ));
+        assert_eq!(
+            resolve_runtime_from(Some("beta"), &[&ALPHA, &BETA])
+                .unwrap()
+                .name(),
+            "beta"
+        );
+    }
+
+    #[test]
+    fn agent_preference_preserves_wire_shape_and_ignores_unknown_legacy_fields() {
+        let with_tier: AgentPreference =
+            serde_json::from_str(r#"{"agent":"codex","tier":"strong","legacy_extra":"ignored"}"#)
+                .unwrap();
+        assert_eq!(
+            with_tier,
+            AgentPreference {
+                agent: ProfileName::parse("codex").unwrap(),
+                tier: Some(Tier::Strong),
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&with_tier).unwrap(),
+            r#"{"agent":"codex","tier":"strong"}"#
+        );
+
+        let without_tier: AgentPreference = serde_json::from_str(r#"{"agent":"claude"}"#).unwrap();
+        assert_eq!(
+            without_tier,
+            AgentPreference {
+                agent: ProfileName::parse("claude").unwrap(),
+                tier: None,
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&without_tier).unwrap(),
+            r#"{"agent":"claude"}"#
+        );
+    }
+}

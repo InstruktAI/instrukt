@@ -15,6 +15,7 @@ its home folder holds a valid settings document, and it is listed nowhere
 else. A project belongs to no company, and a company home carries no roles and
 no authorization.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 A company's home is generated. An operator declares once, for the computer,
 the GitHub organisation that owns company homes; from then on an agent asked
 to add a company creates the company's private repository in that
@@ -30,6 +31,23 @@ adopted project receives works for it from the moment its home exists. Where
 the runtime is T3, the home's runtime project is created titled with the
 repository's name, `company-<name>`, while the folder keeps the company's name
 (`project/instrukt/spec/feature/runner/t3-contract`).
+<!-- change:thin-live-runtime-boundary -->
+A company's home is generated. An operator declares once, for the computer,
+the GitHub organisation that owns company homes; from then on an agent asked
+to add a company creates the company's private repository in that
+organisation with the one company skeleton every company receives, makes the
+company's GitHub administrator an administrator of it, and checks it out as the
+company's home. A company whose repository already exists there is one by
+contract: adding it to another computer checks that repository out as its home
+and changes nothing on GitHub. Nothing about a company is customised: two
+companies' homes differ only where each company's identity enters them. A
+company's repository is also a project like any other adopted on the computer,
+one whose documentation is the company's knowledge alone, so everything an
+adopted project receives works for it from the moment its home exists. A
+company home starts on Tier 1 (shared host with per-company BYOS profiles) and
+can promote to Tier 2 (isolated container) under
+`project/instrukt/spec/feature/company/company-containers`.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ## Canonical fields
 
@@ -39,7 +57,7 @@ repository's name, `company-<name>`, while the folder keeps the company's name
 | --- | --- | --- |
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
 | Settings document | `company.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
-| Project layer | `instrukt.yaml` at the root of the home's repository, committed | Part of the company skeleton (Generation): the home's repository is an adopted project like any other, named `company-<name>`, declaring itself a company's repository and the company identity with `company_name` (`project/instrukt/spec/domain/configuration`, The company identity), with todos off and automatic review on, under the project layer's rules (`project/instrukt/spec/feature/configuration/layered-configuration`). |
+| Project layer | `instrukt.yaml` at the root of the home's repository, committed | Part of the company skeleton: the home's repository is an adopted project like any other, named `company-<name>`, declaring itself a company's repository and the company identity with `company_name` (`project/instrukt/spec/domain/configuration`), with todos off and automatic review on, under the project layer's rules (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 | Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
 | Company knowledge | The company's documents in the home's `docs/` folder, and the index `docs/index.yaml` that selects from them | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md` and, on request, into the company's skill, which also holds a document's `visibility` to its rules. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`, `project/instrukt/spec/feature/publication/company-plugin`), and it is never published to the computer's documentation (`project/instrukt/spec/feature/publication/project-publication`). |
 | Ignore file | `.gitignore` in the home folder | Keeps the settings document, the secrets file, `projects/` and the local state instrukt keeps in the home out of the repository. |
@@ -75,7 +93,7 @@ repository's name, `company-<name>`, while the folder keeps the company's name
 | Repository | `company-<name>` in the owning organisation, private, where `<name>` is the company's key. |
 | Home | The repository's checkout at `~/.instrukt/companies/<name>/`. |
 | Administrator | The company's GitHub administrator, named when the repository is created, is made an administrator of it. |
-| Identity | The company's key, the name people write the company by, and its GitHub administrator. Generation takes nothing else. The key and the name enter the skeleton's project layer as the company identity (`project/instrukt/spec/domain/configuration`, The company identity). |
+| Identity | The company's key, the name people write the company by, and its GitHub administrator. Generation takes nothing else. The key and the name enter the skeleton's project layer as the company identity (`project/instrukt/spec/domain/configuration`). |
 
 - **The repository by contract.** Where `company-<name>` does not exist in
   the owning organisation, it is created with the skeleton and the
@@ -107,7 +125,6 @@ repository's name, `company-<name>`, while the folder keeps the company's name
   the home out of the box; on one that does not, the home is added all the
   same, automatic review is withheld there and reported as every project
   layer's is (`project/instrukt/spec/feature/configuration/layered-configuration`,
-  Automatic review enablement;
   `project/instrukt/spec/feature/runner/pull-request-review`).
 - **The company's knowledge stays the company's.** Publishing the home
   publishes none of the company's documents to the computer's documentation,
@@ -229,6 +246,7 @@ never in the home (`project/instrukt/spec/feature/runner/mcp-access`).
 profiles: [sunfield-claude, sunfield-codex]
 ```
 
+<!-- planned-change:thin-live-runtime-boundary -->
 `profiles` is an ordered list of profile names the machine's `agents.yaml`
 declares. Every session that runs in the company's home is started on that
 order in place of the machine-wide one, under the selection rule of
@@ -237,6 +255,20 @@ declares no profile, provider instance or credential of its own. A name the
 machine's `agents.yaml` does not declare is a validation finding naming the
 company and the profile; an empty list is a finding naming the company. A home
 without `profiles` uses the machine-wide mapping.
+<!-- change:thin-live-runtime-boundary -->
+`profiles` is an ordered list of profile names the machine's `agents.yaml`
+declares. Every session that runs in the company's home is started on that
+order in place of the machine-wide one, under the selection rule of
+`project/instrukt/spec/feature/configuration/agent-selection`. On a Tier-1
+shared host, `profiles` binds a company home to its own BYOS provider account
+through the runtime's optional multi-account provider isolation capability
+(`project/instrukt/spec/feature/company/company-containers`,
+`project/instrukt/spec/feature/runtime/adapter`). A company home declares no
+profile, provider instance, or credential of its own. A name the machine's
+`agents.yaml` does not declare is a validation finding naming the company and
+the profile; an empty list is a finding naming the company. A home without
+`profiles` uses the machine-wide mapping.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ## Use cases
 
@@ -316,6 +348,7 @@ And nothing of the repository on GitHub is changed
   is.
 - A home folder that exists is never adopted: a home made by hand, or one that
   is not a checkout, stays as it is.
+<!-- planned-change:thin-live-runtime-boundary -->
 - Company homes on one computer are separate folders of one operating-system
   user. What keeps a session working for one company from reading another
   company's home is that company's container
@@ -330,3 +363,21 @@ And nothing of the repository on GitHub is changed
 - [project/instrukt/spec/feature/configuration/owned-files](owned-files.md)
 - [project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework](../runner/inbound-webhook-endpoint-framework.md)
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](../runner/procedure-standing-agent.md)
+<!-- change:thin-live-runtime-boundary -->
+- Tier-1 company homes on one computer are separate folders of one
+  operating-system user, with per-company BYOS account isolation via
+  `profiles`. Hard OS and filesystem confinement between companies belongs to
+  Tier-2 isolated containers
+  (`project/instrukt/spec/feature/company/company-containers`), not the
+  folders.
+- There are no person homes.
+
+## See Also
+
+- [project/instrukt/spec/domain/configuration](../../domain/configuration.md)
+- [project/instrukt/spec/feature/company/company-containers](../company/company-containers.md)
+- [project/instrukt/spec/feature/configuration/layered-configuration](layered-configuration.md)
+- [project/instrukt/spec/feature/configuration/owned-files](owned-files.md)
+- [project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework](../runner/inbound-webhook-endpoint-framework.md)
+- [project/instrukt/spec/feature/runner/procedure-standing-agent](../runner/procedure-standing-agent.md)
+<!-- /planned-change:thin-live-runtime-boundary -->

@@ -17,6 +17,7 @@ stay the path for facts
 
 ### Enablement and hosting
 
+<!-- planned-change:thin-live-runtime-boundary -->
 A company home declares its named connectors under `connectors.<name>`
 (`project/instrukt/spec/feature/configuration/layered-configuration`). Each
 entry selects a registered provider kind via optional `kind` (defaulting to the
@@ -39,6 +40,30 @@ computer; a scheduled tick hosts none. While a connector is declared,
 (`project/instrukt/spec/feature/runner/module-installation`). Conversations need a
 selected runtime with the capabilities
 `project/instrukt/spec/feature/runner/session-continuity` lists for them.
+<!-- change:thin-live-runtime-boundary -->
+A company home declares its named connectors under `connectors.<name>`
+(`project/instrukt/spec/feature/configuration/layered-configuration`, which
+validates the `connectors:` map and declares the common-field schema for
+`kind`, `role`, `admit`, and `session_scope`). Multiple named connectors of the
+same provider kind may be declared in one company home.
+
+Every company connector uses **explicit frontstage**: replies are posted
+exclusively via `instrukt company reply`, paired with one calm status line and
+optional curated progress updates via `instrukt company status`. Raw turn
+output is never scraped from a runtime's internal database or posted to a
+channel.
+
+Declaring a connector is what gives a company conversations. The long-lived
+`instrukt run` hosts every declared connector of every company home on the
+computer; a scheduled tick hosts none. While a connector is declared,
+`instrukt install` keeps that run running through an owned service
+(`project/instrukt/spec/feature/runner/module-installation`). Conversations
+require a selected runtime implementing keyed `start` in a company home,
+`send` with idempotent command keys, live `read_state` (including live
+turn-activity correlation), and `caller_identity`
+(`project/instrukt/spec/feature/runtime/adapter`), with zero reads of any
+runtime's internal database.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### What a connector supplies
 
@@ -67,6 +92,7 @@ path is the same for every connector, whichever channel it speaks to
 
 ### The session bound to a conversation
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - A conversation is identified by company, connector and provider conversation
   identity. Its durable binding follows the native launch/replay and automatic
   succession rules in `project/instrukt/spec/feature/runner/session-continuity`.
@@ -82,6 +108,22 @@ path is the same for every connector, whichever channel it speaks to
   before adoption. Reset only unanswered work for ordered delivery, including
   questions whose old turn has no retained answer. Retained answers keep their
   posting state and identities; posting continues during a runtime outage.
+<!-- change:thin-live-runtime-boundary -->
+- A conversation is identified by company, connector, and provider conversation
+  identity. Its durable binding follows the keyed launch/replay and automatic
+  succession rules in `project/instrukt/spec/feature/runner/session-continuity`.
+  Rename and settlement preserve its native ID. Runtime failures retain work
+  and report the actual cause to the operator; the member sees only the normal
+  temporarily unavailable status or notice.
+- Saved or new unanswered work after confirmed native archive/deletion starts
+  one successor with the assignment alone. A pending successor replays its
+  persisted native launch identity on later relay passes until accepted. A
+  failed successor launch opens the normal unavailable interval without
+  resetting an existing timestamp; resumed delivery clears it normally. Reset
+  only unanswered work for ordered delivery. Retained explicit answers keep
+  their posting state and identities; posting continues during a runtime
+  outage.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - Optional connector display facts supply a channel name or direct-message
   counterpart. Company captures the readable title during message capture and
   freezes it into the generation's request. Slack titles use company plus channel
@@ -105,6 +147,7 @@ path is the same for every connector, whichever channel it speaks to
   own publishes `company-agent`'s as `general/procedure/company-assistance`. The
   procedure is instrukt's and the knowledge is the company's; neither repeats
   the other.
+<!-- planned-change:thin-live-runtime-boundary -->
 - The session's opening input is the runner-authored assignment prompt,
   followed by the first addressed message's input. The assignment is the
   loader of `project/instrukt/spec/feature/runner/procedure-event-delivery`:
@@ -139,6 +182,44 @@ path is the same for every connector, whichever channel it speaks to
   on a connector that already has live bindings, previously bound conversations
   stay exclusively with their existing bindings and new conversations bind under
   the newly declared scope, with no overlap or double delivery.
+<!-- change:thin-live-runtime-boundary -->
+- The session's opening input is the runner-authored assignment prompt,
+  followed by the first addressed message's input. The assignment is the
+  loader of `project/instrukt/spec/feature/runner/procedure-event-delivery`:
+  it names the procedure, the connector's role with its resolved grants, the
+  company, the connector, the conversation or company session scope, explicit
+  frontstage instructions (`instrukt company reply` and optional
+  `instrukt company status`), and directs
+  `instrukt docs get <procedure-id> --closure` before the message is handled.
+  The procedure is read from current publication when the session starts; a
+  woken session keeps the assignment it started with.
+- Under `session_scope: conversation` (the default), each `(company, connector,
+  conversation)` has its own session keyed by
+  `instrukt:conversation:<company>:<connector>:<conversation>`. Under
+  `session_scope: company`, one shared standing session keyed by
+  `instrukt:conversation:<company>:<connector>` serves all admitted direct
+  messages and channel threads of that `(company, connector)` serially. Every
+  incoming turn delivered to a company-scoped session is preceded by a sanitized
+  turn-context header naming the connector, opaque conversation ID,
+  direct-message flag, connector-supplied thread identifier (when threaded) and
+  display label (when available), and authoritative speaker metadata (provider
+  ID, email, administrator flag, and sanitized display name on separate fields),
+  alongside the conversation-context and member envelopes so the shared agent
+  maintains cross-user awareness and knows which conversation ID to address when
+  replying.
+- **Binding-pinned policy and scope transitions:** a connector's declared
+  `role` and `session_scope` are recorded on the durable conversation binding
+  when it is created and remain fixed for that binding's lifetime (so an
+  already-running session never disagrees with its opening assignment). Every
+  binding uses explicit frontstage (`instrukt company reply` and optional
+  `instrukt company status`). Each binding owns a disjoint set of conversations
+  for `(company, connector)`: a `conversation`-scoped binding owns only its own
+  conversation ID, and a `company`-scoped binding owns only conversations that
+  have no `conversation`-scoped binding. If an operator changes `session_scope`
+  on a connector that already has live bindings, previously bound conversations
+  stay exclusively with their existing bindings and new conversations bind under
+  the newly declared scope, with no overlap or double delivery.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - Under the default `company-agent` procedure
   (`general/procedure/company-assistance`), the conversation's agent works
   through the company's declared MCP servers
@@ -159,10 +240,9 @@ path is the same for every connector, whichever channel it speaks to
   speaker the connector recorded as an administrator of the company, in a
   direct message or a channel alike, is recorded as a knowledge proposal. A
   head the company context admits as a proposal
-  (`project/instrukt/spec/domain/company`, Knowledge proposal) is carried to
+  (`project/instrukt/spec/domain/company`) is carried to
   review and integration with no person moving it
-  (`project/instrukt/spec/feature/runner/pull-request-review`, Knowledge
-  proposals in a company home); every other change the agent commits waits
+  (`project/instrukt/spec/feature/runner/pull-request-review`); every other change the agent commits waits
   for a person, as the company's knowledge is changed only by its
   administrators (`general/principle/trust-and-guardrails`: the gate reads
   the object, the commit's recorded speaker, never text the agent writes).
@@ -194,10 +274,19 @@ include the omission note when the limit trims it. If the connector cannot read 
 messages and addressed message in the same transaction that records the
 delivery. A send or start whose acceptance is uncertain retains the exact
 input for reconciliation and keeps later work queued until it is resolved.
+<!-- planned-change:thin-live-runtime-boundary -->
 The relay sends through T3's authenticated WebSocket command endpoint. It
 records a command ID derived from the message and its attempt boundary before
 dispatch. An uncertain retry keeps that ID and framed input. T3's durable
 command receipt prevents a second turn across connections and restarts.
+<!-- change:thin-live-runtime-boundary -->
+The relay sends through the selected runtime adapter's idempotent send boundary
+(`project/instrukt/spec/feature/runtime/adapter`). It records a command ID
+derived from the message and its attempt boundary in instrukt-owned durable
+state before dispatch. An uncertain retry keeps that ID and framed input, and
+the runtime's durable command receipt prevents a second turn across connections
+and restarts without reading any runtime database.
+<!-- /planned-change:thin-live-runtime-boundary -->
 A confirmed refusal allows the next attempt to select context again and use a
 fresh boundary. Presence and its recovery doors still apply.
 Failures before any byte of the request frame is written leave the message
@@ -229,12 +318,54 @@ the state-database spec.
   `direct`, and time in its opening.
   Both carry the delivery's boundary token, so a line inside them that looks
   like an opening or a closing stays content.
+<!-- planned-change:thin-live-runtime-boundary -->
 - The speaker of a turn is the person who wrote its addressed message. Their
   connector identity, name, email address, administrator status (`is_admin`)
   and conversation direct-message flag (`is_direct`), as the provider gave
   them when that message was admitted, are stored with the message and do not
   change afterwards; `project/instrukt/spec/feature/runner/mcp-access` and
   `project/instrukt/spec/feature/configuration/configuration-editing` read them.
+<!-- change:thin-live-runtime-boundary -->
+- The speaker of a turn is the person who wrote its addressed message. Their
+  connector identity, name, email address, administrator status (`is_admin`),
+  and conversation direct-message flag (`is_direct`), as the provider gave them
+  when that message was admitted, are stored with the message and bound to the
+  active addressed turn in instrukt-owned durable state (with its turn/run
+  correlation) without reading any runtime database:
+  - **Fail-closed point-of-use verification:** Every consumer reading active
+    speaker (`project/instrukt/spec/feature/runner/mcp-access`,
+    `project/instrukt/spec/feature/configuration/configuration-editing`, and
+    knowledge-proposal recording under `project/instrukt/spec/domain/company`)
+    verifies against the runtime adapter's live state and turn correlation at
+    the moment of the call, distinguishing three outcomes:
+    1. **Verified active addressed turn:** when live state and turn correlation
+       confirm the recorded addressed turn is currently running in that session,
+       speaker lookup yields that turn's recorded member speaker.
+    2. **Fail-closed refusal / lookup error:** when the session is
+       `input-ready`, `failed`, or `gone`, when observing live runtime state or
+       reading instrukt-owned durable state fails with an observation or lookup
+       error, or when live turn correlation shows an unmatched addressed or
+       adjacent turn (including an adjacent-turn mismatch under
+       `session_scope: company`), speaker lookup fails closed with a
+       refusal/lookup error — never falling through to no speaker or the
+       company's service-account `login`, refusing admin-DM configuration
+       access, and preserving retry and `unestablished` audit recording when
+       the runtime or state store does not answer
+       (`project/instrukt/spec/domain/company`).
+    3. **Confirmed running direct operator or technical company-owner turn:**
+       when live state confirms a running turn in a bound conversation session
+       started directly by an operator or technical company owner (with no
+       addressed company-member turn), speaker lookup yields no addressed
+       member speaker — never inheriting a prior member's identity,
+       administrator status, admin-DM authority, or member credentials.
+  - **Lifecycle across reply and turn exit:** Queuing an explicit reply via
+    `instrukt company reply` does not clear the turn's active-speaker record,
+    so subsequent tool calls, MCP requests, admin-DM patches, and knowledge
+    commits within the same turn keep resolving that speaker. The active-speaker
+    record clears when the addressed turn reaches a terminal state
+    (`input-ready`, `failed`, or `gone`) or when a successor generation replaces
+    the session.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### Who is answered
 
@@ -262,6 +393,7 @@ gives.
 
 ### The answer back
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - Under `reply_mode: turn_output` (the default), when a turn started by an
   addressed message finishes, the agent's conversational output of that turn is
   posted to the conversation exactly as the agent wrote it, in parts where the
@@ -384,10 +516,117 @@ about instrukt's internals:
 | The work is done | The agent's answer; the person never repeats their message. |
 | A service of theirs is unreachable or refuses, inside a turn | The agent says so in its answer (`general/procedure/company-assistance`). |
 | They are not one of the company's own | The fixed reply above. |
+<!-- change:thin-live-runtime-boundary -->
+- **Universal explicit frontstage:** Raw turn output is never scraped from a
+  runtime database or posted to any channel. Every company connector and role
+  replies exclusively via
+  `instrukt company reply [--conversation <id>] --text <text>` (with `--text -`
+  reading from stdin) and may optionally publish a short curated progress update
+  to the conversation's status line via
+  `instrukt company status [--conversation <id>] --text <text>`.
+- **Admission and durable outbox (`instrukt company reply`):** Admitted through
+  caller assignment lookup: the caller must be an active company conversation
+  session with a durable binding (and pass its role's `company-reply`
+  capability check). Under `session_scope: conversation`, `--conversation`
+  defaults to the session's own bound conversation and refuses any other target;
+  under `session_scope: company`, `--conversation <id>` is required and must
+  name an admitted conversation of that `(company, connector)`. The command
+  takes the reply text verbatim without searching for or replacing secret
+  values, splits it to the connector kind's declared message limit, and queues
+  ordered pieces in instrukt-owned durable state for the connector's posting
+  relay. Its own output is the queued reply summary (company, connector,
+  conversation, turn, and piece count), never the reply text.
+- **Optional curated progress (`instrukt company status`):** Admitted under the
+  same active-binding, scope, and capability checks as `instrukt company reply`
+  while an addressed turn is active — failing closed with a refusal or lookup
+  error when no addressed turn is active (including `input-ready`, `failed`,
+  `gone`, direct-operator turns, or live observation/durable-state lookup
+  errors). Under `session_scope: company`, `--conversation <id>` must match
+  both an admitted conversation of that `(company, connector)` and the
+  currently active addressed turn's conversation. Records a curated status line
+  for the conversation's active turn in instrukt-owned durable state, which the
+  connector displays in place of the default calm working line while the turn
+  runs. Raw turn output, tool calls, and internal monologue never enter the
+  status line.
+- **Durable answer posting:** Answers are retained as ordered pieces until a
+  post call confirms acceptance. The provider's returned message id, when
+  present, is recorded with its posting time or the time the successful response
+  was observed; success without an id also confirms acceptance. Confirmed pieces
+  are skipped; failed or uncertain posts remain pending for retry, and retained
+  answers post even during a runtime outage. Later pieces wait for the preceding
+  piece while other conversations proceed independently. A restart without
+  durable confirmation can repeat an already delivered piece.
+- **Turn completion, bounded failed-turn retry, and terminal error replies:**
+  Turn lifecycle is observed strictly through the runtime adapter's live
+  `read_state` and turn-activity correlation alongside instrukt-owned durable
+  reply records — never by reading a runtime database.
+  - **Answered turn:** When the active session queues an explicit reply via
+    `instrukt company reply` for the addressed message, posting all queued
+    pieces completes the message.
+  - **Bounded failed-turn retry:** When an addressed turn ends in failure
+    (`failed`) without having queued an explicit reply, the company conversation
+    relay retries it after a growing delay (`FAILED_RETRY_DELAY` up to
+    `FAILED_RETRY_LIMIT`, declared in
+    `crates/instrukt-company/src/conversations.rs`), behind new messages, until
+    it receives an explicit reply, a later-admitted settled message from the
+    same member supersedes it, or retries are exhausted. Each retry records a
+    fresh command boundary before dispatch; stale acknowledgements are discarded
+    and recorded for operator status.
+  - **Pre-start vs. post-turn idle distinction:** After send acceptance, a poll
+    that sees `input-ready` before the runtime has started the delivered turn
+    keeps the message in flight rather than treating it as finished idle. Only
+    once live turn correlation confirms the delivered turn started and reached
+    a terminal `input-ready` state without queuing an explicit reply does
+    company treat the turn as finished idle without replying.
+  - **Unrecovered failure or idle-without-reply:** Once bounded failed-turn
+    retries are exhausted without an explicit reply, or when a confirmed
+    addressed turn finishes `input-ready` without queuing an explicit reply,
+    the company conversation relay queues a standard user-facing error reply
+    into the conversation's answer outbox (never exposing internal causes,
+    stack traces, or runtime diagnostics) and records the unresolved failure
+    cause on company's status surface. Operator anomaly alerting for these
+    unresolved conditions is owned by
+    `project/instrukt/spec/feature/runner/anomaly-notification`.
+- **Direct operator turns:** A turn started directly in the session's thread by
+  a person or another agent carries no addressed company-member speaker and
+  posts nothing unless the agent explicitly invokes `instrukt company reply`
+  under the admission rules above.
+- **Calm status line while waiting:** From admission of an addressed message
+  until its explicit reply or standard error reply is posted, the connector
+  shows the message's state where the provider supports it: the calm working
+  indication from admission, any curated update written via
+  `instrukt company status` while the turn runs, and the temporarily unavailable
+  indication while its no-work interval is open ("The minute", below). The
+  indication and the unavailable notice read the same interval.
+- **Operator status surface:** `instrukt events status` shows each connector's
+  connection state, conversations with pending messages or answers, and failures
+  with their real cause, without conversation text or credentials. A connector
+  no running runner hosts is shown as stopped. Unresolved conditions — including
+  an addressed turn whose retries exhausted or that finished idle without
+  replying, a start that stays unresolved, a key conflict, or an archived
+  session — appear there, never disclosed to the member.
+
+### What a person experiences
+
+A person in a conversation hears about their request and their own world, never
+about instrukt's internals:
+
+| Moment | What the person sees |
+| --- | --- |
+| Their message is admitted | The connector's calm working status indication. |
+| The agent works on it, however long | The calm working status indication, or a short curated progress update if the agent published one via `instrukt company status`. |
+| A failure shows the agent cannot work on it | The indication that the assistant is temporarily unavailable and the message is saved, from the next status pass after its no-work interval opens. |
+| The agent has been unable to work on it for one minute | One message, worded by the connector, beginning with the person's mention: "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again." One best-effort attempt per person and conversation outage. |
+| The agent answers | The agent's explicit reply; the person never repeats their message. |
+| The turn exhausts retries on crash or finishes idle without replying | A standard user-facing error reply in the conversation with zero internal diagnostics. |
+| A service of theirs is unreachable or refuses, inside a turn | The agent says so in its reply (`general/procedure/company-assistance`). |
+| They are not one of the company's own | The fixed reply above. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Nothing else is posted: no part names, no causes inside instrukt or the runtime,
 no error codes.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **The minute** is measured per waiting person. Each admitted message without an
 answer has its own interval, which opens only on a confirmed failure that keeps
 the agent from the work it waits on; admission and a wait that is merely slow
@@ -421,6 +660,38 @@ message of its company has no posted answer. A provider read for one member
 leaves the eligibility evaluation and other members' reads free to proceed.
 A retained message without a provider sender still has status and cannot
 produce an addressed notice.
+<!-- change:thin-live-runtime-boundary -->
+**The minute** is measured per waiting person. Each admitted message without a
+posted reply has its own interval, which opens only on a confirmed failure that
+keeps the agent from the work it waits on; admission and a wait that is merely
+slow open nothing. It starts, if not already open:
+
+- when a start, send, or listing for it is refused or fails;
+- when a wait for the dispatch lock or the conversation's lock times out while
+  it waits;
+- when it has been handed to a turn: at the first failed observation of that
+  turn (session state unobservable) — loss of reachability for work already
+  handed over;
+- when its own turn is observed ended failed and awaits retry;
+- when an explicit reply or standard error reply for it cannot be posted: a
+  post failed, or it is found unposted after a post was tried, a restart
+  included. The interval then starts when posting fails. A queued reply that is
+  being posted opens nothing: the unavailable indication shows only while a
+  failure keeps the reply from the person.
+
+It ends, for that message only: when the runtime accepts its hand-over (a
+redelivery included); when its own turn is observed running again; when a turn
+it waits behind is observed running; or when its explicit reply or standard
+error reply is posted. A reply to another person, a read showing an idle,
+archived, or absent session, an empty read, and a refused attempt end nothing.
+A person's interval is the earliest among their unanswered messages. Each
+connector evaluates notice eligibility from instrukt-owned durable state and
+the clock alone at least once per intake interval while an admitted message of
+its company has no posted reply. A provider read for one member leaves the
+eligibility evaluation and other members' reads free to proceed. A retained
+message without a provider sender still has status and cannot produce an
+addressed notice.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **The one notice** is one best-effort attempt per person and conversation
 outage, using that person's effective no-work interval above. Admission and a
@@ -500,6 +771,7 @@ And no subscribed procedure is activated by that message
 
 ### UC-CV6
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ### UC-CV7: Hear once that the assistant is unavailable, then get the answer
 
 ```gherkin
@@ -513,6 +785,20 @@ And the member's answer follows once the agent has done the work
 And a healthy wait does not earn an unavailable notice
 And a request completed successfully without a reply is complete without a post or an unavailable notice
 ```
+<!-- change:thin-live-runtime-boundary -->
+### UC-CV7: Hear once that the assistant is unavailable, then get the answer
+
+```gherkin
+Given a member addresses the agent and a failure shows the agent cannot work on it
+When a minute passes from that failure without the agent working on the message
+Then the assistant makes one best-effort attempt to notify the member, beginning with their mention, that it is temporarily unavailable, that their message is saved and that they need not send it again
+And writing again during that outage brings no second attempt
+And another member waiting in the same conversation can get their own notice
+And recovery allows a later outage to earn a new notice
+And the member's answer follows once the agent has done the work
+And a healthy wait does not earn an unavailable notice
+```
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### UC-CV19: Get an answer while another conversation is still opening
 
@@ -525,6 +811,7 @@ And if replacement later times out waiting for the stopped thread's input, the o
 And a recovery command for a session with shell metacharacters can be retried in a shell with the original output format
 ```
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ### UC-CV8: Get the answer after the assistant's work failed
 
 ```gherkin
@@ -541,6 +828,23 @@ Scenario: The member receives the answer after a retry
   And later questions reach the assistant after the saved question without a duplicate delivery
 
 ```
+<!-- change:thin-live-runtime-boundary -->
+### UC-CV8: Get the answer after the assistant's work failed
+
+```gherkin
+Scenario: The member receives the answer after a retry
+  Given the assistant's work on a member's question ends in failure
+  When the assistant can work on the question again within its retry bound
+  Then the member receives the explicit reply without sending the question again, allowing a repeat after an uncertain post
+  And progress from the unsuccessful work is never posted as the answer
+  And another member can be answered while the failed question waits
+  And each outage that earns an unavailable notice gets at most one best-effort attempt
+  And a send with a lost response and no runtime record is retried with the same command identity once the runtime is idle
+  And if the original dispatch reaches the runtime after a runner restart and its retry, only one turn takes the question
+  And an outage before dispatch keeps a saved question retryable even past the reconciliation bound
+  And later questions reach the assistant after the saved question without a duplicate delivery
+```
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### UC-CV11: Onboard a company while the runner runs
 
@@ -586,6 +890,7 @@ And a success still known by the running process retries only its record
 And an acceptance lost across a restart may be posted again until delivery is recorded
 ```
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ### UC-CV15: Follow the status of a question while waiting
 
 ```gherkin
@@ -595,7 +900,20 @@ Then the member sees whether the assistant is working or temporarily unavailable
 And the member sees the assistant's newest update while the turn is working
 And the status clears once the answer arrives or the turn completes without a reply
 ```
+<!-- change:thin-live-runtime-boundary -->
+### UC-CV15: Follow the status of a question while waiting
 
+```gherkin
+Given a member asks the assistant in a conversation that shows work status
+When the question waits, work begins, service becomes unavailable, or work resumes
+Then the member sees the calm working or temporarily unavailable status
+When the active conversation session publishes a curated progress update
+Then the member sees that curated status update while the turn is working without raw turn output leaking
+And the status clears once the explicit reply or standard error reply posts
+```
+<!-- /planned-change:thin-live-runtime-boundary -->
+
+<!-- planned-change:thin-live-runtime-boundary -->
 ### UC-CV16: Get a saved answer after its delivery is interrupted
 
 ```gherkin
@@ -606,6 +924,18 @@ And a possibly delivered piece may appear again
 And the member sees the unavailable status while delivery is blocked
 And the member can continue asking questions after the answer is delivered
 ```
+<!-- change:thin-live-runtime-boundary -->
+### UC-CV16: Get a saved answer after its delivery is interrupted
+
+```gherkin
+Given the assistant has a retained answer for a member and its delivery is uncertain
+When the assistant recovers from the interruption
+Then it retries unconfirmed pieces until posting succeeds, even during a runtime outage
+And a possibly delivered piece may appear again
+And the member sees the unavailable status while delivery is blocked
+And the member can continue asking questions after the answer is delivered
+```
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### UC-CV17: Keep serving conversations after an upgrade
 
@@ -637,6 +967,7 @@ And the member receives their answer normally
 And retained answers preserve their posting identities and state
 ```
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ### UC-CV21: Keep an answer through an interruption at its source
 
 ```gherkin
@@ -651,6 +982,9 @@ Scenario Outline: Receive the complete answer when it can be read
     | interruption                                                  |
     | the source temporarily holds only part of the completed answer |
 ```
+<!-- change:thin-live-runtime-boundary -->
+### UC-CV21
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### UC-CV22: Restrict a named connector to workspace administrators
 
@@ -673,6 +1007,7 @@ And each turn's input tags its conversation ID, place context, thread and speake
 And each answer posts back to the conversation where its message was asked
 ```
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ### UC-CV24: Suppress raw turn output and deliver explicit replies
 
 ```gherkin
@@ -683,6 +1018,18 @@ When the active conversation session runs instrukt company reply for an admitted
 Then the command outputs only the queued reply summary without the reply text
 And the connector posts the explicit reply to that conversation through the durable answer outbox exactly as the agent wrote it, without searching for or replacing any secret value
 ```
+<!-- change:thin-live-runtime-boundary -->
+### UC-CV24: Deliver explicit replies universally without posting raw turn output
+
+```gherkin
+Given a company home declares any named connector
+When a member addresses that connector and the agent writes raw turn output
+Then the raw turn output is never posted to the conversation
+When the active conversation session publishes an explicit reply for an admitted conversation
+Then the command confirms only the queued reply summary without echoing the reply text
+And the connector posts the explicit reply to that conversation reliably and verbatim, without searching for or replacing any secret value
+```
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ### UC-CV25: Change the company's knowledge by asking its agent
 
@@ -696,8 +1043,20 @@ But when the administrator's change also touches a file outside the company's kn
 Then that change is not admitted and waits for a person
 ```
 
+<!-- planned:thin-live-runtime-boundary -->
+### UC-CV26: Inform the member and record operator status when an addressed turn fails unrecovered or finishes idle without replying
+
+```gherkin
+Given a company member addresses the company's agent in a connected channel
+When the addressed turn exhausts retries on failure or finishes idle without publishing an explicit reply
+Then the member receives a standard user-facing error reply in that conversation without internal causes or runtime diagnostics
+And the unresolved failure cause is recorded on the operator status surface without disclosing conversation text
+```
+<!-- /planned:thin-live-runtime-boundary -->
+
 ## Known caveats
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - An old unmatched-input finding from an automatically adopted source cannot
   recover the original source identity. Migration preserves that finding and
   holds the binding with an unavailable identity. The operator restores the
@@ -717,6 +1076,19 @@ Then that change is not admitted and waits for a person
   message it posts only an explicit reply, into a conversation its binding
   already admits. The direct messages instrukt sends about a person's sign-ins
   are instrukt's own, not the agent's.
+<!-- change:thin-live-runtime-boundary -->
+- If a session is deleted after the relay checks readiness and before it
+  revalidates dispatch under lock, the runtime can refuse the send, and the
+  saved question remains saved for automatic native succession on the next
+  pass.
+- Read-back reads what the provider still serves; its retention, the app's
+  access and rate limits are its only limits.
+- A turn that failed may already have acted; its message is delivered again
+  within the retry bound and the agent checks before acting again.
+- The agent cannot start a conversation. It posts only explicit replies into a
+  conversation its binding already admits. The direct messages instrukt sends
+  about a person's sign-ins are instrukt's own, not the agent's.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - A conversation session loads its procedure, and its agent program reads
   the company's knowledge from the home's committed `AGENTS.md`, when the
   session starts. A later change to either
@@ -728,6 +1100,7 @@ Then that change is not admitted and waits for a person
   this contract does not provide.
 - Everyone the connector's provider knows as one of the company's own is
   served alike.
+<!-- planned-change:thin-live-runtime-boundary -->
 - A conversation session runs in its company's container and reads what that
   container holds, the home's secrets file among it, and nothing of another
   company or the host
@@ -743,3 +1116,23 @@ Then that change is not admitted and waits for a person
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
 - [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
+<!-- change:thin-live-runtime-boundary -->
+- On Tier 1 (shared host), a conversation session runs in its company's home
+  with per-company BYOS profiles; on Tier 2 (isolated container), it runs in
+  its company's container and reads what that container holds, the home's
+  secrets file among it, and nothing of another company or the host
+  (`project/instrukt/spec/feature/company/company-containers`). Neither tier is
+  confinement enough for an agent that answers people outside the company, and
+  no such agent exists here.
+
+## See Also
+
+- [project/instrukt/spec/domain/company](../../domain/company.md)
+- [project/instrukt/spec/domain/runner](../../domain/runner.md)
+- [project/instrukt/spec/feature/company/slack-connector](slack-connector.md)
+- [project/instrukt/spec/feature/company/company-containers](company-containers.md)
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+- [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)
+- [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
+<!-- /planned-change:thin-live-runtime-boundary -->

@@ -424,6 +424,24 @@ impl Home {
         self.state_dir().join("requested-review.db")
     }
 
+    /// `~/.instrukt/state/company-replies.db` — write-isolated explicit reply
+    /// outbox written by `instrukt company reply` and ingested by the runner.
+    pub fn company_replies_db_file(&self) -> PathBuf {
+        self.state_dir().join("company-replies.db")
+    }
+
+    /// `~/.instrukt/state/company-replies.lock` — write-isolation lock for
+    /// [`Home::company_replies_db_file`].
+    pub fn company_replies_lock_file(&self) -> PathBuf {
+        self.state_dir().join("company-replies.lock")
+    }
+
+    /// `~/.instrukt/state/company-turn-status/` — single-writer active-turn
+    /// status files written atomically by `instrukt company status`.
+    pub fn company_turn_status_dir(&self) -> PathBuf {
+        self.state_dir().join("company-turn-status")
+    }
+
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
     pub fn eval_fingerprint_dir(&self) -> PathBuf {
         self.root.join("state").join("eval-fingerprint")
@@ -512,6 +530,9 @@ mod tests {
             home.redis_reachability_lock_file(),
             home.requested_review_db_file(),
             home.requested_review_lock_file(),
+            home.company_replies_db_file(),
+            home.company_replies_lock_file(),
+            home.company_turn_status_dir(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
             home.machine_id_file(),

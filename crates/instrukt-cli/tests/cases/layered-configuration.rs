@@ -364,6 +364,54 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
         Some(COMPANY_SCHEMA_VERSION)
     );
     insta::assert_snapshot!(read(&["config", "get", "--company", "acme", "members.alex.email"]), @"alex@example.com");
+
+    // Company schema v6 -> v7 strips retired `reply_mode` (`turn_output` and
+    // `explicit`) while preserving all other connector fields, and refuses
+    // `reply_mode` in v7 documents.
+    crate::fixtures::conversing::publish_company_procedure(&env);
+    let v6_company = env.instrukt_home().join("companies/legacyv6");
+    std::fs::create_dir_all(&v6_company).unwrap();
+    let secrets = v6_company.join("secrets.env");
+    std::fs::write(&secrets, "APP=xapp-1\nBOT=xoxb-1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    std::fs::write(
+        v6_company.join("company.yaml"),
+        "schema_version: 6\ncompany: legacyv6\nconnectors:\n  slack:\n    app_token: '${APP}'\n    bot_token: '${BOT}'\n    reply_mode: turn_output\n    session_scope: company\n  desk:\n    kind: slack\n    app_token: '${APP}'\n    bot_token: '${BOT}'\n    reply_mode: explicit\n",
+    )
+    .unwrap();
+    env.run(repo.path(), ["config", "validate", "--company", "legacyv6"])
+        .success();
+    env.run(repo.path(), ["config", "init", "--company", "legacyv6"])
+        .success();
+    let v7: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&std::fs::read_to_string(v6_company.join("company.yaml")).unwrap())
+            .unwrap();
+    assert_eq!(v7["schema_version"].as_u64(), Some(COMPANY_SCHEMA_VERSION));
+    assert!(v7["connectors"]["slack"].get("reply_mode").is_none());
+    assert!(v7["connectors"]["desk"].get("reply_mode").is_none());
+    assert_eq!(
+        v7["connectors"]["slack"]["session_scope"].as_str(),
+        Some("company")
+    );
+    let rev = read(&["config", "get", "--company", "legacyv6", "--revision"]);
+    env.run(
+        repo.path(),
+        [
+            "config",
+            "patch",
+            "--company",
+            "legacyv6",
+            "--revision",
+            rev.trim(),
+            "--yaml",
+            "connectors: {slack: {reply_mode: explicit}}",
+        ],
+    )
+    .failure();
 }
 
 /// A project whose layer a newer instrukt wrote; returns it with the

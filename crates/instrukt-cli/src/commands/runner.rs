@@ -177,7 +177,8 @@ pub fn run_sessions(args: SessionsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCod
     let env = crate::wiring::environment(ctx)?;
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
     let home = ctx.home.clone();
-    let sessions = Sessions::new(&home, &config, &env);
+    let runtimes = crate::runtimes::registry();
+    let sessions = Sessions::new(&home, &config, &env, &runtimes);
     match args.command {
         SessionsCommand::List(args) => {
             let since = if args.all {
@@ -308,10 +309,12 @@ where
         }
         Err(error) => return Err(error),
     };
+    let runtimes = crate::runtimes::registry();
     action(&instrukt_runner::installation::Request {
         home: &ctx.home,
         cwd: &ctx.cwd,
         env: &env,
+        runtimes: &runtimes,
         scheduler: Scheduler::detect(Some(&path_env)),
         wake: WakeUp {
             home: &ctx.home,

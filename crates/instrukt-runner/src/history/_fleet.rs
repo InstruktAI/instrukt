@@ -118,6 +118,7 @@ pub(crate) fn search_worker(
     home: &Home,
     env: &Env,
     current: Current,
+    runtimes: crate::runtime::RuntimeRegistry,
     transport: &ScopedTransport,
 ) -> Result<Responder, StartError> {
     Responder::start(
@@ -133,6 +134,7 @@ pub(crate) fn search_worker(
             home: home.clone(),
             env: env.clone(),
             current,
+            runtimes,
         },
         FailureFile::worker(home, SEARCH, std::sync::Arc::new(jiff::Timestamp::now)),
     )
@@ -144,6 +146,7 @@ struct Searching {
     home: Home,
     env: Env,
     current: Current,
+    runtimes: crate::runtime::RuntimeRegistry,
 }
 
 impl Answering for Searching {
@@ -161,7 +164,13 @@ impl Answering for Searching {
 
     fn answer(&self, payload: Map<String, Value>) -> Result<String, serde_json::Error> {
         let request: Query = serde_json::from_value(Value::Object(payload))?;
-        let answer = match local_search(&self.home, &self.env, &request.query, request.limit) {
+        let answer = match local_search(
+            &self.home,
+            &self.env,
+            &self.runtimes,
+            &request.query,
+            request.limit,
+        ) {
             Ok(answer) => answer,
             Err(error) => SearchResult {
                 matches: Vec::new(),

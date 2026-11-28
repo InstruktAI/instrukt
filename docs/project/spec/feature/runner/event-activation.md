@@ -187,6 +187,9 @@ But unrelated branches and successful or unfinished checks do not produce this f
 ## See Also
 
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-transport](event-transport.md)

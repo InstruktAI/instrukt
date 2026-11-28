@@ -436,7 +436,7 @@ impl Binding {
 /// Immutable assignment facts and retained completion/failure evidence.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attempt {
-    pub runtime: Option<instrukt_core::config::Runtime>,
+    pub runtime: Option<instrukt_core::ids::RuntimeName>,
     pub native_placement: Option<super::DriverPlacement>,
     pub assignment: instrukt_runner::interfaces::AssignmentKind,
     pub occurrence: Option<Timestamp>,

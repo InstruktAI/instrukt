@@ -1031,4 +1031,37 @@ pub fn recreate_pre_v40_listing_copies(db: &instrukt_core::state_db::rusqlite::C
         );",
     )
     .unwrap();
+    for (table, column, ddl) in [
+        (
+            "connected_conversations",
+            "source_identity",
+            "ALTER TABLE connected_conversations ADD COLUMN source_identity TEXT;",
+        ),
+        (
+            "connected_conversations",
+            "position_json",
+            "ALTER TABLE connected_conversations ADD COLUMN position_json TEXT;",
+        ),
+        (
+            "connected_conversations",
+            "reply_mode",
+            "ALTER TABLE connected_conversations ADD COLUMN reply_mode TEXT NOT NULL DEFAULT 'turn_output';",
+        ),
+        (
+            "conversation_messages",
+            "turn_update",
+            "ALTER TABLE conversation_messages ADD COLUMN turn_update TEXT;",
+        ),
+    ] {
+        let present: bool = db
+            .query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+                [column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if !present {
+            db.execute_batch(ddl).unwrap();
+        }
+    }
 }

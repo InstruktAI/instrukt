@@ -8,7 +8,7 @@ use serde_yaml_ng::Value;
 use instrukt_connector::{Declaration, Rule};
 
 use super::_agents::COMPANY_AGENT_ROLE;
-use super::_connectors::{ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope};
+use super::_connectors::{ConnectorAdmit, DeclaredConnector, SessionScope};
 use super::_error::{ConfigError, FindingKind};
 use super::_interpolate::{join, key_text};
 use super::_schema::KeyFinding;
@@ -146,7 +146,7 @@ pub(super) fn members_schema() -> serde_json::Value {
 
 /// The editor schema of a company home's `connectors` map: one named entry per
 /// connector, defaulting `kind` to the map key when omitted, plus common
-/// conversation settings (`role`, `admit`, `session_scope`, `reply_mode`) and
+/// conversation settings (`role`, `admit`, `session_scope`) and
 /// the provider fields declared by its kind. Each kind's own entry carries
 /// the kind's setup, its manifest in full, as its description; a token field
 /// says where its value comes from and how that value is written.
@@ -196,14 +196,6 @@ pub(super) fn connectors_schema() -> serde_json::Value {
                 "enum": ["conversation", "company"],
                 "default": "conversation",
                 "description": "whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)",
-            }),
-        );
-        properties.insert(
-            "reply_mode".to_owned(),
-            serde_json::json!({
-                "enum": ["turn_output", "explicit"],
-                "default": "turn_output",
-                "description": "whether finished turn output posts automatically or only explicit `instrukt company reply` calls post",
             }),
         );
         for field in declaration.fields {
@@ -512,18 +504,6 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
                         ));
                     }
                 }
-                "reply_mode" => {
-                    if !value
-                        .as_str()
-                        .is_some_and(|v| ReplyMode::parse(v).is_some())
-                    {
-                        out.push(finding(
-                            &field_at,
-                            FindingKind::InvalidValue,
-                            "expected `turn_output` or `explicit`",
-                        ));
-                    }
-                }
                 _ => match kind.fields.iter().find(|known| known.name == field) {
                     Some(known) => match known.rule {
                         Rule::SecretReference { .. } => {
@@ -545,7 +525,7 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
                         &field_at,
                         FindingKind::UnknownKey,
                         format!(
-                            "unknown field; {} takes {}, kind, role, admit, session_scope and reply_mode",
+                            "unknown field; {} takes {}, kind, role, admit and session_scope",
                             kind.key,
                             listed(kind)
                         ),
@@ -650,18 +630,12 @@ pub(super) fn connectors(raw: Option<&Value>) -> Result<Vec<DeclaredConnector>, 
                 .and_then(Value::as_str)
                 .and_then(SessionScope::parse)
                 .unwrap_or_default();
-            let reply_mode = entry
-                .get("reply_mode")
-                .and_then(Value::as_str)
-                .and_then(ReplyMode::parse)
-                .unwrap_or_default();
             Ok(DeclaredConnector {
                 key: name,
                 kind,
                 role,
                 admit,
                 session_scope,
-                reply_mode,
                 entry: entry.clone(),
             })
         })

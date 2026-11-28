@@ -8,23 +8,8 @@ use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait, wait_fo
 use crate::fixtures::documented;
 use crate::fixtures::slack::Fate;
 use instrukt_company::conversations;
-use instrukt_connector_slack::{SLACK, SLACK_MESSAGE_LIMIT, TURN_AWAY, UNAVAILABLE, WORKING};
+use instrukt_connector_slack::{SLACK_MESSAGE_LIMIT, TURN_AWAY, UNAVAILABLE, WORKING};
 use instrukt_runner::transport::EVENT_STREAM;
-
-/// The source position the state database keeps for the conversation of
-/// `key`.
-fn position(c: &Company, key: &str) -> Option<String> {
-    let db = instrukt_core::state_db::rusqlite::Connection::open(
-        c.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    db.query_row(
-        "SELECT position_json FROM connected_conversations WHERE semantic_key=?1",
-        [key],
-        |row| row.get(0),
-    )
-    .unwrap()
-}
 
 /// How many snapshot reads T3's readiness server served on sessions T3
 /// issued after its first `issued`: the reads of a runner started once that
@@ -91,13 +76,11 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     patch_company(&c.env, COMPANY, &format!("profiles: [{profile}]"));
     // The computer runs other work: many other threads, one of them
-    // streaming and rewritten while instrukt reads.
+    // streaming and rewritten while instrukt runs; live conversation relay
+    // never opens T3's data folder or SQLite store.
     let mut elsewhere = c.store.elsewhere(200, "Elsewhere chatter.");
     elsewhere.stream();
-    let gate = c.store.gate();
     c.run();
-    // The relay runs, so its subscription to T3's database exists; watching
-    // it holds no open file on T3's data folder.
     let t3_folder = c.store.file.parent().unwrap().to_path_buf();
     assert_eq!(c.conversations().relay_failure, None);
     assert_eq!(c.runner_files_on(&t3_folder), 0);
@@ -111,59 +94,28 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     assert!(c.sessions().is_empty());
     // Replay uses the same captured native identity. Interrupt the next
     // response after native acceptance, then recover it on the next restart.
-    let key = conversations::key(&c.company(), SLACK, &format!("{channel}/{question}"));
     c.runtime.flag("die-after-start", true);
     c.run();
     c.runner_ended();
     let session = c.session();
     assert_eq!(c.runtime.message_count(&session), 1);
-    // Restarted while the opening turn runs, with the source otherwise
-    // quiet: recovery binds the session and reads its thread mid-turn. The
-    // runner dies once that read is retained, as its next source read
-    // begins, and the turn finishes while it is down.
-    c.store
-        .thread(&session, None, None, "2026-11-08T10:00:00.000Z");
     elsewhere.settle();
-    // While T3 cannot list its threads, the restarted runner cannot bind the
-    // session and reads nothing of the source. Its two startup readiness
-    // refreshes read T3's descriptor.
+    // While T3 cannot serve thread projections, the restarted runner cannot
+    // bind the session yet. Its two startup readiness refreshes read T3's
+    // descriptor.
     c.runtime.flag("show-failure", true);
     let issued = c.runtime.issued();
-    let started = std::time::Instant::now();
     c.run();
     wait("the restarted runner's two readiness refreshes", || {
         reads_since(&c, issued) >= 2
     });
-    // Every source read is held now, and the relay is the gate's only
-    // reader: readiness, past its two startup refreshes, reads again only on
-    // a later wake. Once T3 lists again the relay binds the session and
-    // reads its thread; reads are let through
-    // until that read is retained as the conversation's position, and no
-    // further, so the read that reaches the gate after the nudge is the
-    // relay's next one.
-    let recorded = position(&c, &key);
-    gate.hold();
     c.runtime.flag("show-failure", false);
-    wait("the recovery read retained", || {
-        gate.admit_unless(|_| position(&c, &key) != recorded)
-    });
-    elsewhere.nudge();
-    gate.held();
-    before_a_wake(started);
+    wait_for_binding(&c.env, &session);
     c.runner_dies();
-    gate.open();
-    // Someone types in the session's thread directly, and both turns finish
-    // while the runner is down: the typed one comes first in the thread, so
-    // it is read before the answer's, and it is not posted. An answer longer
-    // than one Slack message arrives as its pieces, and the stored secret
-    // values among its words reach the conversation as the agent wrote them.
-    c.store.turn(
-        &session,
-        "direct",
-        0,
-        "A note typed in the thread.",
-        "Noted.",
-    );
+    // Someone writes directly in the thread, and the agent answers through
+    // `instrukt company reply` while the runner is down: raw thread text is
+    // never posted, while an explicit reply longer than one Slack message
+    // arrives as its pieces with stored secret values preserved verbatim.
     let reply = format!(
         "No services are connected for instrukt-ai yet; ask helpdesk-team.\n{}",
         "x".repeat(SLACK_MESSAGE_LIMIT + 1)
@@ -179,11 +131,7 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // question; its recorded assignment is the role in the company's home.
     insta::assert_snapshot!("opening-from-procedure", c.opening(&session));
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
-    let caller = instrukt_core::ids::SessionRef::parse(&format!(
-        "{}:{session}",
-        instrukt_core::config::Runtime::T3.name()
-    ))
-    .unwrap();
+    let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
     let resolved = || {
         instrukt_runner::assignments::resolve(
             &home,
@@ -204,18 +152,10 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     wait("nothing left to post", || {
         c.conversations().conversations.is_empty()
     });
-    // While the other thread streams again, a later catch-up of this
-    // conversation completes: the next source read stands at the gate
-    // after it. Its outcome leaves no cause.
-    // The relay is the gate's only reader: this runner's two readiness
-    // refreshes read when it started. One catch-up's read is let through, and the next
-    // read to reach the gate is the relay's next one.
+    // Live conversation relay leaves T3's data folder untouched even while
+    // other threads stream.
     elsewhere.stream();
-    gate.hold();
-    wait("a catch-up through the gate", || {
-        gate.admit_unless(|served| served >= 1)
-    });
-    gate.held();
+    assert_eq!(c.runner_files_on(&t3_folder), 0);
     before_a_wake(started);
     let status = c.conversations();
     assert!(
@@ -224,7 +164,6 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
         status.conversations
     );
     assert_eq!(status.relay_failure, None);
-    gate.open();
     assert_eq!(
         destinations(&c),
         [
@@ -950,7 +889,7 @@ fn a_busy_conversation_releases_an_unresolved_send() {
     assert!(conversation_finding(&c, &format!("delivery unknown for message {first}")).is_some());
     assert!(interval(&c, &first).is_none());
     assert_eq!(c.runtime.message_count(&session), 2);
-    c.finish_turn(&session, 1, "NOOP");
+    c.finish_turn(&session, 1, "Noted.");
     wait_for_answer_fixture(
         "later work proceeds without retrying the unknown send",
         || c.runtime.message_count(&session) == 3,
@@ -1012,14 +951,7 @@ fn failed_work_is_retried_after_a_restart() {
             .any(|row| row.pending_messages == 2)
     });
     let original = c.runtime.message(&session, 1);
-    c.runtime.set_status(&session, "idle");
-    c.store.failed_turn_with_progress(
-        &session,
-        "failed-release",
-        2,
-        &original,
-        "Still checking the release.",
-    );
+    c.fail_turn(&session);
     let state = instrukt_core::state_db::rusqlite::Connection::open(
         c.env.instrukt_home().join("state/instrukt.db"),
     )
@@ -1057,16 +989,12 @@ fn failed_work_is_retried_after_a_restart() {
             .message(&session, 2)
             .contains("What is the version?")
     );
-    // Archive before publishing the completed reply. The failed question
-    // still waits there when it becomes eligible for redelivery.
+    // Queue the explicit reply while the turn runs, then archive the thread
+    // before the relay posts it. The archived thread's reply still posts and
+    // the failed question still waits when it becomes eligible for redelivery.
+    c.reply(&session, None, "Version two.");
     c.runtime.archive(&session);
-    c.store.thread(
-        &session,
-        None,
-        Some("2026-11-19T10:01:00Z"),
-        "2026-11-19T10:01:00Z",
-    );
-    c.finish_projected_turn(&session, 2, "Version two.");
+    c.runtime.set_status(&session, "idle");
     wait_for_answer_fixture(
         "the other member's completed answer posts from the archived thread",
         || {
@@ -1185,143 +1113,6 @@ fn complete_post_bodies(c: &Company) -> String {
         .map(|post| (post.text.as_deref(), post.markdown.as_deref()))
         .collect::<Vec<_>>();
     serde_json::to_string_pretty(&bodies).unwrap()
-}
-
-// spec: project/instrukt/spec/feature/company/conversations UC-CV21
-#[test]
-fn a_member_keeps_their_answer_through_a_source_interruption() {
-    use instrukt_core::state_db::rusqlite::Connection;
-
-    let (mut c, _clock) = answer_recovery_company(true);
-    let channel = "D30";
-    projected(&c);
-    let request = c
-        .slack
-        .direct(channel, "USTEVEN", "Which page has the summary?");
-    let session = started(&c, &[]);
-    let input = c.runtime.message(&session, 0);
-    let partial = "The summary is on";
-    c.runtime.finish(&session, "idle", partial);
-    c.runtime.project(&c.env, &session);
-    c.store
-        .streaming_turn(&session, "incomplete-summary", 1, &input, partial);
-    wait_for_answer_fixture("the relay sees completed but unstable content", || {
-        interval(&c, &request).is_some()
-            && retained_conversations(&c).conversations.iter().any(|row| {
-                row.failures
-                    .iter()
-                    .any(|failure| failure.contains("content is unstable"))
-            })
-    });
-    assert!(c.slack.posts().is_empty());
-
-    let original = Connection::open(&c.store.file).unwrap();
-    let finish = |db: &Connection, answer: &str| {
-        db.execute(
-            "UPDATE orchestration_v2_projection_messages SET streaming=0,
-                 payload_json=json_set(payload_json, '$.streaming', json('false'), '$.text', ?1)
-             WHERE message_id='incomplete-summary-reply'",
-            [answer],
-        )
-        .unwrap();
-    };
-    finish(&original, "The summary is on page two.");
-    wait_for_answer_fixture("the turn finishes in the original store", || {
-        c.slack.posts_beginning("The summary is on page two.") == 1 && answers_recorded(&c)
-    });
-
-    let answer = "The appendix is at the end.";
-    let before = c.runtime.message_count(&session);
-    c.slack.fate(answer, Fate::Refused, usize::MAX);
-    c.slack.direct(channel, "USTEVEN", "Where is the appendix?");
-    wait_for_answer_fixture("the appendix question reaches its bound session", || {
-        c.runtime.message_count(&session) == before + 1
-    });
-    c.finish_turn(&session, before, answer);
-    wait_for_answer_fixture(
-        "the appendix answer is retained while Slack refuses it",
-        || {
-            retained_conversations(&c).conversations.iter().any(|row| {
-                row.pending_answers == 1
-                    && row
-                        .failures
-                        .iter()
-                        .any(|cause| cause.contains("not_in_channel"))
-            })
-        },
-    );
-    c.runner_dies();
-    let delivered = c.runtime.message_count(&session);
-    let original_home = c.store.file.parent().unwrap().parent().unwrap().to_owned();
-    let moved = c.env.path("moved-t3");
-    std::fs::create_dir_all(moved.join("userdata")).unwrap();
-    original
-        .execute(
-            "VACUUM INTO ?1",
-            [moved.join("userdata/statev2.sqlite").to_str().unwrap()],
-        )
-        .unwrap();
-    c.env.set_env("T3CODE_HOME", moved.to_str().unwrap());
-    c.run();
-    wait_for_answer_fixture("the operator sees the changed source configuration", || {
-        retained_conversations(&c).conversations.iter().any(|row| {
-            row.conversation == channel
-                && row.failures.iter().any(|cause| {
-                    cause.contains("source configuration") && cause.contains("current source")
-                })
-        })
-    });
-    c.slack.clear_fates();
-    wait_for_answer_fixture(
-        "the retained answer can post while native work is fenced",
-        || c.slack.posts_beginning(answer) == 1 && answers_recorded(&c),
-    );
-    c.slack.direct(channel, "USTEVEN", "What follows?");
-    wait_for_answer_fixture(
-        "the follow-up remains saved behind the source error",
-        || {
-            retained_conversations(&c).conversations.iter().any(|row| {
-                row.conversation == channel
-                    && row.pending_messages == 1
-                    && row
-                        .failures
-                        .iter()
-                        .any(|cause| cause.contains("source configuration"))
-            })
-        },
-    );
-    assert_eq!(c.runtime.message_count(&session), delivered);
-    assert_eq!(c.sessions().len(), 1);
-    assert_eq!(c.slack.posts_beginning("The summary is on page two."), 1);
-    c.runner_dies();
-    c.env
-        .set_env("T3CODE_HOME", original_home.to_str().unwrap());
-    c.run();
-    wait_for_answer_fixture(
-        "restoring the original source releases the saved follow-up",
-        || c.runtime.message_count(&session) == delivered + 1,
-    );
-    c.finish_turn(&session, delivered, "The next section is ready.");
-    wait_for_answer_fixture("the original binding answers after restoration", || {
-        c.slack.posts_beginning("The next section is ready.") == 1 && answers_recorded(&c)
-    });
-    assert_eq!(destinations(&c), vec![(channel.to_owned(), None); 3]);
-    insta::assert_snapshot!(complete_post_bodies(&c), @r#"
-[
-  [
-    null,
-    "The summary is on page two."
-  ],
-  [
-    null,
-    "The appendix is at the end."
-  ],
-  [
-    null,
-    "The next section is ready."
-  ]
-]
-"#);
 }
 
 fn answered_conversation(settle_opening: bool) -> (Company, std::path::PathBuf, String) {
@@ -1639,7 +1430,7 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
 }
 
 fn successful_empty_turns_rearm_notices() {
-    an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
+    an_empty_success_lets_the_next_question_receive_its_own_notice("Noted.");
 }
 
 fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
@@ -1678,18 +1469,17 @@ fn a_members_status_tracks_start_and_turn_updates() {
     wait("the working text after the start", || {
         c.slack.status(channel, &asked).as_deref() == Some(WORKING)
     });
+    wait_for_binding(&c.env, &session);
+    // Raw assistant output in T3's store never leaks to Slack status;
+    // curated updates arrive strictly via `instrukt company status`.
     let run = c.runtime.active_run(&session);
     c.store
-        .agent_writes(&session, &run, 1, "Looking at the release plan.");
+        .agent_writes(&session, &run, 1, "RAW INTERNAL MONOLOGUE");
+    c.set_status_line(&session, None, "Looking at the release plan.");
     wait("the agent's message", || {
         c.slack.status(channel, &asked).as_deref() == Some("Looking at the release plan.")
     });
-    c.store.agent_writes(
-        &session,
-        &run,
-        2,
-        "Two items are still open — *both small*.",
-    );
+    c.set_status_line(&session, None, "Two items are still open — *both small*.");
     wait("the agent's newest message", || {
         c.slack.status(channel, &asked).as_deref()
             == Some("Two items are still open — *both small*.")
@@ -1749,11 +1539,11 @@ fn unavailable_status_clears_when_the_source_or_post_recovers() {
     wait("the working text", || {
         c.slack.status(channel, &outage).as_deref() == Some(WORKING)
     });
-    c.store.break_shape();
+    c.runtime.flag("show-failure", true);
     wait("the unavailable text", || {
         c.slack.status(channel, &outage).as_deref() == Some(UNAVAILABLE)
     });
-    c.store.restore_shape();
+    c.runtime.flag("show-failure", false);
     wait("the working text once the source reads again", || {
         c.slack.status(channel, &outage).as_deref() == Some(WORKING)
     });
@@ -1811,9 +1601,8 @@ fn working_status_carries_queued_turns() {
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> What is next?", None);
     let session = started(&c, &before);
-    let run = c.runtime.active_run(&session);
-    c.store
-        .agent_writes(&session, &run, 1, "Checking the board.");
+    wait_for_binding(&c.env, &session);
+    c.set_status_line(&session, None, "Checking the board.");
     wait("the agent's message", || {
         c.slack.status(channel, &first).as_deref() == Some("Checking the board.")
     });
@@ -1859,10 +1648,12 @@ fn notice_epochs_and_reconciliation() {
     let other = "UANNA";
     projected(&c);
     c.runner_dies();
-    let database = c.store.file.clone();
+    let database = c.env.instrukt_home().join("state/company-replies.db");
     let away = database.with_extension("away");
-    std::fs::rename(&database, &away).unwrap();
-    std::fs::create_dir(&database).unwrap();
+    if database.exists() {
+        std::fs::rename(&database, &away).unwrap();
+    }
+    std::fs::create_dir_all(&database).unwrap();
     c.run();
     let first_at = interval_clock(&clock);
     wait("the relay cannot acquire the source", || {
@@ -1923,7 +1714,9 @@ fn notice_epochs_and_reconciliation() {
 
     c.runner_dies();
     std::fs::remove_dir(&database).unwrap();
-    std::fs::rename(&away, &database).unwrap();
+    if away.exists() {
+        std::fs::rename(&away, &database).unwrap();
+    }
     c.run();
     let session = started(&c, &[]);
     wait("the first input accepted", || {
@@ -2023,8 +1816,16 @@ fn seed_v22_answer_attempt(
         .unwrap();
     assert_eq!(legacy.execute(
         "INSERT INTO connected_conversations
-         SELECT company,connector,conversation,semantic_key,opening,request,session,source_identity,position_json,failure
+         SELECT company,connector,conversation,semantic_key,opening,request,session,NULL,NULL,failure
          FROM interrupted.connected_conversations WHERE conversation=?1",
+        [conversation],
+    ).unwrap(), 1);
+    assert_eq!(legacy.execute(
+        "INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,display_title,project_id,checkout,worktree,branch,base_head,accepted,request)
+         SELECT b.runtime,b.semantic_key,b.kind,b.project,b.subject,b.session,b.display_title,b.project_id,b.checkout,b.worktree,b.branch,b.base_head,b.accepted,b.request
+         FROM interrupted.runtime_bindings b
+         JOIN interrupted.connected_conversations c ON c.semantic_key=b.semantic_key
+         WHERE c.conversation=?1",
         [conversation],
     ).unwrap(), 1);
     assert_eq!(legacy.execute(
@@ -2032,8 +1833,9 @@ fn seed_v22_answer_attempt(
              written_us,written_at,arrived_at,state,text,context_json,boundary,content,attempted_at,turn,failure,
              admitted_at,unavailable_since,turn_update,turn_ended_at)
          SELECT company,connector,conversation,message,sender,sender_name,sender_email,
-             written_us,written_at,arrived_at,state,text,context_json,boundary,content,attempted_at,turn,failure,
-             admitted_at,unavailable_since,turn_update,turn_ended_at
+             written_us,written_at,arrived_at,'answered',text,context_json,boundary,content,attempted_at,
+             coalesce(turn,(SELECT turn FROM interrupted.conversation_answers WHERE conversation=?1 LIMIT 1)),
+             failure,admitted_at,unavailable_since,NULL,turn_ended_at
          FROM interrupted.conversation_messages WHERE conversation=?1",
         [conversation],
     ).unwrap(), 1);
@@ -2096,12 +1898,19 @@ fn legacy_answer_attempt_releases_conversation() {
             .unwrap(),
         instrukt_core::state_db::schema_version()
     );
+    // Upgrading from v22 (pre-v44 turn_output) sets `needs_explicit_rollover=1`,
+    // so the next question triggers demand-driven rollover to a fresh generation
+    // and delivers the answer cleanly.
+    let before = c.sessions();
     c.slack
         .mention("C1", "USTEVEN", "<@UAGENT> And the contract?", Some(&asked));
-    wait("the next question reaches the same conversation", || {
-        c.runtime.message_count(&session) == 2
-    });
-    c.finish_turn(&session, 1, "In the shared drive.");
+    let successor = c.wait_for_new_session(&before);
+    c.finish_turn(&successor, 0, "");
+    wait(
+        "the next question reaches the rolled-over successor",
+        || c.runtime.message_count(&successor) == 2,
+    );
+    c.finish_turn(&successor, 1, "In the shared drive.");
     wait("the next answer is recorded", || {
         c.slack.posts_beginning("In the shared drive.") == 1 && answers_recorded(&c)
     });
@@ -2131,10 +1940,12 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
     c.runtime.flag("separate-completion", true);
     projected(&c);
     c.runner_dies();
-    let database = c.store.file.clone();
+    let database = c.env.instrukt_home().join("state/company-replies.db");
     let hidden = database.with_extension("away");
-    std::fs::rename(&database, &hidden).unwrap();
-    std::fs::create_dir(&database).unwrap();
+    if database.exists() {
+        std::fs::rename(&database, &hidden).unwrap();
+    }
+    std::fs::create_dir_all(&database).unwrap();
     c.run();
     wait("T3 unavailable while both questions arrive", || {
         retained_conversations(&c).relay_failure.is_some()
@@ -2155,9 +1966,11 @@ fn a_mixed_notice_epoch_waits_for_the_final_answer_piece() {
         notices(&c, member) == 1
     });
     std::fs::remove_dir(&database).unwrap();
-    std::fs::rename(&hidden, &database).unwrap();
+    if hidden.exists() {
+        std::fs::rename(&hidden, &database).unwrap();
+    }
     let session = started(&c, &[]);
-    c.finish_turn(&session, 0, "NOOP");
+    c.finish_turn(&session, 0, "Noted.");
     wait("the report question handed over after the NOOP", || {
         c.runtime.message_count(&session) == 2
     });
@@ -2212,14 +2025,14 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     let session = started(&c, &[]);
     c.finish_turn(&session, 0, reply);
     wait(
-        "the first notice epoch settled by the successful empty turn",
-        || notice_state(&c, channel, sender).is_none(),
+        "the first notice epoch settled by the explicit reply",
+        || c.slack.posts_beginning(reply) == 1 && notice_state(&c, channel, sender).is_none(),
     );
     assert_eq!(interval(&c, &first), None);
     assert_eq!(
         c.slack.posts().len(),
-        1,
-        "only the original notice was posted"
+        2,
+        "only the original notice and explicit reply were posted"
     );
     c.runtime.flag("send-failure", true);
     let second = c.slack.direct(channel, sender, "Who reviews the release?");
@@ -2227,7 +2040,7 @@ fn an_empty_success_lets_the_next_question_receive_its_own_notice(reply: &str) {
     wait("the second question's notice posted", || {
         notices(&c, sender) == 2
     });
-    assert_eq!(c.slack.posts().len(), 2);
+    assert_eq!(c.slack.posts().len(), 3);
 }
 
 fn failed_turns_share_a_notice_until_a_later_turn_settles() {
@@ -2247,10 +2060,7 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
     wait("the first turn accepted", || {
         c.slack.status(channel, &first).as_deref() == Some(WORKING)
     });
-    let input = c.runtime.message(&session, 0);
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn", 1, &input);
+    c.fail_turn(&session);
 
     // Either terminal outcome changes the indication. A failed turn opens
     // its own interval, so the status must stay unavailable through an outage.
@@ -2294,10 +2104,7 @@ fn failed_turns_share_a_notice_until_a_later_turn_settles() {
                 && c.slack.status(channel, &second).as_deref() == Some(WORKING)
         },
     );
-    let input = c.runtime.message(&session, 1);
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn-2", 2, &input);
+    c.fail_turn(&session);
     interval_at(&c, &second);
     assert_eq!(notices(&c, sender), 2);
 
@@ -2374,23 +2181,39 @@ fn a_blank_reply_supersedes_a_failed_question() {
     projected(&c);
     let failed = c.slack.direct(channel, sender, "Who is on call?");
     let session = started(&c, &[]);
-    let input = c.runtime.message(&session, 0);
-    c.runtime.set_status(&session, "idle");
-    c.runtime.project(&c.env, &session);
-    c.store.failed_turn(&session, "failed-turn", 1, &input);
+    c.fail_turn(&session);
     set_clock(&clock, interval_at(&c, &failed) + minute());
     wait("the failed question's notice posted", || {
         notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
     c.slack.direct(channel, sender, "Did the rotation change?");
-    wait("the next question can settle without a reply", || {
+    wait("the next question enters the runtime", || {
         c.runtime.message_count(&session) == 2
     });
-    let settled = interval_clock(&clock);
-    c.finish_turn(&session, 1, " \n ");
-    wait("the blank reply supersedes the failed question", || {
-        notice_state(&c, channel, sender).is_none()
+    // Under explicit-frontstage (UC-CV26), finishing idle without queuing an
+    // explicit reply is a terminal error: it queues the standard error reply
+    // and MUST NOT supersede the earlier failed question.
+    c.finish_idle_without_reply(&session, None);
+    wait("the standard error reply is posted", || {
+        c.slack
+            .posts_beginning("Sorry, I ran into a problem while handling your request.")
+            == 1
     });
+    assert_eq!(superseded_at(&c, &failed), Some(None));
+    // A subsequent explicit reply DOES supersede earlier failed questions.
+    c.slack.direct(channel, sender, "Confirming rotation?");
+    wait("the third question enters the runtime", || {
+        c.runtime.message_count(&session) == 3
+    });
+    let settled = interval_clock(&clock);
+    c.finish_turn(&session, 2, "Rotation is unchanged.");
+    wait(
+        "the explicit reply supersedes the earlier failed question",
+        || {
+            c.slack.posts_beginning("Rotation is unchanged.") == 1
+                && notice_state(&c, channel, sender).is_none()
+        },
+    );
     assert_eq!(
         superseded_at(&c, &failed),
         Some(Some(format!("{settled:.9}")))
@@ -2439,8 +2262,8 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
     projected(&c);
     let first = c.slack.direct(channel, sender, "Is there anything to do?");
     let session = started(&c, &[]);
-    let run = c.runtime.active_run(&session);
-    c.store.agent_writes(&session, &run, 1, "Checking.");
+    wait_for_binding(&c.env, &session);
+    c.set_status_line(&session, None, "Checking.");
     wait("the running turn's update", || {
         c.slack.status(channel, &first).as_deref() == Some("Checking.")
     });
@@ -2448,8 +2271,7 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    c.runtime.hide_inputs(&session);
-    c.runtime.project(&c.env, &session);
+    c.runtime.flag("show-failure", true);
     let opened = interval_at(&c, &first);
     c.runtime.flag("start-failure", true);
     let anonymous = c.slack.direct("D15", "UANNA", "What did I miss?");
@@ -2475,10 +2297,10 @@ fn legacy_messages_keep_status_and_the_notice_anchor() {
         || c.slack.status("D15", &anonymous).as_deref() == Some(UNAVAILABLE),
     );
     assert_eq!(notices(&c, "UANNA"), 0);
-    // Completing the legacy message without output clears its outage.
-    c.runtime.show_inputs();
-    c.finish_turn(&session, 0, "NOOP");
-    wait("the legacy trigger finished with no output", || {
+    // Completing the legacy message clears its outage.
+    c.runtime.flag("show-failure", false);
+    c.finish_turn(&session, 0, "Nothing urgent.");
+    wait("the legacy trigger finished", || {
         shown(&c, channel, &first).last().map(String::as_str) == Some("")
     });
     c.runtime.flag("send-failure", true);
@@ -2506,21 +2328,19 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     projected(&c);
     let asked = c.slack.direct(channel, sender, "Who signed?");
     let session = started(&c, &[]);
-    let run = c.runtime.active_run(&session);
-    c.store
-        .agent_writes(&session, &run, 1, "Checking the record.");
+    wait_for_binding(&c.env, &session);
+    c.set_status_line(&session, None, "Checking the record.");
     wait("the relay observing the running turn", || {
         c.slack.status(channel, &asked).as_deref() == Some("Checking the record.")
     });
-    c.runtime.hide_inputs(&session);
-    c.runtime.project(&c.env, &session);
+    c.runtime.flag("show-failure", true);
     let at = interval_at(&c, &asked);
     c.slack.fate(&notice_text(sender), Fate::Refused, 1);
     set_clock(&clock, at + minute());
     wait("the dropped notice attempt", || {
         notice_state(&c, channel, sender).as_deref() == Some("attempted")
     });
-    c.runtime.show_inputs();
+    c.runtime.flag("show-failure", false);
     c.finish_turn(&session, 0, "Ada signed.");
     common::wait_until(
         "the answer posted during the read",
@@ -2534,7 +2354,7 @@ fn an_answer_can_post_while_its_notice_is_being_reconciled() {
     wait("intake takes up the next message", || {
         c.runtime.message_count(&session) == 2
     });
-    c.finish_turn(&session, 1, "NOOP");
+    c.finish_turn(&session, 1, "You're welcome.");
     wait("the later message complete", || {
         c.slack.status(channel, &later).is_none()
     });
@@ -2799,9 +2619,8 @@ fn an_answer_to_one_member_does_not_restart_anothers_minute() {
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
     let session = started(&c, &[]);
-    let run = c.runtime.active_run(&session);
-    c.store
-        .agent_writes(&session, &run, 1, "Checking the date.");
+    wait_for_binding(&c.env, &session);
+    c.set_status_line(&session, None, "Checking the date.");
     wait(
         "the relay observing the first member's running turn",
         || c.slack.status(channel, &first).as_deref() == Some("Checking the date."),
@@ -2870,11 +2689,13 @@ fn a_relay_restart_keeps_the_unavailable_interval() {
         c.slack.status(channel, &unread).as_deref() == Some(WORKING)
     });
     c.runner_dies();
-    // T3's database path holds a folder, which the source never watches.
-    let database = c.store.file.clone();
+    // Outbox path holds a folder, which fails relay outbox ingestion.
+    let database = c.env.instrukt_home().join("state/company-replies.db");
     let away = database.with_extension("away");
-    std::fs::rename(&database, &away).unwrap();
-    std::fs::create_dir(&database).unwrap();
+    if database.exists() {
+        std::fs::rename(&database, &away).unwrap();
+    }
+    std::fs::create_dir_all(&database).unwrap();
     c.run();
     wait("the unavailable text from the relay's failure", || {
         c.slack.status(channel, &unread).as_deref() == Some(UNAVAILABLE)
@@ -2910,7 +2731,9 @@ fn a_relay_restart_keeps_the_unavailable_interval() {
     // ends the failure an earlier runner recorded.
     c.runner_dies();
     std::fs::remove_dir(&database).unwrap();
-    std::fs::rename(&away, &database).unwrap();
+    if away.exists() {
+        std::fs::rename(&away, &database).unwrap();
+    }
     c.run();
     wait("the working text once the source is acquired", || {
         c.slack.status(channel, &unread).as_deref() == Some(WORKING)
@@ -2935,27 +2758,17 @@ fn a_running_turn_closes_an_observation_failure() {
     wait("the working text", || {
         c.slack.status(channel, &unseen).as_deref() == Some(WORKING)
     });
-    // The fake runtime removes the inputs from its projection, and puts
-    // them back from the thread as it now stands once told to show them: no
-    // copy taken here can go stale.
-    c.runtime.hide_inputs(&session);
-    c.runtime.project(&c.env, &session);
+    // The runtime's thread projection temporarily fails; once it answers again
+    // while the turn is still running, the interval closes.
+    c.runtime.flag("show-failure", true);
     wait(
         "the unavailable text while the turn cannot be observed",
         || c.slack.status(channel, &unseen).as_deref() == Some(UNAVAILABLE),
     );
     let opened = interval_at(&c, &unseen);
     set_clock(&clock, opened + jiff::SignedDuration::from_secs(10));
-    // A projection the fake runtime began while still told to hide them may
-    // remove them once more: they are projected again until the turn is
-    // seen running.
-    c.runtime.show_inputs();
-    let mut shown_at: Option<std::time::Instant> = None;
+    c.runtime.flag("show-failure", false);
     wait("the working text once the turn is seen running", || {
-        if shown_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(300)) {
-            c.runtime.project(&c.env, &session);
-            shown_at = Some(std::time::Instant::now());
-        }
         c.slack.status(channel, &unseen).as_deref() == Some(WORKING)
     });
     assert_eq!(interval(&c, &unseen), None);
@@ -2992,6 +2805,7 @@ fn a_queued_turn_acceptance_closes_the_unavailable_interval() {
     );
     assert_eq!(interval(&c, &queued), None);
     c.runtime.flag("queued-start", false);
+    c.runtime.set_status(&session, "running");
     c.finish_turn(&session, 0, "It is in the wiki.");
     wait("the queued message's answer", || {
         c.slack.posts().len() == posts + 1
@@ -3019,29 +2833,24 @@ fn a_completed_turn_is_read_again_after_a_locked_read() {
         .slack
         .mention(channel, "USTEVEN", "<@UAGENT> When do we ship?", None);
     let session = started(&c, &[settled]);
-    let run = c.runtime.active_run(&session);
-    c.store
-        .agent_writes(&session, &run, 1, "Checking the release plan.");
+    wait_for_binding(&c.env, &session);
+    c.set_status_line(&session, None, "Checking the release plan.");
     wait("the relay to observe the running turn's update", || {
         c.slack.status(channel, &asked).as_deref() == Some("Checking the release plan.")
     });
 
-    c.store.exclude_readers();
-    c.store
-        .agent_writes(&session, &run, 2, "Checking the remaining items.");
-    wait("the relay reports the locked source", || {
-        retained_conversations(&c).conversations.iter().any(|row| {
-            row.failures
-                .iter()
-                .any(|cause| cause.contains("database is locked"))
-        })
+    c.runtime.flag("show-failure", true);
+    wait("the relay reports the observation outage", || {
+        retained_conversations(&c)
+            .conversations
+            .iter()
+            .any(|row| !row.failures.is_empty())
     });
 
+    c.runtime.flag("show-failure", false);
     c.finish_projected_turn(&session, 0, "On Friday.");
-    assert_eq!(c.slack.posts().len(), 1);
-    c.store.let_readers_in();
     common::wait_until(
-        "the answer without another projection write",
+        "the answer after projection recovers",
         std::time::Duration::from_secs(20),
         || c.slack.posts().len() == 2,
     );
@@ -4584,11 +4393,7 @@ fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
     // History is off, so only the relay and readiness read T3's source
     // while the runner runs.
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
-    let gate = c.store.gate();
-    // Every source read is held while the runner starts, readiness's and the
-    // relay's alike: its connections start before the relay, which reads
-    // nothing yet. The connector takes the member's question meanwhile.
-    gate.hold();
+    let held = hold_dispatch(&c);
     c.run();
     let question = c
         .slack
@@ -4600,9 +4405,7 @@ fn a_question_the_connector_takes_before_the_relay_reads_is_answered() {
             .any(|conversation| conversation.pending_messages > 0)
     });
     assert!(c.sessions().is_empty());
-    // Once every held read passes, whichever reached the gate first, the
-    // question reaches the agent and its answer is posted where it was asked.
-    gate.open();
+    drop(held);
     let session = c.session();
     c.finish_turn(&session, 0, "On Friday.");
     wait("the answer", || c.slack.posts().len() == 1);
@@ -4685,18 +4488,15 @@ fn an_answer_whose_post_was_tried_before_a_restart_shows_the_unavailable_text() 
     });
     c.runner_dies();
     c.slack.fail_held_posts();
-    c.store.hide_messages("turn-2-user");
+    c.runtime.flag("show-failure", true);
     c.slack.fate("Ada signed it.", Fate::Refused, usize::MAX);
     set_clock(&clock, ended_at + jiff::SignedDuration::from_secs(30));
     c.run();
     wait(
-        "the source remains unreadable and Slack still refuses the saved reply",
+        "the runtime remains unreadable and Slack still refuses the saved reply",
         || {
             retained_conversations(&c).conversations.iter().any(|x| {
                 x.pending_answers == 1
-                    && x.failures
-                        .iter()
-                        .any(|cause| cause.contains("completed-turn evidence unavailable"))
                     && x.failures
                         .iter()
                         .any(|cause| cause.contains("not_in_channel"))
@@ -4886,11 +4686,11 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
         c.env.instrukt_home().join("state/instrukt.db"),
     )
     .unwrap();
-    let binding: (String, String, String, String) = db
+    let binding: (String, String, String) = db
         .query_row(
-            "SELECT conversation, semantic_key, session_scope, reply_mode FROM connected_conversations WHERE connector='desk'",
+            "SELECT conversation, semantic_key, session_scope FROM connected_conversations WHERE connector='desk'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
     assert_eq!(
@@ -4899,7 +4699,6 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
             String::new(),
             "instrukt:conversation:acme:desk".to_owned(),
             "company".to_owned(),
-            "turn_output".to_owned()
         )
     );
 
@@ -5095,7 +4894,7 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
         &c.env,
         COMPANY,
         &format!(
-            "{{members: {MEMBERS}, connectors: {{slack: null, quiet: {{kind: slack, session_scope: company, reply_mode: explicit, app_token: '${{SLACK_APP_TOKEN}}', bot_token: '${{SLACK_BOT_TOKEN}}'}}}}}}"
+            "{{members: {MEMBERS}, connectors: {{slack: null, quiet: {{kind: slack, session_scope: company, app_token: '${{SLACK_APP_TOKEN}}', bot_token: '${{SLACK_BOT_TOKEN}}'}}}}}}"
         ),
     );
     c.run();
@@ -5283,8 +5082,8 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
     }
     "#);
 
-    // 5. Finish the turn with raw internal monologue — reply_mode: explicit must NEVER post it!
-    c.finish_turn(&session, 0, "INTERNAL MONOLOGUE DO NOT LEAK TO SLACK");
+    // 5. Finish the turn with raw internal monologue — explicit frontstage must NEVER post it!
+    c.finish_idle_without_reply(&session, Some("INTERNAL MONOLOGUE DO NOT LEAK TO SLACK"));
 
     // 6. Wait for the runner to retry and post the queued explicit reply to D1.
     wait("explicit reply delivered to Slack", || {
@@ -5328,10 +5127,21 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
     // then verify the 2-second idle wake-up in `_watch.rs` picks up an out-of-process
     // `instrukt company reply` queued after all turns have settled.
     c.slack.release_lookups();
-    wait("D_UNDECIDED delivered as turn 1", || {
-        c.runtime.message_count(&session) >= 2
+    wait("D_UNDECIDED delivered and recorded as sent", || {
+        let db = instrukt_core::state_db::rusqlite::Connection::open(
+            c.env.instrukt_home().join("state/instrukt.db"),
+        )
+        .unwrap();
+        let sent: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE connector='quiet' AND conversation='D_UNDECIDED' AND state='sent')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        sent && c.runtime.message_count(&session) >= 2
     });
-    c.finish_turn(&session, 1, "INTERNAL MONOLOGUE 2");
+    c.finish_idle_without_reply(&session, Some("INTERNAL MONOLOGUE 2"));
     wait("all turns and answers completely idle", || {
         !conversations::outstanding(&instrukt_core::home::Home::at_user_home(
             c.env.home().into(),
@@ -5361,15 +5171,10 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
         },
     );
 
-    // 7. Also verify conversation-scoped `reply_mode: explicit` pins `reply_mode` on the
-    //    binding, includes the explicit instruction in its opening assignment, defaults
-    //    `--conversation` to the bound conversation, and refuses any other conversation.
-    let mut c2 = Company::on(
-        common::TestEnv::new(),
-        ", history: false",
-        "",
-        ", reply_mode: explicit",
-    );
+    // 7. Also verify conversation-scoped sessions include explicit reply & status
+    //    instructions in their opening assignment, default `--conversation` to the
+    //    bound conversation, and refuse any other conversation.
+    let mut c2 = Company::on(common::TestEnv::new(), ", history: false", "", "");
     c2.run();
     let ch_ts = c2
         .slack
@@ -5377,7 +5182,12 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
     let s2 = c2.session();
     let native_s2 = c2.runtime.native_id(&s2);
     assert!(
-        c2.opening(&s2).contains("Reply mode: explicit"),
+        c2.opening(&s2).contains("instrukt company reply"),
+        "{}",
+        c2.opening(&s2)
+    );
+    assert!(
+        c2.opening(&s2).contains("instrukt company status"),
         "{}",
         c2.opening(&s2)
     );
@@ -5415,7 +5225,7 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
         .args(["company", "reply", "--text", "Explicit conversation reply."])
         .assert()
         .success();
-    c2.finish_turn(&s2, 0, "RAW CONVERSATION MONOLOGUE");
+    c2.finish_idle_without_reply(&s2, Some("RAW CONVERSATION MONOLOGUE"));
     wait("conversation-scoped explicit reply delivered", || {
         !c2.slack.posts().is_empty()
     });
@@ -5820,4 +5630,224 @@ fn an_administrators_knowledge_change_reaches_review_and_integration_with_no_per
     // else does.
     tick(&mut c, 5);
     assert_eq!(handed_over(&c), [a3.as_str()]);
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV26
+#[test]
+fn retry_exhaustion_idle_without_reply_and_pre_upgrade_rollover() {
+    use instrukt_core::state_db::rusqlite::Connection;
+
+    const STANDARD_ERROR_PREFIX: &str = "Sorry, I ran into a problem while handling your request.";
+
+    // Part A: Bounded retry exhaustion (initial + 3 retries = 4 attempts) posts
+    // the standard error reply with zero internal diagnostics, retains operator
+    // status, and stops retrying.
+    let (mut c, clock) = status_company("2026-11-20T10:00:00Z".parse().unwrap());
+    c.runtime.flag("separate-completion", true);
+    projected(&c);
+    let first = c
+        .slack
+        .direct("D26", "USTEVEN", "Generate the quarterly rollup.");
+    let session = started(&c, &[]);
+    wait_for_binding(&c.env, &session);
+
+    // Initial attempt fails -> failed_turns = 1, retry_at = +2m.
+    c.fail_turn(&session);
+    wait("attempt 1 failed and scheduled retry", || {
+        let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+        let (state, failed_turns, retry_at): (String, i64, Option<String>) = db
+            .query_row(
+                "SELECT state, failed_turns, retry_at FROM conversation_messages WHERE message=?1",
+                [&first],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        state == "failed" && failed_turns == 1 && retry_at.is_some()
+    });
+    assert_eq!(c.slack.posts_beginning(STANDARD_ERROR_PREFIX), 0);
+
+    // Retry 1 (attempt 2): advance clock past 2m backoff, re-dispatches and fails -> failed_turns = 2, retry_at = +4m.
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_mins(3),
+    );
+    wait("attempt 2 dispatched", || {
+        c.runtime.message_count(&session) == 2
+    });
+    c.fail_turn(&session);
+    wait("attempt 2 failed", || {
+        let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+        let failed_turns: i64 = db
+            .query_row(
+                "SELECT failed_turns FROM conversation_messages WHERE message=?1",
+                [&first],
+                |r| r.get(0),
+            )
+            .unwrap();
+        failed_turns == 2
+    });
+    assert_eq!(c.slack.posts_beginning(STANDARD_ERROR_PREFIX), 0);
+
+    // Retry 2 (attempt 3): advance clock past 4m backoff, re-dispatches and fails -> failed_turns = 3, retry_at = +8m.
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
+    );
+    wait("attempt 3 dispatched", || {
+        c.runtime.message_count(&session) == 3
+    });
+    c.fail_turn(&session);
+    wait("attempt 3 failed", || {
+        let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+        let failed_turns: i64 = db
+            .query_row(
+                "SELECT failed_turns FROM conversation_messages WHERE message=?1",
+                [&first],
+                |r| r.get(0),
+            )
+            .unwrap();
+        failed_turns == 3
+    });
+    assert_eq!(c.slack.posts_beginning(STANDARD_ERROR_PREFIX), 0);
+
+    // Retry 3 (attempt 4): advance clock past 8m backoff, re-dispatches and fails ->
+    // retry budget (FAILED_RETRY_MAX_ATTEMPTS = 3) exhausted -> queues & posts STANDARD_ERROR_REPLY.
+    set_clock(
+        &clock,
+        interval_clock(&clock) + jiff::SignedDuration::from_mins(10),
+    );
+    wait("attempt 4 dispatched", || {
+        c.runtime.message_count(&session) == 4
+    });
+    c.fail_turn(&session);
+    wait("standard error reply posted on retry exhaustion", || {
+        c.slack.posts_beginning(STANDARD_ERROR_PREFIX) == 1
+    });
+    let posted_text = c
+        .slack
+        .posts()
+        .into_iter()
+        .find_map(|p| {
+            p.markdown
+                .or(p.text)
+                .filter(|t| t.starts_with(STANDARD_ERROR_PREFIX))
+        })
+        .unwrap();
+    assert_eq!(
+        posted_text,
+        "Sorry, I ran into a problem while handling your request. Please try again in a moment."
+    );
+    let db = Connection::open(c.env.instrukt_home().join("state/instrukt.db")).unwrap();
+    let (state, terminal_queued, retry_at): (String, Option<String>, Option<String>) = db
+        .query_row(
+            "SELECT state, terminal_error_queued_at, retry_at FROM conversation_messages WHERE message=?1",
+            [&first],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(state, "failed");
+    assert!(terminal_queued.is_some());
+    assert!(
+        retry_at.is_none(),
+        "no further retries after terminal exhaustion"
+    );
+    // Operator status retains the failure.
+    assert!(
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|row| row.conversation == "D26" && !row.failures.is_empty()),
+        "operator status must retain terminal failure"
+    );
+
+    // Part B: Pre-start `preparing` does NOT trigger idle-without-reply;
+    // confirmed `Completed` without an explicit reply DOES trigger it.
+    let second = c.slack.direct("D26", "USTEVEN", "Check the ledger.");
+    wait("second message dispatched", || {
+        c.runtime.message_count(&session) == 5
+    });
+    c.runtime.set_status(&session, "preparing");
+    // Drive a probe conversation through a complete relay pass to prove the
+    // relay observed D26 while `preparing` without firing idle-without-reply.
+    c.slack.direct("D26-PROBE", "USTEVEN", "Probe preparing.");
+    let probe = started(&c, std::slice::from_ref(&session));
+    c.finish_turn(&probe, 0, "Probe ack 1.");
+    wait("probe 1 answered", || {
+        c.slack.posts_beginning("Probe ack 1.") == 1
+    });
+    assert_eq!(
+        c.slack.posts_beginning(STANDARD_ERROR_PREFIX),
+        1,
+        "preparing state must never trigger idle-without-reply"
+    );
+    c.finish_idle_without_reply(&session, None);
+    wait("idle-without-reply posts standard error reply", || {
+        c.slack.posts_beginning(STANDARD_ERROR_PREFIX) == 2
+    });
+    let second_terminal: Option<String> = db
+        .query_row(
+            "SELECT terminal_error_queued_at FROM conversation_messages WHERE message=?1",
+            [&second],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(second_terminal.is_some());
+
+    // Part C: Demand-driven one-time rollover for pre-upgrade `turn_output`
+    // bindings (`needs_explicit_rollover = 1`): waits while busy, rolls over
+    // once idle with a fresh explicit-frontstage opening brief, clears the flag.
+    db.execute(
+        "UPDATE connected_conversations SET needs_explicit_rollover=1 WHERE conversation='D26'",
+        [],
+    )
+    .unwrap();
+    c.runtime.set_status(&session, "running");
+    let before = c.sessions();
+    c.slack.direct("D26", "USTEVEN", "Roll over when idle.");
+    wait("D26 rollover demand recorded", || {
+        c.conversations()
+            .conversations
+            .iter()
+            .any(|row| row.conversation == "D26" && row.pending_messages >= 1)
+    });
+    // Drive another turn on the probe conversation so multiple relay passes run
+    // while D26 is busy.
+    c.slack.direct("D26-PROBE", "USTEVEN", "Probe busy.");
+    wait("probe 2 dispatched", || {
+        c.runtime.message_count(&probe) == 2
+    });
+    c.finish_turn(&probe, 1, "Probe ack 2.");
+    wait("probe 2 answered", || {
+        c.slack.posts_beginning("Probe ack 2.") == 1
+    });
+    assert_eq!(
+        c.sessions(),
+        before,
+        "busy session must not roll over until idle"
+    );
+    c.runtime.set_status(&session, "idle");
+    let successor = c.wait_for_new_session(&before);
+    wait("rollover flag cleared on successor adoption", || {
+        let flag: i64 = db
+            .query_row(
+                "SELECT needs_explicit_rollover FROM connected_conversations WHERE conversation='D26'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        flag == 0
+    });
+    let opening_brief = c.runtime.message(&successor, 0);
+    assert!(
+        opening_brief.contains("instrukt company reply"),
+        "rolled-over opening brief must instruct explicit `instrukt company reply`: {opening_brief}"
+    );
+    assert!(
+        opening_brief.contains("instrukt company status"),
+        "rolled-over opening brief must instruct `instrukt company status`: {opening_brief}"
+    );
+    c.finish_turn(&successor, 0, "Rolled over cleanly.");
+    wait("rolled-over successor answers member", || {
+        c.slack.posts_beginning("Rolled over cleanly.") == 1
+    });
 }

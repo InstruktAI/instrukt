@@ -6,6 +6,7 @@ visibility: public
 
 ## What it is
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the runtime adapter, operational
 session inspection, event-source translation and time
@@ -17,6 +18,20 @@ answer relay (`project/instrukt/spec/domain/company`); scheduled `tick` does
 not. It has no consumer daemon beside the runner;
 with a company's connector declared, an owned service keeps `instrukt run`
 itself running.
+<!-- change:thin-live-runtime-boundary -->
+The runner bounded context connects eligible work, received events and due
+times to agent sessions through the runtime context's adapter boundary
+(`project/instrukt/spec/domain/runtime`). It owns dispatch, keyed start
+orchestration, operational session inspection, event-source translation and
+time eligibility, including anomaly reporting. It executes the enabled modules'
+work in one process, entered through `instrukt run` or `instrukt tick` and
+woken by the OS scheduler. The long-lived `instrukt run` also hosts, through
+hosting the company context implements, that context's connectors and
+connected-conversation relay (`project/instrukt/spec/domain/company`);
+scheduled `tick` does not. It has no consumer daemon beside the runner;
+with a company's connector declared, an owned service keeps `instrukt run`
+itself running.
+<!-- /planned-change:thin-live-runtime-boundary -->
 A separate opt-in loopback webhook receiver accepts signed external events,
 and the returns of people's sign-ins to MCP servers, on the designated ingress
 computer. The work context owns work content, artifacts
@@ -58,6 +73,7 @@ and stamps; workflow owns authorization and derived workflow state.
 : Work’s runtime and session id per todo and role, read and written by the
   runner through work’s interface; standing-agent bindings belong to runner.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Runtime adapter**
 : A Rust trait implemented in code, selected explicitly by global
 `runner.runtime`. T3 is shipped first over authenticated native keyed-launch RPC, native-ID CLI reads and native thread stream. The
@@ -66,6 +82,15 @@ recognises caller identity without runtime I/O,
 and reports optional capabilities. Its recognized native session is the key to
 work/standing assignment lookup, not a role supplied by the caller.
 Native agent-operation prose is supplied by configuration and rendered through `@config`, independently of this adapter.
+<!-- change:thin-live-runtime-boundary -->
+**Runtime adapter**
+: The vendor-neutral boundary owned by the runtime context
+  (`project/instrukt/spec/domain/runtime`) and injected into runner by the CLI
+  composition root. Runner invokes its universal live spine and optional
+  capabilities without importing any concrete runtime adapter crate; its
+  recognized native session is the key to work/standing assignment lookup, not
+  a role supplied by the caller.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **Singleton key**
 : The standing procedure, exact home and optional subject identity carried as an
@@ -157,6 +182,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
 
 
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the admission, rendering, start and wake of
@@ -238,6 +264,98 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+<!-- change:thin-live-runtime-boundary -->
+- **Owns:** Per-computer history extraction/search and merged history queries
+  (consuming runtime's non-live `ColdTextSource` for retained conversation text
+  extraction and `RuntimeDeclaration`'s static legacy-history normalizer hook
+  for legacy record normalization); module-aware runner execution; todo dispatch policy;
+  procedure activation from events; the admission, rendering, start and wake of
+  requested reviews and the return of their verdicts to the sessions that
+  asked; operational session inspection, keyed start orchestration, and session
+  reuse behavior; unattended event/approval delivery and runner-owned execution
+  observation; time eligibility and missed-run decisions; anomaly-notification
+  routing; resolving a session's assignment from work's, its own and the
+  company context's facts; agents' access to declared MCP servers (which
+  declarations a caller sees and the login a call carries), people's sign-ins
+  to them and the logins kept from them; the meaning and writes of its tables
+  in the state database (the event log, consumer cursors and handled marks,
+  request validators, watched-ref observations, executions, authoritative
+  object bindings and generation history, pending delivery targets and per-key
+  locks, held task failures and the last wake-up, MCP client registrations,
+  signed-in logins and their generations, and pending sign-ins and their
+  waiting calls), whose schema is published in
+  `project/instrukt/spec/feature/work/state-database`; the history store with
+  its file, lock and migrations, holding retained history, source positions and
+  import progress (`project/instrukt/spec/feature/runner/history`); the
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`);
+  encrypted home backup and guarded restore, its local bookkeeping and
+  staleness-notification stores, its staleness threshold and local standing
+  query, and convergence of the owned daily home backup timer
+  (`project/instrukt/spec/feature/runner/home-backup`,
+  `project/instrukt/spec/feature/runner/module-installation`); the runner's
+  per-worker failure files (`state/runner-workers/` and
+  `state/computer-fleet.json`), its wake-loop state files
+  (`state/runner-skipped-wake.json` and `state/runner-admission.json`), and its
+  per-Redis reachability store (`state/redis-reachability.db` and
+  `state/redis-reachability.lock`).
+
+- **Does not own:** The vendor-neutral runtime adapter boundary, concrete
+  runtime adapters, runtime capability declarations, and T3 wire/compatibility
+  contracts, owned by runtime (`project/instrukt/spec/domain/runtime`); work
+  content, approval, workflow derivation or step completion evidence, owned by
+  work and workflow; configuration storage and interpolation, owned by
+  configuration; subscription document validation and delivery, owned by docs
+  and publication; pushed-revision graph generation, owned by blueprint;
+  session lifecycle, input delivery, restart, revival, handover, live
+  transcripts and lifecycle cleanup, owned by the external runtime; connectors,
+  conversations, explicit replies, curated working status, active-turn speaker
+  resolution, the conversation tables, and company hosting / containers, owned
+  by company (`project/instrukt/spec/domain/company`). Events, schedules and
+  dispatch decisions are the runner's own; a runtime's task, schedule or event
+  features are not used, and no live runner path reads a runtime's private
+  database.
+- **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
+  operational `instrukt sessions list` surface,
+  `instrukt history extract|search|show`,
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
+  `instrukt review start`, `instrukt backup run|list|restore`, the local-only
+  home backup standing query (core-declared, CLI-wired for publication), the
+  sign-in return path, and wake-up, runner-service, and daily home backup timer
+  registration by `instrukt install`; instrukt-owned start semantic-key
+  discovery, keyed-start and present-idle rollover orchestration, and database
+  locking; the hosting and the conversation assignment lookup that the company
+  context implements and the CLI wires. Every operational sessions command
+  accepts `--json`.
+  Agents use configured native operations in their own conversation and
+  record native child attempts through work. The adapter starts only without
+  an agent or for an explicit native-capability gap. Native delegation returns
+  shared workspace evidence. The unified `todo-orchestrator` and its native shared children
+  use one `<slug>/work` worktree and branch, with one workspace role admitted at a time
+  and atomic completion/release through the work and workflow contracts. Events include
+  `runner.upstream_changed`,
+  `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
+  `workflow.finalized`.
+- **Allowed dependencies:** runtime supplies the vendor-neutral
+  `RuntimeAdapter` universal live spine, structured active/recent turn
+  observations, and declared optional progressive capabilities
+  (`project/instrukt/spec/domain/runtime`,
+  `project/instrukt/spec/feature/runtime/adapter`) through `instrukt-runtime`,
+  without importing any concrete adapter crate; blueprint
+  supplies its release-owned tool lifecycle to module installation;
+  configuration supplies effective machine and project settings and company
+  homes; publication supplies project checkout paths; docs supplies subscribed
+  procedures; work supplies records and session identity, and the state
+  database's file, writer lock and migrations; workflow supplies assignments;
+  company supplies conversation hosting and conversation assignments; GitHub
+  supplies external observations. These relationships are specified in the
+  context map position below.
+- **Implementation roots:** `instrukt-runner` realizes this context, shared by
+  `todos`, `events` and `history`, and depends on `instrukt-runtime`,
+  `instrukt-core`, `instrukt-blueprint` and `instrukt-outside` (never
+  `instrukt-runtime-t3`). `instrukt-todos` depends on `instrukt-runner`;
+  `instrukt-cli` wires these crates and the concrete runtime adapter together.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Fleet attention is the runner's: which facts of a project's active work are
 attention conditions, the `runner.attention.*` vocabulary, each condition's
@@ -281,6 +399,7 @@ whether a todo has reached a terminal outcome, owned by work, or the window's
 admitted value and its validation, owned by configuration
 (`project/instrukt/spec/feature/runner/thread-retention`).
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The runner also owns encrypted home backup and guarded restore for a computer's
 instrukt home (`project/instrukt/spec/feature/runner/home-backup`), distinct
 from runner's single-company container export and import
@@ -288,6 +407,16 @@ from runner's single-company container export and import
 global `backup` configuration schema, entry validation, or company-home
 settings resolution and forward conversion (configuration), or `instrukt status`
 rendering (publication).
+<!-- change:thin-live-runtime-boundary -->
+The runner also owns encrypted home backup and guarded restore for a computer's
+instrukt home (`project/instrukt/spec/feature/runner/home-backup`), distinct
+from company's single-company container export and import
+(`project/instrukt/spec/domain/company`,
+`project/instrukt/spec/feature/company/company-containers`). It does not own
+global `backup` configuration schema, entry validation, or company-home
+settings resolution and forward conversion (configuration), or `instrukt status`
+rendering (publication).
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 The runner also owns carrying a company's knowledge proposals to review and
 integration, and what of them reaches the operator, in a company home
@@ -506,6 +635,7 @@ registered project whose checkout is on the computer, whatever modules that
 project switches on. The contract is
 `project/instrukt/spec/feature/runner/thread-retention`.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 A pass reads, for each such project, the finished threads the selected runtime
 lists for it through the adapter's finished-thread listing
 (`project/instrukt/spec/feature/runner/session-continuity`). It keeps every thread a standing responsibility holds — the
@@ -519,6 +649,21 @@ remaining eligible threads across projects, the pass attempts the longest
 quiet first, up to its bound on archive attempts whatever their outcome, each
 archived only while the adapter finds the observation it was chosen from still
 holds.
+<!-- change:thin-live-runtime-boundary -->
+A pass reads, for each such project, the finished threads the selected runtime
+lists for it through the adapter's optional finished-thread listing
+(`project/instrukt/spec/feature/runtime/adapter`). It keeps every thread a
+standing responsibility holds — the session of its current binding, of its
+standing runtime binding, or of its manual reservation, observed or bound —
+and every thread work associates with one of the project's todos without a
+terminal outcome. When the standing bindings or work's answers cannot be read,
+the pass archives nothing. A project whose listing or whose work answer cannot
+be read in a pass is left whole for a later pass: nothing is archived on a
+partial answer. Of the remaining eligible threads across projects, the pass
+attempts the longest quiet first, up to its bound on archive attempts whatever
+their outcome, each archived only while the adapter finds the observation it
+was chosen from still holds.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 No pickup, event reaction or other command waits on a pass; only the
 `instrukt tick` that runs one returns after it. In `instrukt run` it
@@ -977,6 +1122,7 @@ related references.
 
 ## Use cases
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
 
 - **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3 and merged search across computers.
@@ -997,6 +1143,25 @@ related references.
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
 - **Company containers** — [project/instrukt/spec/feature/company/company-containers](../feature/company/company-containers.md)
   — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
+<!-- change:thin-live-runtime-boundary -->
+- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction via runtime's non-live `ColdTextSource` and merged search across computers.
+- **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
+  — choose automatic or deliberate pickup of eligible work.
+- **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
+  — keyed start orchestration, session reuse, five-state observation, refusing
+  a feature the chosen runtime cannot carry, and native delegation with
+  record-backed attempts over the runtime context's adapter boundary
+  (`project/instrukt/spec/domain/runtime`). Archive search and agent-owned
+  session ending are retired goals.
+- **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
+  — learn about upstream changes before deciding to reconcile a fork.
+- **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
+  — arrange future work and recover missed recurring occurrences.
+- **Anomaly notification** — `project/instrukt/spec/feature/runner/anomaly-notification`
+  — notice unattended failures while keeping questions in their threads.
+- **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
+  — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
   — have trusted authors' pull-request heads reviewed independently without anyone asking.
@@ -1037,6 +1202,7 @@ related references.
 
 ## Context map position
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → runner | Customer / Supplier | Runtime mapping, module switches, runner settings, and company homes with their settings and secrets |
@@ -1049,6 +1215,21 @@ related references.
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
+<!-- change:thin-live-runtime-boundary -->
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runtime → runner | Customer / Supplier | Universal live adapter spine, structured active/recent turn observations with zero live runtime-database reads, and declared optional progressive capabilities (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/feature/runtime/adapter`) |
+| configuration → runner | Customer / Supplier | Runtime mapping, module switches, runner settings, and company homes with their settings and secrets |
+| workflow → runner | Customer / Supplier; Published language | Computed state, transitions and finalize-ready event used for dispatch |
+| work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
+| runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
+| docs → runner | Customer / Supplier | Procedures and their event subscriptions |
+| publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
+| work → runner | Customer / Supplier | The state database's file, writer lock and migrations, holding the runner's tables |
+| company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
+| runner → company | Customer / Supplier | Keyed start and present-idle rollover orchestration, identity envelopes and the state database handle |
+| runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Carrying a company's knowledge proposals adds these crossings:
 
@@ -1075,6 +1256,7 @@ The evaluation report across computers adds these crossings
 | runner → work | Customer / Supplier | The fleet query, carrying the evaluation report's request to the computers it covers and returning each answer or why there is none, and the fleet membership record, read by the report on the asking computer |
 | work → runner | Customer / Supplier | This computer's answer to an evaluation request, through the evaluation-answer interface the runner declares, work implements and the CLI wires; the runner's responder returns it unread |
 
+<!-- planned-change:thin-live-runtime-boundary -->
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries
 a verdict and whether both identities are ready, and workflow says whether the
@@ -1090,6 +1272,23 @@ conversation; it supplies workflow with whether the selected runtime holds a
 named session. For a held candidate it sends each author ask through its input
 delivery and tells the integrator with `runner.candidate_held`
 (`project/instrukt/spec/domain/context-map`).
+<!-- change:thin-live-runtime-boundary -->
+For automatic review the runner asks its suppliers and derives none of their
+answers: work says whether a pull request is a todo's, whether a commit carries
+a verdict and whether both identities are ready, and workflow says whether the
+active candidate's content is covered and, for a held candidate, which
+uncovered commits wait on which session's decision and whether the candidate
+owes its own review. Through work's command contract the
+runner records or withdraws a derived approval and has outstanding verdicts published,
+handing over the eligible pull requests it observed at each head. It supplies
+work with a commit's review requests, each with its number, standing, the
+session it reached and pinned base; it supplies workflow with whether the
+selected runtime holds a named session (composed over runtime's `read_state`
+and project verification with runner's delivery-eligibility policy). For a held
+candidate it sends each author ask through its input delivery and tells the
+integrator with `runner.candidate_held`
+(`project/instrukt/spec/domain/context-map`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 
 For a requested review the runner asks work whether the head's verdict stands
@@ -1105,6 +1304,7 @@ to the runner, which queues a verdict notice for each session that asked
 (`project/instrukt/spec/feature/runner/requested-review`).
 
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The runtime adapter and the event-source boundary form an
 **Anti-corruption layer (ACL)** translating session operations and external
 observations. These are
@@ -1113,6 +1313,14 @@ trait and code implementations; T3 is the first, over authenticated native keyed
 read-scoped `subscribeThread` stream. The explicit
 configuration name selects the implementation
 (`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- change:thin-live-runtime-boundary -->
+The event-source boundary and S3 storage adapter form runner's
+**Anti-corruption layer (ACL)** translating external observations and remote
+backup operations. The runtime adapter ACL belongs to the runtime bounded
+context (`project/instrukt/spec/domain/runtime`); runner consumes its neutral
+trait without importing any concrete adapter crate
+(`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Event activation carries the exact home and optional subject through this seam.
 The adapter realizes ASAP or only-at-entry intent with steering, queued input
@@ -1151,6 +1359,7 @@ core declares and the CLI wires (`project/instrukt/spec/domain/context-map`).
 
 ## Known caveats
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - The target delivery contract requires durable acceptance, bounded batch
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization uses the selected runtime's supported input boundary. Missing
@@ -1159,6 +1368,16 @@ core declares and the CLI wires (`project/instrukt/spec/domain/context-map`).
   standing procedure may self-settle when parked dormant
   (`general/procedure/event-handling/overview`), and a settled one stays
   reachable (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+<!-- change:thin-live-runtime-boundary -->
+- The target delivery contract requires durable acceptance, bounded batch
+  selection, procedure-first briefing and untrusted activation provenance. Its
+  realization uses the selected runtime's supported input boundary. Missing
+  steering degrades ASAP attention to queued input or idle entry without a
+  validation finding. Runner automation never settles a standing runtime
+  thread; a standing procedure may self-settle when parked dormant
+  (`general/procedure/event-handling/overview`), and a settled one stays
+  reachable (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 - A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
   one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside

@@ -240,6 +240,17 @@ fn company(mut value: Value, from: u64) -> Value {
             }
         }
     }
+    if from < 7
+        && let Some(Value::Mapping(connectors)) = value.get_mut("connectors")
+    {
+        // All company connectors use explicit frontstage; `reply_mode` is
+        // retired one-way in schema 7.
+        for (_, entry) in connectors.iter_mut() {
+            if let Value::Mapping(fields) = entry {
+                fields.remove("reply_mode");
+            }
+        }
+    }
     value
 }
 
@@ -357,6 +368,7 @@ mod tests {
 
     #[test]
     fn golden_v7_global_document_migrates_losslessly_to_v8_configuration() {
+        crate::config::_runtime::install_fixture();
         let dir = tempfile::tempdir().unwrap();
         let home = crate::home::Home::at_user_home(dir.path().to_path_buf()).for_inspection();
         let golden_v7 = "\
@@ -380,13 +392,81 @@ github:
         let cfg = crate::config::Configuration::load_global(&home).unwrap();
         assert!(!cfg.ticks_enabled().unwrap());
         assert!(cfg.module_enabled(crate::config::Module::Todos).unwrap());
-        assert_eq!(cfg.runner_runtime().unwrap(), crate::config::Runtime::T3);
+        assert_eq!(cfg.runner_runtime().unwrap().name(), "t3");
         assert!(cfg.backup().unwrap().is_none());
         let upcycled = upcycle(yaml(golden_v7), 7, LayerKind::Global);
         assert_eq!(upcycled["schema_version"].as_u64(), Some(8));
         assert_eq!(
             upcycled["runner"]["archive_finished_after"].as_str(),
             Some("14d")
+        );
+    }
+
+    #[test]
+    fn golden_v6_company_document_strips_reply_mode_and_migrates_to_v7() {
+        crate::config::_connectors::install_fixture();
+        crate::config::_runtime::install_fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::home::Home::at_user_home(dir.path().to_path_buf()).for_inspection();
+        let slug = crate::ids::ProjectSlug::parse("acme").unwrap();
+        let golden_v6 = "\
+schema_version: 6
+company: acme
+connectors:
+  slack:
+    app_token: '${SLACK_APP}'
+    bot_token: '${SLACK_BOT}'
+    reply_mode: turn_output
+    session_scope: conversation
+  coder:
+    kind: slack
+    role: company-agent
+    admit: admins_only
+    session_scope: company
+    reply_mode: explicit
+    app_token: '${CODER_APP}'
+    bot_token: '${CODER_BOT}'
+";
+        let path = home
+            .company_dir(&slug)
+            .join(crate::config::COMPANY_DOCUMENT);
+        crate::fsx::atomic_write(&path, golden_v6.as_bytes()).unwrap();
+        let view =
+            crate::config::inspect_layer(&home, &crate::config::Layer::Company(slug.clone()))
+                .unwrap();
+        assert_eq!(view.schema_version, Some(6));
+        assert!(view.migration.is_some());
+        let cfg = crate::config::Configuration::load_company(&home, &slug).unwrap();
+        let connectors = cfg.connectors().unwrap();
+        assert_eq!(connectors.len(), 2);
+        let upcycled = upcycle(yaml(golden_v6), 6, LayerKind::Company);
+        assert_eq!(upcycled["schema_version"].as_u64(), Some(7));
+        assert!(upcycled["connectors"]["slack"].get("reply_mode").is_none());
+        assert!(upcycled["connectors"]["coder"].get("reply_mode").is_none());
+        assert_eq!(
+            upcycled["connectors"]["coder"]["session_scope"].as_str(),
+            Some("company")
+        );
+        // On v7, reply_mode is refused as an unknown key.
+        let v7_with_reply_mode = yaml(
+            "\
+schema_version: 7
+company: acme
+connectors:
+  slack:
+    app_token: '${SLACK_APP}'
+    bot_token: '${SLACK_BOT}'
+    reply_mode: explicit
+",
+        );
+        let findings =
+            crate::config::_validate::judge(&v7_with_reply_mode, LayerKind::Company, None, None);
+        assert!(
+            findings.iter().any(|f| {
+                f.key == "connectors.slack.reply_mode"
+                    && f.kind == crate::config::FindingKind::UnknownKey
+            }),
+            "{findings:?}"
         );
     }
 }

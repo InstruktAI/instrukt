@@ -3,8 +3,11 @@
 //! History store): a conversation's row holds its document without the
 //! texts its rows in `history_messages` hold, and `history_fts` reads its
 //! text from those rows through the `history_search` view.
-use super::{_db, HistoryError, Match, RetainedMessage};
-use crate::runtime::conversations::Role;
+#[cfg(test)]
+use super::RetainedMessage;
+use super::{_db, HistoryError, Match};
+#[cfg(test)]
+use crate::runtime::cold_text::Role;
 use instrukt_core::{
     home::Home,
     state_db::rusqlite::{self, Connection, OptionalExtension, Transaction, params},
@@ -176,6 +179,7 @@ pub(super) fn document_of(
 
 /// The messages that carry a role of conversation `thread` from `source`,
 /// in order; `None` when the conversation is not retained.
+#[cfg(test)]
 pub(super) fn messages(
     db: &Connection,
     source: &str,

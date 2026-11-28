@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::mcp::{McpError, Speaker};
+use instrukt_runner::mcp::Speaker;
+
+use crate::conversations::SpeakerError;
 
 use super::{Admission, Holding, Recorded, SpeakerDecision, admission, decide_speaker, retired};
 
@@ -52,18 +54,33 @@ fn no_speaker_another_companys_administrator_and_a_member_propose_nothing() {
 }
 
 #[test]
-fn a_lookup_that_cannot_answer_is_asked_again() {
+fn retryable_lookup_errors_retry_while_deterministic_errors_fail_immediately() {
     for error in [
-        McpError::Unbound {
+        SpeakerError::Unbound {
             company: "acme".to_owned(),
         },
-        McpError::Turn {
-            cause: "the runtime has no turn of this session in progress".to_owned(),
-        },
+        SpeakerError::RuntimeObservation("timed out".to_owned()),
+        SpeakerError::Store("sqlite busy".to_owned()),
     ] {
         assert!(matches!(
             decide_speaker(Err(error), &acme()),
             SpeakerDecision::Retry(_)
+        ));
+    }
+    for error in [
+        SpeakerError::RetiredGeneration {
+            company: "acme".to_owned(),
+        },
+        SpeakerError::NotRunning {
+            state: "input-ready".to_owned(),
+        },
+        SpeakerError::NoActiveTurn,
+        SpeakerError::OpeningInputUnavailable,
+        SpeakerError::MismatchedTurn,
+    ] {
+        assert!(matches!(
+            decide_speaker(Err(error), &acme()),
+            SpeakerDecision::Failed(_)
         ));
     }
 }

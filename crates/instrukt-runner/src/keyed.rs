@@ -124,7 +124,7 @@ impl KeyGuard {
         now: Timestamp,
     ) -> Result<Self, SessionsError> {
         use sha2::{Digest, Sha256};
-        let runtime = adapter.runtime().name().to_owned();
+        let runtime = adapter.runtime_name().to_owned();
         let name = Sha256::digest(format!("{runtime}:{key}").as_bytes());
         let path = invocation
             .home()
@@ -225,7 +225,7 @@ fn native_identity(
     use sha2::{Digest, Sha256};
     // JSON preserves component boundaries, including exact home and checkout scope.
     let scope = serde_json::to_vec(&(
-        adapter.runtime().name(),
+        adapter.runtime_name(),
         home.root(),
         &request.checkout,
         &request.key,
@@ -275,21 +275,19 @@ fn persist_in(
 
 pub(crate) fn remember_manual(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
-    runtime: instrukt_core::config::Runtime,
+    runtime: &str,
     input: &RuntimeStart,
     thread: &Thread,
     project: Option<&str>,
 ) -> Result<(), StateError> {
     let path = state::db_path(tx);
     let generation = tx
-        .query_row(
-            OWNER_GENERATION,
-            params![runtime.name(), input.key],
-            |row| row.get::<_, u64>(0),
-        )
+        .query_row(OWNER_GENERATION, params![runtime, input.key], |row| {
+            row.get::<_, u64>(0)
+        })
         .map_err(state::sql(&path))?;
     let request = serde_json::to_string(input).map_err(|e| state::invalid(&path, e))?;
-    tx.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title,generation) VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,1,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET project_id=coalesce(excluded.project_id,runtime_bindings.project_id),accepted=1,worktree=excluded.worktree",params![runtime.name(),input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),request,thread.title,generation]).map_err(state::sql(&path))?;
+    tx.execute("INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,project_id,checkout,worktree,branch,base_head,accepted,request,display_title,generation) VALUES(?1,?2,?3,?4,?2,?5,?6,?7,?8,?9,?10,1,?11,?12,?13) ON CONFLICT(runtime,semantic_key) DO UPDATE SET project_id=coalesce(excluded.project_id,runtime_bindings.project_id),accepted=1,worktree=excluded.worktree",params![runtime,input.key,kind(&input.key),project,thread.session.to_string(),thread.project_id,input.checkout.to_string_lossy(),thread.worktree.as_ref().map(|p|p.to_string_lossy()),thread.branch,input.worktree.as_ref().map(|w|&w.base),request,thread.title,generation]).map_err(state::sql(&path))?;
     Ok(())
 }
 
@@ -308,7 +306,7 @@ pub(crate) fn retire_in(
     Ok(())
 }
 
-pub(crate) fn start(
+pub fn start(
     adapter: &dyn RuntimeAdapter,
     assignment: &RuntimeAssignment<'_>,
 ) -> Result<Thread, SessionsError> {
@@ -322,7 +320,7 @@ pub(crate) fn start(
     let result = start_owned(adapter, assignment, &guard);
     note(
         &guard.state,
-        adapter.runtime(),
+        adapter.runtime_name(),
         &assignment.request.key,
         assignment.now,
         result.as_ref().map(|_| ()),
@@ -388,6 +386,7 @@ fn start_with_work(
                 work,
                 guard,
                 Some((assignment.request, assignment.existing_worktree)),
+                false,
             );
         }
     }
@@ -402,10 +401,10 @@ fn start_with_work(
         let succeed = if thread.presence == Presence::Present {
             match adapter.verify_thread_project(&input.checkout, &thread, Some(&input.key)) {
                 Ok(()) => false,
-                Err(SessionsError::ThreadMisplaced { idle: true, .. }) => {
+                Err(crate::runtime::RuntimeError::ThreadMisplaced { idle: true, .. }) => {
                     adapter.accepted_start(input)?
                 }
-                Err(error) => return Err(error),
+                Err(error) => return Err(error.into()),
             }
         } else {
             adapter.accepted_start(input)?
@@ -418,6 +417,7 @@ fn start_with_work(
                 work,
                 guard,
                 None,
+                false,
             );
         }
     }
@@ -496,13 +496,13 @@ fn observe_launch(
         verify_recorded_project(&guard.state, &input.key, &thread)?;
         match adapter.verify_start(input, &thread) {
             Ok(()) => return Ok(thread),
-            Err(pending @ SessionsError::PlacementPreparing(_)) => {
+            Err(pending @ crate::runtime::RuntimeError::PlacementPreparing(_)) => {
                 std::thread::sleep(PLACEMENT_PAUSE.min(window.remaining()));
                 if window.judge(None::<()>) == Look::Passed {
-                    return Err(pending);
+                    return Err(pending.into());
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         }
     }
 }
@@ -516,7 +516,13 @@ fn accept_thread(
     work: Option<&dyn crate::interfaces::SessionBindings>,
 ) -> Result<(), SessionsError> {
     let mut accept = |tx: &instrukt_core::state_db::rusqlite::Transaction<'_>| {
-        remember_manual(tx, adapter.runtime(), input, thread, assignment.project)?;
+        remember_manual(
+            tx,
+            adapter.runtime_name(),
+            input,
+            thread,
+            assignment.project,
+        )?;
         crate::inputs::record_initial_in(
             tx,
             &thread.session,
@@ -635,7 +641,7 @@ pub(crate) fn recover_binding(
     let modes = serde_json::to_string(&input.launch_modes)
         .map_err(|e| SessionsError::Refused(e.to_string()))?;
     guard.state.write::<_,StateError>(|tx|{
-        remember_manual(tx,adapter.runtime(),&input,thread,assignment.project)?;
+        remember_manual(tx,adapter.runtime_name(),&input,thread,assignment.project)?;
         tx.execute("UPDATE runtime_bindings SET project_id=?3,request=CASE WHEN ?4 THEN request ELSE NULL END,legacy_modes=CASE WHEN ?4 THEN NULL ELSE ?5 END WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,assignment.request.key,project,known_request,modes]).map_err(state::sql(&state::db_path(tx)))?;Ok(())
     })?;
     Ok(())
@@ -681,7 +687,7 @@ pub fn succeed(
                 .worktree
                 .or_else(|| assignment.worktree_path.map(Into::into));
             guard.state.write::<_,StateError>(|tx|{
-                remember_manual(tx,adapter.runtime(),source,&thread,assignment.project)?;
+                remember_manual(tx,adapter.runtime_name(),source,&thread,assignment.project)?;
                 if assignment.original_request.is_none() {tx.execute("UPDATE runtime_bindings SET request=NULL WHERE runtime=?1 AND semantic_key=?2",params![guard.runtime,key]).map_err(state::sql(&state::db_path(tx)))?;}
                 Ok(())
             })?;
@@ -694,16 +700,136 @@ pub fn succeed(
         assignment.bindings,
         &guard,
         Some((assignment.request, assignment.worktree_path)),
+        assignment.replace_brief,
     );
     note(
         &guard.state,
-        adapter.runtime(),
+        adapter.runtime_name(),
         key,
         now,
         result.as_ref().map(|_| ()),
     );
     result
 }
+
+/// Retires a present, idle runtime binding into `runtime_generations` and
+/// launches one successor generation with `assignment.request`'s newly rendered
+/// opening brief (never copying `conversation_assignment_prefix` from the
+/// prior generation). Refuses if the session is absent/archived or has an
+/// active turn (`active_turn.is_some()` or `Running`/`NeedsInput`).
+pub fn rollover_present_idle(
+    adapter: &dyn RuntimeAdapter,
+    assignment: &crate::runtime::FollowupAssignment<'_>,
+) -> Result<Thread, SessionsError> {
+    let invocation = assignment.invocation;
+    let key = &assignment.request.key;
+    let now = assignment.now;
+    let guard = KeyGuard::claim(invocation, adapter, key, assignment.project, now)?;
+    let result = rollover_present_idle_claimed(invocation, adapter, assignment, &guard);
+    note(
+        &guard.state,
+        adapter.runtime_name(),
+        key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+
+fn rollover_present_idle_claimed(
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    assignment: &crate::runtime::FollowupAssignment<'_>,
+    guard: &KeyGuard,
+) -> Result<Thread, SessionsError> {
+    let key = guard.key.as_str();
+    let recorded = record(&guard.state, &guard.runtime, key)?;
+    let session = recorded
+        .bound
+        .as_ref()
+        .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no bound native ID")))?;
+    if session != assignment.session {
+        return Err(stopped_mismatch(key, assignment.session));
+    }
+    let checkout = guard.state.read(|conn, path| {
+        conn.query_row(
+            "SELECT checkout FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",
+            params![guard.runtime, key],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(state::sql(path))
+    })?;
+    if assignment.request.key != key || checkout.as_deref() != assignment.request.checkout.to_str()
+    {
+        return Err(SessionsError::ChangedRequest(key.into()));
+    }
+    let thread = adapter.read_state(session)?;
+    if thread.presence != Presence::Present {
+        return Err(SessionsError::Gone(session.clone()));
+    }
+    let is_idle = thread.active_turn.is_none()
+        && matches!(
+            thread.state,
+            crate::sessions::SessionState::InputReady | crate::sessions::SessionState::EndedFailed
+        );
+    if !is_idle {
+        return Err(SessionsError::Refused(format!(
+            "thread {session} is not idle and cannot roll over yet"
+        )));
+    }
+    let mut request = assignment.request.clone();
+    request.launch_modes = None;
+    let generation = recorded
+        .generation
+        .checked_add(1)
+        .ok_or_else(|| SessionsError::Refused("generation exhausted".into()))?;
+    let native = native_identity(
+        invocation.home(),
+        adapter,
+        &request,
+        generation,
+        assignment.worktree_path,
+    )?;
+    request.native_launch = Some(native);
+    request = crate::agents::prepare_start(invocation.home(), adapter, &request, assignment.now)?;
+    request = adapter.resolve_launch(&request, None)?;
+    guard.state.write::<_, SessionsError>(|tx| {
+        retire_in(tx, &guard.runtime, key)?;
+        persist_in(
+            tx,
+            guard,
+            &request,
+            recorded.project.as_deref(),
+            generation,
+            Some(session),
+        )?;
+        tx.execute(
+            "UPDATE runtime_inputs SET state='failed',waiting=0,failure='explicit-frontstage rollover; retired generation' WHERE runtime=?1 AND session=?2 AND kind!=?3 AND state IN ('pending','selected','accepted')",
+            params![
+                session.runtime.as_str(),
+                session.id.as_str(),
+                crate::inputs::InputKind::Verdict.name()
+            ],
+        )
+        .map_err(state::sql(&state::db_path(tx)))?;
+        crate::inputs::close_verdict_inputs_on_succession(tx, session, key)?;
+        Ok(())
+    })?;
+    start_with_work(
+        adapter,
+        &RuntimeAssignment {
+            bindings: None,
+            invocation,
+            project: recorded.project.as_deref(),
+            request: &request,
+            existing_worktree: None,
+            now: assignment.now,
+        },
+        guard,
+        assignment.bindings,
+    )
+}
+
 /// Succeeds the generation of `key` under the `guard` its caller already
 /// holds, from `replacement` and its optional `existing_worktree`, after
 /// confirmed native terminal presence.
@@ -723,10 +849,11 @@ pub(crate) fn succeed_owned(
         None,
         guard,
         Some((replacement, existing_worktree)),
+        false,
     );
     note(
         &guard.state,
-        adapter.runtime(),
+        adapter.runtime_name(),
         key,
         now,
         result.as_ref().map(|_| ()),
@@ -740,6 +867,7 @@ fn succeed_claimed(
     work: Option<&dyn crate::interfaces::SessionBindings>,
     guard: &KeyGuard,
     replacement: Option<(&RuntimeStart, Option<&Path>)>,
+    replace_brief: bool,
 ) -> Result<Thread, SessionsError> {
     let key = guard.key.as_str();
     let replacement_request = replacement.map(|(request, _)| request);
@@ -837,8 +965,14 @@ fn succeed_claimed(
             .map_err(|e| SessionsError::Refused(e.to_string()))?;
     }
     if kind(key) == "conversation" {
-        request.brief = conversation_assignment_prefix(&request.brief)
-            .ok_or_else(|| SessionsError::Refused("missing conversation assignment".into()))?;
+        if replace_brief {
+            if let Some(replacement) = replacement_request {
+                request.brief = replacement.brief.clone();
+            }
+        } else {
+            request.brief = conversation_assignment_prefix(&request.brief)
+                .ok_or_else(|| SessionsError::Refused("missing conversation assignment".into()))?;
+        }
     }
     let is_review_replacement = replacement_request.is_some() && is_review_key(key);
     if let Some(replacement) = replacement_request {
@@ -888,7 +1022,10 @@ fn succeed_claimed(
                         .map(|branch| branch.trim().to_owned()),
                 };
                 let registered = match &branch {
-                    Some(branch) => registered_worktree(&request.checkout, &path, branch)?,
+                    Some(branch) => {
+                        instrukt_core::git::registered_worktree(&request.checkout, &path, branch)
+                            .map_err(|e| SessionsError::Refused(e.to_string()))?
+                    }
                     None => false,
                 };
                 if registered {
@@ -1148,8 +1285,7 @@ pub(crate) fn verify_delivery_project(
     thread: &Thread,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
-    let Some(owner) = delivery_owner(state, adapter.runtime().name(), &thread.session, work)?
-    else {
+    let Some(owner) = delivery_owner(state, adapter.runtime_name(), &thread.session, work)? else {
         return Ok(());
     };
     let (key, result) = match owner {
@@ -1158,31 +1294,32 @@ pub(crate) fn verify_delivery_project(
             recorded_project,
             checkout,
         } => {
-            let result = (|| {
-                // A standing binding is verified against its recorded project
-                // even when none is recorded: it is then unverified.
+            let result = (|| -> Result<(), SessionsError> {
                 if recorded_project || kind(&key) == "standing" {
                     verify_recorded_project(state, &key, thread)?;
                 }
                 let checkout = checkout.ok_or_else(|| unverified_project(&key, &thread.session))?;
-                adapter.verify_thread_project(&checkout, thread, Some(&key))
+                adapter.verify_thread_project(&checkout, thread, Some(&key))?;
+                Ok(())
             })();
             (key, result)
         }
         DeliveryOwner::Standing { key, checkout } => {
             let result = verify_recorded_project(state, &key, thread)
-                .and_then(|()| adapter.verify_thread_project(&checkout, thread, Some(&key)));
+                .and_then(|()| Ok(adapter.verify_thread_project(&checkout, thread, Some(&key))?));
             (key, result)
         }
         DeliveryOwner::Todo { key, checkout } => {
             let result = checkout
                 .ok_or_else(|| unverified_project(&key, &thread.session))
-                .and_then(|checkout| adapter.verify_thread_project(&checkout, thread, Some(&key)));
+                .and_then(|checkout| {
+                    Ok(adapter.verify_thread_project(&checkout, thread, Some(&key))?)
+                });
             (key, result)
         }
     };
     if let Err(error) = &result {
-        note(state, adapter.runtime(), &key, now, Err(error));
+        note(state, adapter.runtime_name(), &key, now, Err(error));
     }
     result
 }
@@ -1216,7 +1353,8 @@ pub(crate) fn verify_bound(
     {
         return Err(conflict(&request.key, [session, &thread.session]));
     }
-    adapter.verify_placement(request, thread)
+    adapter.verify_placement(request, thread)?;
+    Ok(())
 }
 
 /// The session bound to a key and the generation it belongs to.
@@ -1242,6 +1380,27 @@ pub(crate) fn recorded_session(
 ) -> Result<Option<SessionRef>, StateError> {
     Ok(record(state, runtime, key)?.bound)
 }
+
+/// The deterministic launch `command_id` (`start_key`) recorded on `runtime_bindings`
+/// for `(runtime, key)`, if any.
+pub fn start_command_id(
+    state: &RunnerState,
+    runtime: &str,
+    key: &str,
+) -> Result<Option<String>, StateError> {
+    Ok(state
+        .read(|conn, path| {
+            conn.query_row(
+                "SELECT start_key FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",
+                params![runtime, key],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(state::sql(path))
+        })?
+        .flatten()
+        .flatten())
+}
 pub(crate) fn replacement_started(
     state: &RunnerState,
     runtime: &str,
@@ -1263,33 +1422,12 @@ pub(crate) fn idle_misplaced(
     key: Option<&str>,
 ) -> Result<bool, SessionsError> {
     match adapter.verify_thread_project(checkout, thread, key) {
-        Err(SessionsError::ThreadMisplaced { idle: true, .. }) => Ok(true),
-        Ok(()) | Err(SessionsError::ThreadMisplaced { idle: false, .. }) => Ok(false),
-        Err(error) => Err(error),
+        Err(crate::runtime::RuntimeError::ThreadMisplaced { idle: true, .. }) => Ok(true),
+        Ok(()) | Err(crate::runtime::RuntimeError::ThreadMisplaced { idle: false, .. }) => {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
     }
-}
-
-/// Whether `path` is a worktree `git worktree list --porcelain` lists in
-/// `checkout` on `branch`.
-pub(crate) fn registered_worktree(
-    checkout: &std::path::Path,
-    path: &std::path::Path,
-    branch: &str,
-) -> Result<bool, SessionsError> {
-    let listing = instrukt_core::git::run(checkout, ["worktree", "list", "--porcelain"])
-        .map_err(|e| SessionsError::Refused(e.to_string()))?;
-    Ok(listed_worktree(&listing, path, branch))
-}
-
-fn listed_worktree(listing: &str, path: &std::path::Path, branch: &str) -> bool {
-    listing.split("\n\n").any(|entry| {
-        entry
-            .lines()
-            .any(|line| line == format!("worktree {}", path.display()))
-            && entry
-                .lines()
-                .any(|line| line == format!("branch refs/heads/{branch}"))
-    })
 }
 
 /// A succession may replace `stopped` when it is no longer present, or when
@@ -1316,7 +1454,7 @@ pub fn replacement_binding(
     key: &str,
     current: &SessionRef,
 ) -> Result<Option<(SessionRef, bool)>, SessionsError> {
-    let recorded = record(&RunnerState::new(home), adapter.runtime().name(), key)?;
+    let recorded = record(&RunnerState::new(home), adapter.runtime_name(), key)?;
     Ok(recorded
         .bound
         .filter(|s| s != current && recorded.replaced_session.is_some())
@@ -1341,7 +1479,7 @@ pub fn retry(
 ) -> Result<Thread, SessionsError> {
     let recorded = record(
         &RunnerState::new(invocation.home()),
-        adapter.runtime().name(),
+        adapter.runtime_name(),
         key,
     )?;
     start(
@@ -1486,21 +1624,21 @@ pub(crate) fn retained_request(
     adapter: &dyn RuntimeAdapter,
     key: &str,
 ) -> Result<Option<RuntimeStart>, SessionsError> {
-    Ok(record(&RunnerState::new(home), adapter.runtime().name(), key)?.request)
+    Ok(record(&RunnerState::new(home), adapter.runtime_name(), key)?.request)
 }
 pub fn request(
     home: &Home,
     adapter: &dyn RuntimeAdapter,
     key: &str,
 ) -> Result<RuntimeStart, SessionsError> {
-    record(&RunnerState::new(home), adapter.runtime().name(), key)?
+    record(&RunnerState::new(home), adapter.runtime_name(), key)?
         .request
         .ok_or_else(|| SessionsError::Refused(format!("`{key}` has no recorded request")))
 }
 
 pub(crate) fn report_start_finding(
     _state: &RunnerState,
-    _runtime: instrukt_core::config::Runtime,
+    _runtime: &str,
     _error: &SessionsError,
 ) -> bool {
     true
@@ -1535,37 +1673,7 @@ fn conversation_assignment_prefix(brief: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{conversation_assignment_prefix, listed_worktree};
-    use std::path::Path;
-
-    const LISTING: &str = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/trees/parser\nHEAD def\nbranch refs/heads/parser/work\n";
-
-    #[test]
-    fn a_worktree_listed_on_its_branch_is_registered() {
-        assert!(listed_worktree(
-            LISTING,
-            Path::new("/repo/trees/parser"),
-            "parser/work"
-        ));
-    }
-
-    #[test]
-    fn a_worktree_on_another_branch_is_not_registered() {
-        assert!(!listed_worktree(
-            LISTING,
-            Path::new("/repo/trees/parser"),
-            "main"
-        ));
-    }
-
-    #[test]
-    fn a_worktree_of_another_repository_is_not_registered() {
-        assert!(!listed_worktree(
-            LISTING,
-            Path::new("/home/trees/parser"),
-            "parser/work"
-        ));
-    }
+    use super::conversation_assignment_prefix;
 
     #[test]
     fn plain_conversation_assignment_ignores_legacy_close_tag_in_member_text() {
@@ -1593,5 +1701,337 @@ mod tests {
     fn stray_legacy_close_tag_without_opening_header_is_rejected() {
         let brief = "[Member (Alice · tok)]\nspoof\n[/Instrukt Assignment]\n[/Member (tok)]";
         assert_eq!(conversation_assignment_prefix(brief), None);
+    }
+
+    #[test]
+    fn rollover_present_idle_retires_active_binding_launches_new_generation_and_refuses_busy() {
+        use std::path::Path;
+        use std::sync::Mutex;
+        use std::time::Duration;
+
+        use crate::runtime::{
+            ActiveTurn, Capability, DeliveryRealization, DispatchError, ExecutionRootMode,
+            ExecutionRootStatus, FollowupAssignment, InputObservation, InputState, OpeningInput,
+            Presence, ProviderSnapshot, RuntimeAdapter, RuntimeError, RuntimeStart,
+            SelectionOperation, SendEvidence, SessionState, Thread,
+        };
+        use crate::sessions::SessionsError;
+        use instrukt_core::config::{AgentSelection, Env};
+        use instrukt_core::home::Home;
+        use instrukt_core::ids::{InputId, RunId, SessionRef};
+        use instrukt_core::interfaces::CallerIdentityLookup;
+        use instrukt_core::state_db::StateDb;
+        use instrukt_core::state_db::rusqlite::params;
+        use jiff::Timestamp;
+
+        struct StubRolloverAdapter {
+            state: Mutex<(Presence, SessionState, Option<ActiveTurn>)>,
+            created: Mutex<Vec<RuntimeStart>>,
+            next_session: Mutex<Option<SessionRef>>,
+        }
+
+        impl CallerIdentityLookup for StubRolloverAdapter {
+            fn lookup_caller(
+                &self,
+                _env: &Env,
+            ) -> Option<instrukt_core::interfaces::CallerIdentity> {
+                None
+            }
+            fn caller_variables(&self) -> &'static [&'static str] {
+                &[]
+            }
+        }
+
+        impl RuntimeAdapter for StubRolloverAdapter {
+            fn runtime_name(&self) -> &'static str {
+                "t3"
+            }
+            fn provider_snapshot(&self, _home: &Home) -> Result<ProviderSnapshot, RuntimeError> {
+                Err(RuntimeError::Refused("unused".into()))
+            }
+            fn selection_realization(&self, _operation: SelectionOperation) -> String {
+                String::new()
+            }
+            fn native_selection(&self, selection: &AgentSelection) -> AgentSelection {
+                selection.clone()
+            }
+            fn launch_scope(&self, _home: &Home) -> String {
+                String::new()
+            }
+            fn resolve_launch(
+                &self,
+                request: &RuntimeStart,
+                _existing: Option<&SessionRef>,
+            ) -> Result<RuntimeStart, RuntimeError> {
+                let mut resolved = request.clone();
+                if let Some(native) = resolved.native_launch.as_mut() {
+                    native.project_id = "proj-1".into();
+                }
+                Ok(resolved)
+            }
+            fn accepted_start(&self, _request: &RuntimeStart) -> Result<bool, RuntimeError> {
+                Ok(false)
+            }
+            fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, RuntimeError> {
+                self.created.lock().unwrap().push(request.clone());
+                let session = SessionRef::parse(&format!(
+                    "t3:{}",
+                    request.native_launch.as_ref().unwrap().thread_id
+                ))
+                .unwrap();
+                *self.next_session.lock().unwrap() = Some(session.clone());
+                Ok(session)
+            }
+            fn verify_start(
+                &self,
+                _request: &RuntimeStart,
+                _thread: &Thread,
+            ) -> Result<(), RuntimeError> {
+                Ok(())
+            }
+            fn verify_placement(
+                &self,
+                _request: &RuntimeStart,
+                _thread: &Thread,
+            ) -> Result<(), RuntimeError> {
+                Ok(())
+            }
+            fn verify_thread_project(
+                &self,
+                _checkout: &Path,
+                _thread: &Thread,
+                _key: Option<&str>,
+            ) -> Result<(), RuntimeError> {
+                Ok(())
+            }
+            fn execution_root(
+                &self,
+                _root: &Path,
+                _mode: ExecutionRootMode,
+            ) -> Result<ExecutionRootStatus, RuntimeError> {
+                Ok(ExecutionRootStatus {
+                    project_id: Some("proj-1".into()),
+                    created: false,
+                })
+            }
+            fn delivery_realization(&self) -> DeliveryRealization {
+                DeliveryRealization::Queued
+            }
+            fn supports(&self, _capability: Capability) -> bool {
+                true
+            }
+            fn observe_send(
+                &self,
+                _session: &SessionRef,
+                _text: &str,
+                _command_id: Option<&str>,
+            ) -> Result<SendEvidence, RuntimeError> {
+                Ok(SendEvidence::Unresolved)
+            }
+            fn observe_input(
+                &self,
+                _session: &SessionRef,
+                _text: &str,
+                now: Timestamp,
+            ) -> Result<InputObservation, RuntimeError> {
+                Ok(InputObservation {
+                    state: InputState::Unknown,
+                    reference: None,
+                    source: "stub".into(),
+                    observed_at: now,
+                })
+            }
+            fn list(&self, _checkout: &Path) -> Result<Vec<Thread>, RuntimeError> {
+                Ok(Vec::new())
+            }
+            fn dispatch_send(
+                &self,
+                _session: &SessionRef,
+                _command_id: &str,
+                _text: &str,
+                _before_write: &mut (dyn FnMut() -> Result<(), RuntimeError> + Send),
+            ) -> Result<(), DispatchError> {
+                Ok(())
+            }
+            fn read_conversation(
+                &self,
+                _session: &SessionRef,
+            ) -> Result<crate::runtime::Conversation, RuntimeError> {
+                Err(RuntimeError::Refused("unused".into()))
+            }
+            fn send(&self, _session: &SessionRef, _text: &str) -> Result<(), RuntimeError> {
+                Ok(())
+            }
+            fn read_state(&self, session: &SessionRef) -> Result<Thread, RuntimeError> {
+                let is_successor = self
+                    .next_session
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|next| next == session);
+                let (presence, state, active_turn) = if is_successor {
+                    (Presence::Present, SessionState::Running, None)
+                } else {
+                    self.state.lock().unwrap().clone()
+                };
+                Ok(Thread {
+                    session: session.clone(),
+                    project_id: Some("proj-1".into()),
+                    title: Some("Conversation".into()),
+                    semantic_key: None,
+                    worktree: None,
+                    branch: None,
+                    provider: None,
+                    model: None,
+                    interrupted: false,
+                    settled: false,
+                    settled_at: None,
+                    native_status: String::new(),
+                    run_id: None,
+                    activity: None,
+                    presence,
+                    state,
+                    active_turn,
+                    recent_turns: Vec::new(),
+                    native_details: serde_json::Value::Null,
+                })
+            }
+        }
+
+        let root = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = Home::at_user_home(root.path().to_path_buf()).for_writing();
+        let checkout = home.company_dir(&instrukt_core::ids::ProjectSlug::parse("acme").unwrap());
+        instrukt_core::fsx::create_dir_all(&checkout).unwrap();
+        let mut db = StateDb::open(&home).unwrap();
+        let key = "instrukt:conversation:acme:slack:C1";
+        let old_session: SessionRef = "t3:old-gen-1".parse().unwrap();
+        let now: Timestamp = "2026-11-28T10:00:00Z".parse().unwrap();
+
+        let selection = AgentSelection {
+            profile: instrukt_core::ids::ProfileName::parse("default").unwrap(),
+            kind: instrukt_core::config::HarnessKind::Codex,
+            instance: instrukt_core::ids::ProviderInstanceId::parse("codex").unwrap(),
+            model: "gpt-test".into(),
+            effort: None,
+            options: std::collections::BTreeMap::new(),
+        };
+        let old_request = RuntimeStart {
+            key: key.into(),
+            checkout: checkout.clone(),
+            worktree: None,
+            brief: "old turn_output brief".into(),
+            title: "Old".into(),
+            preferences: Vec::new(),
+            selection: Some(selection.clone()),
+            selection_evidence: None,
+            launch_modes: None,
+            native_launch: None,
+            profiles: crate::runtime::Profiles::default(),
+        };
+        db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
+            tx.execute(
+                "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,request,generation)
+                 VALUES ('t3',?1,'conversation',?1,?2,?3,1,?4,1)",
+                params![
+                    key,
+                    old_session.to_string(),
+                    checkout.to_string_lossy(),
+                    serde_json::to_string(&old_request).unwrap(),
+                ],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+        drop(db);
+
+        let fresh_request = RuntimeStart {
+            key: key.into(),
+            checkout: checkout.clone(),
+            worktree: None,
+            brief: "fresh explicit-frontstage opening brief".into(),
+            title: "Fresh".into(),
+            preferences: Vec::new(),
+            selection: Some(selection),
+            selection_evidence: None,
+            launch_modes: None,
+            native_launch: None,
+            profiles: crate::runtime::Profiles::default(),
+        };
+
+        let invocation = super::RuntimeInvocation::acquire(&home, Duration::from_secs(5)).unwrap();
+        let assignment = FollowupAssignment {
+            invocation: &invocation,
+            bindings: None,
+            original_request: None,
+            session: &old_session,
+            request: &fresh_request,
+            project: None,
+            worktree_path: None,
+            replace_brief: true,
+            now,
+        };
+
+        // 1. Busy session (Running with active_turn) is refused without retiring.
+        let busy_adapter = StubRolloverAdapter {
+            state: Mutex::new((
+                Presence::Present,
+                SessionState::Running,
+                Some(ActiveTurn {
+                    run_id: RunId::parse("run-1").unwrap(),
+                    input_id: Some(InputId::parse("cmd-1").unwrap()),
+                    started_at: now,
+                    opening_input: OpeningInput::Text("busy".into()),
+                }),
+            )),
+            created: Mutex::new(Vec::new()),
+            next_session: Mutex::new(None),
+        };
+        let err = super::rollover_present_idle(&busy_adapter, &assignment).unwrap_err();
+        assert!(
+            matches!(err, SessionsError::Refused(ref msg) if msg.contains("not idle")),
+            "expected not-idle refusal, got: {err:?}"
+        );
+        assert!(busy_adapter.created.lock().unwrap().is_empty());
+
+        // 2. Absent session returns Gone without retiring.
+        *busy_adapter.state.lock().unwrap() = (Presence::Absent, SessionState::Gone, None);
+        let err = super::rollover_present_idle(&busy_adapter, &assignment).unwrap_err();
+        assert!(
+            matches!(err, SessionsError::Gone(_)),
+            "expected Gone, got: {err:?}"
+        );
+
+        // 3. Present + InputReady + no active_turn retires gen 1 into runtime_generations
+        //    and launches gen 2 with the fresh opening brief verbatim.
+        *busy_adapter.state.lock().unwrap() = (Presence::Present, SessionState::InputReady, None);
+        let successor = super::rollover_present_idle(&busy_adapter, &assignment).unwrap();
+        assert_ne!(successor.session, old_session);
+        let created = busy_adapter.created.lock().unwrap();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].brief, "fresh explicit-frontstage opening brief");
+
+        let check = StateDb::open(&home).unwrap();
+        let (active_session, active_gen, replaced): (String, u64, Option<String>) = check
+            .conn()
+            .query_row(
+                "SELECT session, generation, replaced_session FROM runtime_bindings WHERE runtime='t3' AND semantic_key=?1",
+                [key],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(active_session, successor.session.to_string());
+        assert_eq!(active_gen, 2);
+        assert_eq!(replaced.as_deref(), Some("t3:old-gen-1"));
+
+        let retired_gen: u64 = check
+            .conn()
+            .query_row(
+                "SELECT generation FROM runtime_generations WHERE runtime='t3' AND semantic_key=?1 AND session='t3:old-gen-1'",
+                [key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(retired_gen, 1);
     }
 }

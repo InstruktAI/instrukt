@@ -16,6 +16,7 @@ tokio.workspace = true
 url.workspace = true
 instrukt-core.workspace = true
 instrukt-runner.workspace = true
+instrukt-runtime.workspace = true
 hex.workspace = true
 indexmap.workspace = true
 jiff.workspace = true

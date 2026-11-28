@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use instrukt_core::ids::SessionRef;
 use jiff::Timestamp;
 
-use crate::runtime::{Presence, RuntimeAdapter};
+use crate::runtime::{Presence, RuntimeAdapter, RuntimeError};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::RunnerState;
 
@@ -197,7 +197,7 @@ fn check_eligibility(
     }
     let thread = match adapter.read_state(session) {
         Ok(thread) => thread,
-        Err(SessionsError::Gone(_)) => {
+        Err(RuntimeError::ThreadNotFound { .. }) => {
             return Ok(Err((
                 NotWoken::Gone {
                     session: session.clone(),
@@ -205,7 +205,7 @@ fn check_eligibility(
                 None,
             )));
         }
-        Err(error) => return Err(error),
+        Err(error) => return Err(error.into()),
     };
     if thread.presence != Presence::Present || thread.state == SessionState::Gone {
         return Ok(Err((
@@ -215,7 +215,7 @@ fn check_eligibility(
             None,
         )));
     }
-    let placement = (|| {
+    let placement = (|| -> Result<(), SessionsError> {
         if target.recorded_project {
             super::verify_recorded_project(&guard.state, &target.key, &thread)?;
         }
@@ -223,7 +223,8 @@ fn check_eligibility(
             .checkout
             .as_deref()
             .ok_or_else(|| super::unverified_project(&target.key, session))?;
-        adapter.verify_thread_project(checkout, &thread, Some(&target.key))
+        adapter.verify_thread_project(checkout, &thread, Some(&target.key))?;
+        Ok(())
     })();
     if let Err(error) = placement {
         return Ok(Err((
@@ -237,12 +238,6 @@ fn check_eligibility(
     match thread.state {
         SessionState::Running | SessionState::NeedsInput => Ok(Err((
             NotWoken::TurnInProgress {
-                session: session.clone(),
-            },
-            None,
-        ))),
-        SessionState::Unknown => Ok(Err((
-            NotWoken::ReadinessUnknown {
                 session: session.clone(),
             },
             None,
@@ -287,7 +282,7 @@ pub fn wake(
         if let Some(error) = misplaced {
             super::note(
                 &guard.state,
-                adapter.runtime(),
+                adapter.runtime_name(),
                 &target.key,
                 now,
                 Err(&error),
@@ -302,7 +297,7 @@ pub fn wake(
             session,
             NotWoken::NotAccepted {
                 session: session.clone(),
-                error: error.into_inner(),
+                error: error.into_inner().into(),
             },
         )),
     }

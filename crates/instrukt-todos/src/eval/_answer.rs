@@ -295,17 +295,33 @@ pub struct EvaluationAnswering {
     home: Home,
     env: Env,
     clock: Clock,
+    runtimes: instrukt_runtime::RuntimeRegistry,
 }
 
 impl EvaluationAnswering {
-    pub fn new(home: Home, env: Env, clock: Clock) -> Self {
-        Self { home, env, clock }
+    pub fn new(
+        home: Home,
+        env: Env,
+        clock: Clock,
+        runtimes: instrukt_runtime::RuntimeRegistry,
+    ) -> Self {
+        Self {
+            home,
+            env,
+            clock,
+            runtimes,
+        }
     }
 }
 
 impl EvaluationAnswers for EvaluationAnswering {
     fn answer(&self, request: Value) -> Result<Value, serde_json::Error> {
-        let work = Work::new(self.home.clone(), self.env.clone(), self.clock.clone());
+        let work = Work::new(
+            self.home.clone(),
+            self.env.clone(),
+            self.clock.clone(),
+            self.runtimes.clone(),
+        );
         let reading = read(&self.home, &work, None);
         serde_json::to_value(answer(&request, &reading, Wording::Public))
     }

@@ -15,7 +15,7 @@ use instrukt_core::home::Home;
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
-// spec: project/instrukt/spec/feature/runner/t3-contract UC-TC1
+// spec: project/instrukt/spec/feature/runtime/t3-contract UC-TC1
 #[test]
 fn a_release_and_its_fake_are_checked_without_a_model_account() {
     if let Ok(stage) = std::env::var("T3_CONTRACT_STAGE") {

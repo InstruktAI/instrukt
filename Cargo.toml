@@ -4,6 +4,8 @@ members = [
     "crates/instrukt-cli",
     "crates/instrukt-core",
     "crates/instrukt-blueprint",
+    "crates/instrukt-runtime",
+    "crates/instrukt-runtime-t3",
     "crates/instrukt-runner",
     "crates/instrukt-todos",
     "crates/instrukt-connector",
@@ -27,6 +29,8 @@ ring = "=0.17.14"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 instrukt-core = { path = "crates/instrukt-core", version = "0.1.0" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
+instrukt-runtime = { path = "crates/instrukt-runtime", version = "0.1.0" }
+instrukt-runtime-t3 = { path = "crates/instrukt-runtime-t3", version = "0.1.0" }
 instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }
 instrukt-todos = { path = "crates/instrukt-todos", version = "0.1.0" }
 instrukt-connector = { path = "crates/instrukt-connector", version = "0.1.0" }

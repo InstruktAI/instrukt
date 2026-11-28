@@ -21,21 +21,25 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use instrukt_core::config::{CONFIG_FILE_NAME, CompanyIdentity, Configuration, Env, Runtime};
+use instrukt_core::config::{CONFIG_FILE_NAME, CompanyIdentity, Configuration, Env};
 use instrukt_core::git;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use instrukt_runner::interfaces::{CompanyError, ProposalStoreCondition, UnestablishedProposal};
-use instrukt_runner::mcp::{McpError, Speaker};
-use instrukt_runner::runtime::RuntimeAdapter;
+use instrukt_runner::mcp::Speaker;
+use instrukt_runner::runtime::RuntimeRegistry;
 use jiff::Timestamp;
 
+use crate::conversations::SpeakerError;
 use _store::Recorded;
 use _store::{Asked, Entry};
 
-/// How long the recording asks the speaker lookup again after an error
+/// How long the recording asks the speaker lookup again after a retryable error
 /// before it records the commit unestablished.
 const SPEAKER_RETRY: Duration = Duration::from_secs(5);
+
+/// Maximum per-attempt live observation timeout so >=2 attempts fit inside `SPEAKER_RETRY`.
+const SPEAKER_ATTEMPT_CAP: Duration = Duration::from_secs(3);
 
 /// The pause between two speaker lookups.
 const SPEAKER_PAUSE: Duration = Duration::from_millis(250);
@@ -52,16 +56,19 @@ enum SpeakerDecision {
     NotAProposal,
     /// An administrator of the company asked for it.
     Proposal(Speaker),
-    /// The lookup could not answer: why. It is asked again.
+    /// A transient lookup failure that may succeed on retry.
     Retry(String),
+    /// A deterministic refusal that will not clear on retry.
+    Failed(String),
 }
 
 /// Decides what `answer`, the speaker lookup's, makes of a commit in the
 /// repository of `company`. An administrator is admitted in a direct
-/// message and a channel alike. An error — a session the runner has not
-/// recorded yet, the state database or the runtime's turn — is retried.
+/// message and a channel alike. Retryable errors (`Unbound`,
+/// `RuntimeObservation`, `Store`) are retried; deterministic errors abort
+/// immediately without spinning.
 fn decide_speaker(
-    answer: Result<Option<Speaker>, McpError>,
+    answer: Result<Option<Speaker>, SpeakerError>,
     company: &ProjectSlug,
 ) -> SpeakerDecision {
     match answer {
@@ -70,7 +77,8 @@ fn decide_speaker(
             SpeakerDecision::NotAProposal
         }
         Ok(Some(speaker)) => SpeakerDecision::Proposal(speaker),
-        Err(error) => SpeakerDecision::Retry(error.to_string()),
+        Err(error) if error.is_retryable() => SpeakerDecision::Retry(error.to_string()),
+        Err(error) => SpeakerDecision::Failed(error.to_string()),
     }
 }
 
@@ -138,19 +146,15 @@ fn retired(facts: &[(String, Holding)]) -> Vec<String> {
 /// fails the commit.
 pub struct Recording {
     clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
-    adapters: Arc<Adapters>,
+    runtimes: RuntimeRegistry,
 }
-
-/// The runtime adapter for the runtime the machine's configuration selects,
-/// as the composition root supplies it.
-pub type Adapters = dyn Fn(Runtime) -> Box<dyn RuntimeAdapter> + Send + Sync;
 
 impl Recording {
     /// A recording that stamps each entry with `clock`'s time and asks the
-    /// committing turn's speaker through the adapter `adapters` supplies for
+    /// committing turn's speaker through the adapter `runtimes` supplies for
     /// the selected runtime.
-    pub fn new(clock: Arc<dyn Fn() -> Timestamp + Send + Sync>, adapters: Arc<Adapters>) -> Self {
-        Self { clock, adapters }
+    pub fn new(clock: Arc<dyn Fn() -> Timestamp + Send + Sync>, runtimes: RuntimeRegistry) -> Self {
+        Self { clock, runtimes }
     }
 
     /// Records the commit just made at `root` as a knowledge proposal when
@@ -197,10 +201,23 @@ impl Recording {
             return Ok(());
         };
         let identity = identity(root).map_err(Unrecorded::Other)?;
-        let adapter = (self.adapters)(global.runner_runtime().map_err(|e| other(&e))?);
+        let runtime = global.runner_runtime().map_err(|e| other(&e))?;
+        let adapter = self
+            .runtimes
+            .adapter(runtime.name(), env)
+            .map_err(|e| other(&e))?;
         let first = Instant::now();
         let asked = loop {
-            let answer = crate::conversations::speaker(&inspection, &session, adapter.as_ref());
+            let remaining = SPEAKER_RETRY
+                .saturating_sub(first.elapsed())
+                .max(Duration::from_millis(1));
+            let timeout = remaining.min(SPEAKER_ATTEMPT_CAP);
+            let answer = crate::conversations::speaker_within(
+                &inspection,
+                &session,
+                adapter.as_ref(),
+                timeout,
+            );
             match decide_speaker(answer, &identity.key) {
                 SpeakerDecision::NotAProposal => return Ok(()),
                 SpeakerDecision::Proposal(speaker) => break (Some(speaker), None),
@@ -215,7 +232,9 @@ impl Recording {
                     );
                     std::thread::sleep(SPEAKER_PAUSE);
                 }
-                SpeakerDecision::Retry(cause) => break (None, Some(cause)),
+                SpeakerDecision::Retry(cause) | SpeakerDecision::Failed(cause) => {
+                    break (None, Some(cause));
+                }
             }
         };
         let commit = head(root).map_err(Unrecorded::Other)?;

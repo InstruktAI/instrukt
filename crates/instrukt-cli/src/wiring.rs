@@ -33,11 +33,24 @@ pub fn caller_lookup(
     ctx: &Ctx,
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::CallerIdentityLookup>>> {
     let inspection = ctx.home.for_inspection();
-    let config = instrukt_core::config::Configuration::load_global(&inspection)?;
+    let process_env = instrukt_core::config::Env::from_process();
+    let config = match instrukt_core::config::Configuration::load_global(&inspection) {
+        Ok(config) => config,
+        Err(load_err) => {
+            for decl in crate::runtimes::DECLARATIONS {
+                if let Ok(adapter) = crate::runtimes::adapter(decl.name, &process_env)
+                    && adapter.lookup_caller(&process_env).is_some()
+                {
+                    let caller: Arc<dyn instrukt_core::interfaces::CallerIdentityLookup> = adapter;
+                    return Ok(Some(caller));
+                }
+            }
+            return Err(load_err.into());
+        }
+    };
     match config.runner_runtime() {
         Ok(runtime) => {
-            let adapter: Arc<dyn instrukt_runner::runtime::RuntimeAdapter> =
-                Arc::from(instrukt_runner::runtime::adapter(runtime));
+            let adapter = crate::runtimes::adapter(runtime.name(), &process_env)?;
             let caller: Arc<dyn instrukt_core::interfaces::CallerIdentityLookup> = adapter;
             Ok(Some(caller))
         }
@@ -56,9 +69,9 @@ pub fn configured_runtimes(
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::ConfiguredAgentRuntimes>>> {
     let config = instrukt_core::config::Configuration::load_global(&ctx.home)?;
     match config.runner_runtime() {
-        Ok(runtime) => Ok(Some(Arc::new(ConfiguredRuntimes(Arc::from(
-            instrukt_runner::runtime::adapter(runtime),
-        ))))),
+        Ok(runtime) => Ok(Some(Arc::new(ConfiguredRuntimes(
+            crate::runtimes::adapter(runtime.name(), &instrukt_core::config::Env::from_process())?,
+        )))),
         Err(error) => {
             tracing::debug!(event = "configured_runtimes_unavailable", error = %error);
             Ok(None)
@@ -78,7 +91,7 @@ impl instrukt_core::interfaces::ConfiguredAgentRuntimes for ConfiguredRuntimes {
         match self.0.configured_agent_runtimes(home, env) {
             Ok(instances) => instrukt_core::interfaces::Answer::Reported(instances),
             Err(error) => instrukt_core::interfaces::Answer::Unreachable {
-                runtime: self.0.runtime().name().to_owned(),
+                runtime: self.0.runtime_name().to_owned(),
                 cause: error.to_string(),
             },
         }
@@ -110,7 +123,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         configured_runtimes: None,
         proposal_recording: Some(Arc::new(instrukt_company::proposals::Recording::new(
             ctx.clock.shared(),
-            Arc::new(instrukt_runner::runtime::adapter),
+            crate::runtimes::registry(),
         ))),
     })
 }
@@ -140,6 +153,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
 pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
     let evidence = _work::evidence(ctx)?;
     Ok(RunnerWiring {
+        runtimes: crate::runtimes::registry(),
         github_credentials: Some(ctx.github.clone()),
         review: Some(_work::review(ctx)?),
         work: _work::ports(ctx)?,

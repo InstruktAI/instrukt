@@ -419,8 +419,11 @@ impl SessionBindings for Work {
                 })
                 .cloned()
         {
-            if retained.attempt.runtime != Some(s.config.runner_runtime().map_err(WorkError::from)?)
-            {
+            let selected_runtime = instrukt_core::ids::RuntimeName::parse(
+                s.config.runner_runtime().map_err(WorkError::from)?.name(),
+            )
+            .map_err(|e| WorkError::refused(e.to_string()))?;
+            if retained.attempt.runtime.as_ref() != Some(&selected_runtime) {
                 return Err(WorkError::refused("retained phase belongs to another runtime").into());
             }
             if retained.attempt.released_at.is_some() {
@@ -510,13 +513,17 @@ impl SessionBindings for Work {
                 from,
             }))
         })()?;
-        let selected_runtime = s.config.runner_runtime().map_err(WorkError::from)?;
+        let selected_runtime = instrukt_core::ids::RuntimeName::parse(
+            s.config.runner_runtime().map_err(WorkError::from)?.name(),
+        )
+        .map_err(|e| WorkError::refused(e.to_string()))?;
         if record.bindings.iter().any(|b| {
             b.role == *role
                 && b.attempt.released_at.is_none()
                 && b.attempt
                     .runtime
-                    .is_some_and(|runtime| runtime != selected_runtime)
+                    .as_ref()
+                    .is_some_and(|runtime| runtime != &selected_runtime)
         }) {
             return Err(WorkError::refused("retained dispatch belongs to another runtime; reconcile that assignment before retrying").into());
         }
@@ -786,7 +793,7 @@ impl SessionBindings for Work {
                 .iter_mut()
                 .find(|b| b.attempt.semantic_key == dispatch.key)
                 .ok_or_else(|| WorkError::refused("the runtime result has no reserved assignment"))?;
-            if binding.attempt.runtime.is_some_and(|runtime|runtime.name()!=dispatch.binding.session.runtime.as_str()) || !matches_driver_role(&binding.role, &dispatch.role)
+            if binding.attempt.runtime.as_ref().is_some_and(|runtime| runtime != &dispatch.binding.session.runtime) || !matches_driver_role(&binding.role, &dispatch.role)
                 || binding.attempt.occurrence != dispatch.occurrence
                 || binding.attempt.released_at.is_some()
                 || binding.session.as_ref().is_some_and(|id| id != &dispatch.binding.session)

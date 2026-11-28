@@ -5,11 +5,19 @@ description: Instrukt's bounded contexts, their module placement and directed re
 
 ## What it is
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The semantic map of instrukt: eleven bounded contexts with separate ownership,
 ten assembled into modules with downward dependencies and one, distribution,
 outside the binary. Contexts own behavior;
 modules determine which capabilities are enabled. The map indexes their domain
 contracts and the designs governing their relationships.
+<!-- change:thin-live-runtime-boundary -->
+The semantic map of instrukt: twelve bounded contexts with separate ownership,
+eleven assembled into modules with downward dependencies and one, distribution,
+outside the binary. Contexts own behavior;
+modules determine which capabilities are enabled. The map indexes their domain
+contracts and the designs governing their relationships.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 ## Ownership boundary
 
@@ -21,6 +29,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 ### Bounded contexts
 
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
@@ -34,10 +43,27 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history, the container each company runs in on a host, and encrypted home backup with guarded restore | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+<!-- change:thin-live-runtime-boundary -->
+| Context | Owns | Domain spec |
+| --- | --- | --- |
+| docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
+| configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
+| publication | Committed-state publication, index patching, rendering of the global agent files, of committed `AGENTS.md` files and of a company's plugin with its catalog entry, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
+| repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
+| specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
+| blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
+| runtime | Vendor-neutral runtime adapter boundary, universal live spine, structured turn correlation, progressive optional capabilities, runtime declarations, and concrete runtime adapters (starting with T3) | `project/instrukt/spec/domain/runtime` |
+| work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history, and encrypted home backup with guarded restore | `project/instrukt/spec/domain/runner` |
+| company | Connectors, the conversations they carry bound to agent sessions, who is answered, explicit replies and curated working status posted back, the active speaker of each turn, knowledge proposals, and isolated company hosting on a host | `project/instrukt/spec/domain/company` |
+| distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 
 ### Modules
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Module | Contexts | Availability and dependencies |
 | --- | --- | --- |
 | core | docs, configuration, publication, repository, specs | Always on; independent of optional modules |
@@ -46,16 +72,36 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
 | conversations | company | Given by a company home's declared connector; runtime adapter required; served by the long-lived `instrukt run` |
+<!-- change:thin-live-runtime-boundary -->
+| Module | Contexts | Availability and dependencies |
+| --- | --- | --- |
+| core | docs, configuration, publication, repository, specs | Always on; independent of optional modules; receives compiled runtime declarations and environment-only caller identity from `runtime` via CLI wiring |
+| blueprint | blueprint | Switchable; uses core repository information and a graph engine |
+| todos | work, workflow, runner, runtime | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
+| history | runner's extraction, retained conversations and merged search; runtime cold text source | On by default; local operations need no Redis; uses runtime's non-live `ColdTextSource` for extraction; merged search independently demands cluster Redis, with no events dependency |
+| events | runner's event sources and standing-agent dispatch; runtime | Independently switchable; runtime adapter required; shares the single runner process |
+| conversations | company, runtime | Given by a company home's declared connector; runtime adapter required; served by the long-lived `instrukt run` |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 Events are a module switch within the runner's semantic boundary, not a tenth
 bounded context. The runner's work follows the enabled modules; events do not
 require todo autostart. A flavor declares its module requirements through
 `requires`. Eval has no module or switch: stamps carry model, version and eval
 fingerprint; reporting uses `instrukt eval report` and the flavor's report
 procedure. There is reportable work only where work passes through the record.
+<!-- change:thin-live-runtime-boundary -->
+Events are a module switch within the runner's semantic boundary, not a
+separate bounded context. The runner's work follows the enabled modules; events
+do not require todo autostart. A flavor declares its module requirements
+through `requires`. Eval has no module or switch: stamps carry model, version
+and eval fingerprint; reporting uses `instrukt eval report` and the flavor's
+report procedure. There is reportable work only where work passes through the
+record.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 A report covering other computers reaches them through the runner's fleet query
 over the cluster connection each computer already has, whether or not history
@@ -67,6 +113,7 @@ Customer / Supplier rows name the supplier first and the customer second.
 The labels follow `sdlc/spec/domain-spec`; direction describes contract use,
 not permission for an upstream module to depend on its consumer.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
@@ -106,10 +153,57 @@ not permission for an upstream module to depend on its consumer.
 | repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
 | publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
 | configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
+<!-- change:thin-live-runtime-boundary -->
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → docs | Customer / Supplier | Read-time configuration interpolation through the CLI |
+| configuration → publication | Customer / Supplier | Project slug, runtime choice and configuration migration operation |
+| configuration → repository | Customer / Supplier | Project slug, runtime choice, role/App references and non-bot author settings |
+| blueprint → runner | Customer / Supplier | Blueprint-owned release pin and tool lifecycle consumed by module installation |
+| configuration → blueprint | Customer / Supplier | Module switch and engine selection |
+| configuration → work, workflow, runner | Customer / Supplier | Board, approval gates, runtime choice, role classes/scoped grants/model selection, App configuration, runner settings and company homes |
+| configuration → company | Customer / Supplier | Company homes with their settings, members, resolved secrets and declared connectors |
+| company → configuration | Published language | Each connector kind's declaration, which configuration validates a company home's `connectors:` against (`project/instrukt/spec/domain/configuration`) |
+| runtime → configuration | Published language | Each compiled runtime's declaration (`RuntimeDeclaration` values, capability flags, shipped instruction catalog, and static legacy-history normalizer hook) and environment-only caller-identity lookup, installed once at CLI startup (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/domain/configuration`) |
+| runtime → publication | Customer / Supplier | Optional configured agent runtimes and their instruction homes reported by the selected runtime's adapter for global agent files; core-declared interface wired by the CLI |
+| runtime → runner | Customer / Supplier | Universal live adapter spine (`start`/`start_or_wake` primitives, `send`, `read_state`, `caller_identity`, `execution_root`, `list`), structured active/recent turn observations with zero live runtime-database reads, and declared optional progressive capabilities (`project/instrukt/spec/domain/runtime`, `project/instrukt/spec/feature/runtime/adapter`) |
+| runtime → company | Customer / Supplier | Live `read_state` with structured active/recent turn correlation and neutral opening-input data for fail-closed active-speaker resolution and live turn tracking, plus idempotent start and send primitives |
+| runtime → work | Customer / Supplier | Runtime session references stored on todos and review evidence without translating native runtime mechanics |
+| runtime → workflow | Customer / Supplier | Runtime capability vocabulary declared in `workflow.yaml` `requires` (`project/instrukt/spec/feature/runtime/adapter`) |
+| runner → company | Customer / Supplier | Keyed start and present-idle rollover orchestration, identity envelopes and the state database handle |
+| company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner, implemented by company and wired by the CLI; a connector's direct message to one person, which MCP sign-in sends its links through |
+| work → company | Customer / Supplier | The state database's file, writer lock and migrations, holding the conversation tables |
+| work, runner, company → CLI admission | Published language | Owner-supplied todo attempts, standing/scheduled assignment facts and conversation assignments for the recognized caller; core-declared lookup wired by the CLI |
+| work GitHub boundary → runner, repository | Customer / Supplier | Installation credential and verified bot-actor interfaces, composed by CLI wiring without reversing crate dependencies |
+| docs → publication | Customer / Supplier | Snippet identity, validation, `index.yaml` and `schema.yaml` model, and reference model |
+| publication → docs | Customer / Supplier | Home corpus and owner-patched global index consumed by retrieval; whether a repository's `docs/index.yaml` is its company index, consumed by validation |
+| publication → work | Customer / Supplier | Eval fingerprint recorded per published commit, copied into stamps |
+| publication → repository | Customer / Supplier | Sync and committed-entrypoint rendering invoked by repository hook sections |
+| blueprint → repository | Customer / Supplier | Graph generation invoked by hooks for a push or pull advancing main; CLI wires the core-declared interface |
+| docs → specs | Customer / Supplier | Feature-spec use-case inventory and pending markers |
+| specs → blueprint | Customer / Supplier | Use-case inventory and test bindings joined to the graph for traces (trace is blueprint's) |
+| configuration → specs | Customer / Supplier | Project slug identifying the repository inventory |
+| workflow → docs | Customer / Supplier | Declared flavor roles validated through a core interface when todos is enabled |
+| work → docs | Customer / Supplier | Existence of todo slugs named by pending docs, only with todos enabled |
+| work → repository | Customer / Supplier | Todo existence through a core-declared interface wired by the CLI when todos is enabled |
+| work → workflow | Customer / Supplier | Artifacts, stamps and facts from which state is derived |
+| workflow → runner | Customer / Supplier; Published language | Computed state, transitions and finalize-ready event used for dispatch |
+| work → runner | Customer / Supplier | Work reads and command-contract writes: claims and reflection flushes, last-fired stamps, automatic holds, expired-record purge and per-role session bindings |
+| runner → work | Customer / Supplier | Event-log append used when the finalize-ready stamp records `workflow.finalized` |
+| docs → runner | Customer / Supplier | Procedures and their event subscriptions |
+| publication → workflow | Customer / Supplier | Published flavor manifest (`workflow.yaml`: orchestrator, requires, roles) from the selected domain's `docs/domain/<x>/workflow/` |
+| publication → runner | Customer / Supplier | Project checkout paths recorded in publication state |
+| repository → workflow | Customer / Supplier | Candidate integration branch and exact-commit main advancement |
+| runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` and `runner.dependency_failing` supply their respective failed-check evidence |
+| repository → publication | Customer / Supplier | Hook-section state read by `instrukt status` |
+| publication → distribution | Published language | `instrukt status`, the state the cockpit skill reads |
+| configuration, repository, runner → distribution | Published language | `instrukt config`, `instrukt init` and `instrukt install`, the commands the cockpit runs |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Automatic review adds these crossings; their composition is the review gate in
 `project/instrukt/design/architecture/overview`.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → runner, work, workflow | Customer / Supplier | The per-project automatic-review opt-in |
@@ -120,6 +214,18 @@ Automatic review adds these crossings; their composition is the review gate in
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer, the runner's red observation of the canonical head and the runner's answer on each uncovered commit's named session; for a held candidate, which uncovered commits wait on which session's decision, and whether the candidate owes its own review |
 | runner → workflow | Customer / Supplier | Whether the selected runtime holds a named session, consulted for each uncovered commit's authoring session when coverage is derived |
 | runner → workflow | Published language | `runner.candidate_held` tells the integrator which candidate is held and for whose decisions |
+<!-- change:thin-live-runtime-boundary -->
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner, work, workflow | Customer / Supplier | The per-project automatic-review opt-in |
+| work → configuration, runner | Customer / Supplier | The readiness of the project identity to observe and of the reviewer identity to publish, consulted where the opt-in is admitted and by installation inspection |
+| work → runner | Customer / Supplier | Whether a pull request is a todo's, whether a commit carries a verdict and which review evidence is current for it; recording or withdrawing a derived approval and publishing outstanding verdicts through work's command contract |
+| runner → work | Customer / Supplier | A commit's review requests, each with its number, its standing (queued, selected, handed over to a named session, or ended with its disposition), the session it reached and its pinned base, consulted when a head verdict is admitted |
+| work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
+| workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer, the runner's red observation of the canonical head and the runner's answer on each uncovered commit's named session; for a held candidate, which uncovered commits wait on which session's decision, and whether the candidate owes its own review |
+| runner → workflow | Customer / Supplier | Whether the selected runtime holds a named session (composed by runner over runtime's `read_state` and project-verification checks with runner's delivery-eligibility rules), consulted for each uncovered commit's authoring session when coverage is derived |
+| runner → workflow | Published language | `runner.candidate_held` tells the integrator which candidate is held and for whose decisions |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 The commit-time review-routing choice adds one crossing, whether or not the
 project opted in to automatic review
@@ -220,6 +326,7 @@ belong to blueprint. Core declares the todo-existence, flavor-role lookup and
 hook-generation interfaces; the CLI wires work and workflow when todos is
 enabled, and blueprint when blueprint is enabled.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub boundary translates the record one way into
 issues, artifacts, the work branch, its pull request and reviews, and people's
@@ -230,6 +337,21 @@ S3-compatible object-storage adapter translates home backup publication, listing
 retention, and restore operations into provider-neutral S3 API calls; the
 company context's connectors translate a channel provider's messages into
 conversation turns and answers, at the connector interface company defines.
+<!-- change:thin-live-runtime-boundary -->
+External models are translated through **Anti-corruption layer (ACL)**
+relationships: work's GitHub boundary translates the record one way into
+issues, artifacts, the work branch, its pull request and reviews, and people's
+controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
+node-link contract; runtime's concrete adapter crates translate session
+operations, authenticated live state and turn observations, non-live cold text
+extraction, and thread archiving into `instrukt-runtime`'s neutral types;
+runner's event-source boundary translates external notifications; runner's
+S3-compatible object-storage adapter translates home backup publication, listing,
+retention, and restore operations into provider-neutral S3 API calls; the
+company context's connectors translate a channel provider's messages into
+conversation turns and explicit answers, at the connector interface company
+defines.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.

@@ -169,6 +169,9 @@ Then no attention event is produced
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)
 - [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)

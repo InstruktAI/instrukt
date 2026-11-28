@@ -2,8 +2,8 @@
 use super::{PublishedRecord, position_owners};
 use crate::{
     config::{
-        self, Configuration, Env, Feature, Layer, LayerInspection, Module, Runtime, Unavailable,
-        WorkflowCapability,
+        self, Configuration, Env, Feature, Layer, LayerInspection, Module, RuntimeDeclaration,
+        Unavailable, WorkflowCapability,
     },
     git,
     home::Home,
@@ -293,7 +293,7 @@ pub fn inspect(request: &Request<'_>) -> Report {
     }
 }
 fn runtime_section(
-    runtime: Option<Runtime>,
+    runtime: Option<&'static RuntimeDeclaration>,
     caller: Option<SessionRef>,
     errors: &[Value],
 ) -> Value {
@@ -304,7 +304,7 @@ fn runtime_section(
     });
     json!({"selected":runtime.map(|r|r.name()),"caller":caller,"capabilities":capabilities,"errors":errors})
 }
-fn features(runtime: Option<Runtime>, unreadable: bool) -> Value {
+fn features(runtime: Option<&'static RuntimeDeclaration>, unreadable: bool) -> Value {
     let mut result = serde_json::Map::new();
     for (key, feature) in [
         ("standing_agents", Feature::StandingAgents),
@@ -396,6 +396,7 @@ mod tests {
     }
 
     fn run_inspect(standing: Result<BackupStanding, BackupStandingError>) -> Report {
+        crate::config::install_runtime_fixture();
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         let env = Env::default();

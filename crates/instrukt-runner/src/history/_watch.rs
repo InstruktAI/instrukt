@@ -1,6 +1,6 @@
 //! Hosts an adapter's source notifications in the existing runner.
 use super::{HistoryError, extract};
-use crate::runtime::conversations::SourceWake;
+use crate::runtime::{RuntimeRegistry, cold_text::SourceWake};
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -30,7 +30,12 @@ impl Worker {
     /// clears what it recorded, an earlier process's record included. It
     /// ends only when stopped or when history is switched off, leaving no
     /// record.
-    pub(super) fn start(home: &Home, env: &Env, current: Current) -> Result<Self, HistoryError> {
+    pub(super) fn start(
+        home: &Home,
+        env: &Env,
+        current: Current,
+        runtimes: RuntimeRegistry,
+    ) -> Result<Self, HistoryError> {
         let home = home.clone();
         let env = env.clone();
         let (stop, stopping) = mpsc::sync_channel(1);
@@ -40,14 +45,21 @@ impl Worker {
                 let mut health = Health::default();
                 let mut delay = Duration::from_secs(1);
                 loop {
-                    let error =
-                        match serve(&home, &env, &current, &stopping, &mut health, &mut delay) {
-                            Ok(()) => {
-                                crate::state::worker_state(&home, EXTRACTION, None);
-                                return;
-                            }
-                            Err(error) => error,
-                        };
+                    let error = match serve(
+                        &home,
+                        &env,
+                        &current,
+                        &runtimes,
+                        &stopping,
+                        &mut health,
+                        &mut delay,
+                    ) {
+                        Ok(()) => {
+                            crate::state::worker_state(&home, EXTRACTION, None);
+                            return;
+                        }
+                        Err(error) => error,
+                    };
                     health.failed(&home, &error);
                     if stopping.recv_timeout(delay).is_ok() {
                         crate::state::worker_state(&home, EXTRACTION, None);
@@ -143,12 +155,18 @@ fn serve(
     home: &Home,
     env: &Env,
     current: &Current,
+    runtimes: &RuntimeRegistry,
     stopping: &mpsc::Receiver<()>,
     health: &mut Health,
     delay: &mut Duration,
 ) -> Result<(), HistoryError> {
-    let adapter = crate::runtime::adapter(current.get().global().runner_runtime()?);
-    let source = adapter.conversation_source(home, env)?;
+    let runtime = current.get().global().runner_runtime()?;
+    let adapter = runtimes
+        .adapter(runtime.name(), env)
+        .map_err(crate::sessions::SessionsError::from)?;
+    let source = adapter
+        .cold_text_source(home, env)
+        .map_err(crate::sessions::SessionsError::from)?;
     let mut notifications = source.subscribe()?;
     let mut following = Following::changed(Instant::now());
     let mut requested = false;
@@ -159,7 +177,7 @@ fn serve(
         if !requested {
             following = Following::changed(Instant::now());
         }
-        extract(home, env)?;
+        extract(home, env, runtimes)?;
         health.extracted(home);
         *delay = Duration::from_secs(1);
         if requested {

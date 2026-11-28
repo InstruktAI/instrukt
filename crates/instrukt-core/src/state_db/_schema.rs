@@ -54,7 +54,120 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v41),
     Sql(V42),
     Step(v43),
+    Step(v44),
 ];
+
+/// Version 44: unconditional explicit frontstage and live turn correlation
+/// (`state-database`, Version 44). Drops live-source and `turn_output` columns,
+/// marks live and crash-window `turn_output` bindings for one-time demand-driven
+/// explicit-frontstage rollover, clears cached opening requests on unstarted
+/// `turn_output` bindings, adds live turn-correlation and terminal-error columns
+/// on `conversation_messages` with `dispatch_command_id` backfill from
+/// `runtime_bindings.start_key`, and adds `conversation_answers.source_message`.
+fn v44(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let has = |table: &str, column: &str| -> rusqlite::Result<bool> {
+        tx.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [column],
+            |row| row.get(0),
+        )
+    };
+    if !has("connected_conversations", "needs_explicit_rollover")? {
+        tx.execute_batch(
+            "ALTER TABLE connected_conversations ADD COLUMN needs_explicit_rollover INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    if has("connected_conversations", "reply_mode")? {
+        // Mark live and crash-window `turn_output` bindings for one-time rollover.
+        tx.execute_batch(
+            "UPDATE connected_conversations
+             SET needs_explicit_rollover = 1
+             WHERE reply_mode = 'turn_output'
+               AND (
+                   session IS NOT NULL
+                   OR EXISTS (
+                       SELECT 1 FROM runtime_bindings b
+                       WHERE b.semantic_key = connected_conversations.semantic_key
+                   )
+               );
+             UPDATE connected_conversations
+             SET request = NULL, opening = NULL, opening_conversation = NULL
+             WHERE reply_mode = 'turn_output'
+               AND session IS NULL
+               AND request IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM runtime_bindings b
+                   WHERE b.semantic_key = connected_conversations.semantic_key
+               );",
+        )?;
+    }
+    for column in ["reply_mode", "source_identity", "position_json"] {
+        if has("connected_conversations", column)? {
+            tx.execute_batch(&format!(
+                "ALTER TABLE connected_conversations DROP COLUMN {column};"
+            ))?;
+        }
+    }
+    if has("conversation_messages", "turn_update")? {
+        tx.execute_batch("ALTER TABLE conversation_messages DROP COLUMN turn_update;")?;
+    }
+    for (column, ddl) in [
+        (
+            "observed_run_id",
+            "ALTER TABLE conversation_messages ADD COLUMN observed_run_id TEXT;",
+        ),
+        (
+            "turn_started_at",
+            "ALTER TABLE conversation_messages ADD COLUMN turn_started_at TEXT;",
+        ),
+        (
+            "terminal_error_queued_at",
+            "ALTER TABLE conversation_messages ADD COLUMN terminal_error_queued_at TEXT;",
+        ),
+    ] {
+        if !has("conversation_messages", column)? {
+            tx.execute_batch(ddl)?;
+        }
+    }
+    // Backfill Turn 1 `dispatch_command_id` on pre-upgrade in-flight `state = 'sent'`
+    // opening rows from `runtime_bindings.start_key`, matching exact `(semantic_key, session)`
+    // across multi-runtime PKs, `session_scope = 'company'` (`opening_conversation`),
+    // pre-v34 `opening_conversation IS NULL`, and pre-v29 `start_key IS NULL`.
+    tx.execute_batch(
+        "UPDATE conversation_messages
+         SET dispatch_command_id = (
+             SELECT b.start_key
+             FROM connected_conversations c
+             JOIN runtime_bindings b
+               ON b.semantic_key = c.semantic_key
+              AND b.session = c.session
+             WHERE c.company = conversation_messages.company
+               AND c.connector = conversation_messages.connector
+               AND COALESCE(c.opening_conversation, c.conversation) = conversation_messages.conversation
+               AND c.opening = conversation_messages.message
+               AND b.start_key IS NOT NULL
+             LIMIT 1
+         )
+         WHERE state = 'sent'
+           AND dispatch_command_id IS NULL
+           AND EXISTS (
+               SELECT 1
+               FROM connected_conversations c
+               JOIN runtime_bindings b
+                 ON b.semantic_key = c.semantic_key
+                AND b.session = c.session
+               WHERE c.company = conversation_messages.company
+                 AND c.connector = conversation_messages.connector
+                 AND COALESCE(c.opening_conversation, c.conversation) = conversation_messages.conversation
+                 AND c.opening = conversation_messages.message
+                 AND b.start_key IS NOT NULL
+           );",
+    )?;
+    if !has("conversation_answers", "source_message")? {
+        tx.execute_batch("ALTER TABLE conversation_answers ADD COLUMN source_message TEXT;")?;
+    }
+    Ok(())
+}
 
 /// Drops the retired `runner_skipped_wake` table once empty or transferred.
 const DROP_RUNNER_SKIPPED_WAKE: &str = "DROP TABLE IF EXISTS runner_skipped_wake;";

@@ -95,15 +95,16 @@ classify() {
     case $1 in
     # What the Graphify contract test runs: the CLI and its harness, the
     # engine and its pin (instrukt-blueprint), module installation and the
-    # generation the runner drives, and the crates those build on.
-    crates/instrukt-cli/* | crates/instrukt-blueprint/* | crates/instrukt-runner/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-outside/*)
+    # generation the runner drives, the runtime facade and T3 adapter, and the
+    # crates those build on.
+    crates/instrukt-cli/* | crates/instrukt-blueprint/* | crates/instrukt-runner/* | crates/instrukt-runtime/* | crates/instrukt-runtime-t3/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-outside/*)
         graphify=true ;;
     esac
     case $1 in
-    # What the T3 contract test runs: the CLI and its harness, the T3 adapter
-    # and its pin (instrukt-runner), the crates it builds on (instrukt-blueprint
-    # among them), and dispatch.
-    crates/instrukt-cli/* | crates/instrukt-runner/* | crates/instrukt-blueprint/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-outside/* | crates/instrukt-todos/*)
+    # What the T3 contract test runs: the CLI and its harness, the runtime
+    # facade and T3 adapter with its pin (instrukt-runtime-t3), the crates it
+    # builds on (instrukt-blueprint among them), and dispatch.
+    crates/instrukt-cli/* | crates/instrukt-runner/* | crates/instrukt-runtime/* | crates/instrukt-runtime-t3/* | crates/instrukt-blueprint/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-outside/* | crates/instrukt-todos/*)
         t3=true ;;
     esac
     case $1 in

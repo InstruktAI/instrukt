@@ -1,0 +1,28 @@
+[package]
+name = "instrukt-runtime-t3"
+description = "T3 Code runtime adapter for instrukt."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+hex.workspace = true
+instrukt-core.workspace = true
+instrukt-outside.workspace = true
+instrukt-runtime.workspace = true
+jiff.workspace = true
+notify.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tungstenite.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

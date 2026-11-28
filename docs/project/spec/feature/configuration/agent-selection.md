@@ -101,10 +101,20 @@ not change an existing conversation.
 
 ### Readiness, skips and quota
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The runner supplies readiness, capacity and selection-realization outcomes under
 `project/instrukt/spec/feature/runner/session-continuity`. Selection consumes
 those outcomes before a new start, preserving the configured profile order and
 per-tier chains.
+<!-- change:thin-live-runtime-boundary -->
+The runtime adapter supplies readiness snapshots and native option translation
+(`project/instrukt/spec/feature/runtime/adapter`,
+`project/instrukt/spec/feature/runtime/t3`), while the runner supplies capacity
+and selection-realization outcomes under
+`project/instrukt/spec/feature/runner/session-continuity`. Selection consumes
+those outcomes before a new start, preserving the configured profile order and
+per-tier chains.
+<!-- /planned-change:thin-live-runtime-boundary -->
 Skips and exhaustion retain their reasons and leave work pending through the
 existing anomaly route.
 
@@ -189,3 +199,7 @@ Retired: readiness and quota are parts of the prose contract above.
 - [project/instrukt/spec/feature/configuration/owned-files](owned-files.md)
 - [project/instrukt/spec/feature/configuration/configuration-skill](configuration-skill.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runtime/t3](../runtime/t3.md)
+<!-- /planned:thin-live-runtime-boundary -->

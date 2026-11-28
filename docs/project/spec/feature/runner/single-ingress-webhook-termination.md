@@ -90,10 +90,17 @@ activates only on that computer, whatever `ingress.reactions` names.
 
 When the ingress and the reacting computer differ, they need different things:
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Computer | Needs | Does not need |
 | --- | --- | --- |
 | Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `company.yaml`, and the signing values in the declaring home's owner-only secrets file, with events enabled for the declaring home | A runtime (`project/instrukt/spec/feature/runner/session-continuity`), or any procedure run for an external fact |
 | Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
+<!-- change:thin-live-runtime-boundary -->
+| Computer | Needs | Does not need |
+| --- | --- | --- |
+| Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `company.yaml`, and the signing values in the declaring home's owner-only secrets file, with events enabled for the declaring home | A runtime (`project/instrukt/spec/feature/runtime/adapter`), or any procedure run for an external fact |
+| Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Changing `ingress.reactions` or `ingress.computer` is a change the operator
 coordinates while nothing is in flight. It is supported only when no
@@ -216,5 +223,8 @@ And the server publishes the fact and runs no procedure for it
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework](inbound-webhook-endpoint-framework.md)
 - [project/instrukt/spec/feature/runner/event-transport](event-transport.md)

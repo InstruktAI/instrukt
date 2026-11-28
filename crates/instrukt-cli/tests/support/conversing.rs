@@ -113,12 +113,20 @@ pub fn wait(what: &str, condition: impl FnMut() -> bool) {
 /// its start is done and the turn under way. The assignment itself answers
 /// from the binding made before the start.
 pub fn wait_for_binding(env: &TestEnv, session: &str) {
-    let state = instrukt_core::home::Home::at_user_home(env.home().into());
-    let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
-    wait("the session's recorded binding", || {
-        instrukt_company::conversations::conversation_binding(&state, &caller)
-            .unwrap()
-            .is_some()
+    let db_path = env.instrukt_home().join("state/instrukt.db");
+    let session_ref = format!("t3:{session}");
+    wait("the recorded binding", || {
+        instrukt_core::state_db::rusqlite::Connection::open(&db_path)
+            .ok()
+            .and_then(|db| {
+                db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE session=?1)",
+                    [&session_ref],
+                    |row| row.get::<_, bool>(0),
+                )
+                .ok()
+            })
+            .unwrap_or(false)
     });
 }
 
@@ -507,25 +515,90 @@ impl Company {
         self.runtime.threads().remove(0)
     }
 
+    /// Sends an explicit member-visible reply via `instrukt company reply`
+    /// while acting as `session`.
+    pub fn reply(&self, session: &str, conversation: Option<&str>, text: &str) {
+        let native = self.runtime.native_id(session);
+        let here = self.env.path("");
+        let mut args = vec!["company", "reply"];
+        if let Some(conv) = conversation {
+            args.extend(["--conversation", conv]);
+        }
+        args.extend(["--text", "-"]);
+        self.env
+            .instrukt(&here)
+            .env("T3CODE_THREAD_ID", &native)
+            .args(args)
+            .write_stdin(text)
+            .assert()
+            .success();
+    }
+
+    /// Sets the active turn's curated member-visible status line via
+    /// `instrukt company status` while acting as `session`.
+    pub fn set_status_line(&self, session: &str, conversation: Option<&str>, text: &str) {
+        let native = self.runtime.native_id(session);
+        let here = self.env.path("");
+        let mut args = vec!["company", "status"];
+        if let Some(conv) = conversation {
+            args.extend(["--conversation", conv]);
+        }
+        args.extend(["--text", text]);
+        self.env
+            .instrukt(&here)
+            .env("T3CODE_THREAD_ID", &native)
+            .args(args)
+            .assert()
+            .success();
+    }
+
+    /// Completes the active turn idle without invoking `instrukt company reply`,
+    /// optionally recording raw assistant output in the fake thread to verify
+    /// that raw output is never posted to members.
+    pub fn finish_idle_without_reply(&mut self, session: &str, raw_output: Option<&str>) {
+        let native = self.runtime.native_id(session);
+        if let Some(raw) = raw_output {
+            self.runtime.finish(&native, "idle", raw);
+        } else {
+            self.runtime.set_status(&native, "idle");
+        }
+    }
+
+    /// Marks the active turn failed on the runtime projection.
+    pub fn fail_turn(&mut self, session: &str) {
+        let native = self.runtime.native_id(session);
+        self.runtime.set_status(&native, "failed");
+    }
+
     /// The runtime finishes the turn started by the session's `n`th input,
-    /// answering with `reply`, and the session becomes idle.
+    /// answering with `reply` via explicit `instrukt company reply` (when
+    /// `reply` is non-empty and not `"NOOP"`), and the session becomes idle.
     pub fn finish_turn(&mut self, session: &str, n: usize, reply: &str) {
         let native = self.runtime.native_id(session);
         let session = native.as_str();
-        self.store
-            .thread(session, None, None, "2026-11-08T10:00:00.000Z");
         self.finish_projected_turn(session, n, reply);
     }
 
-    /// Complete a turn in an already projected thread with a single commit.
+    /// Complete a turn in an already projected thread: calls
+    /// `instrukt company reply` when `reply` is a real answer, then marks the
+    /// runtime thread idle (`TurnState::Completed`).
     pub fn finish_projected_turn(&mut self, session: &str, n: usize, reply: &str) {
         let native = self.runtime.native_id(session);
         let session = native.as_str();
         self.turns += 1;
-        let turn = format!("turn-{}", self.turns);
-        let input = self.runtime.message(session, n);
-        self.store.turn(session, &turn, self.turns, &input, reply);
-        self.runtime.set_status(session, "idle");
+        if !reply.is_empty() && reply != "NOOP" {
+            wait_for_binding(&self.env, session);
+            let input = self.runtime.message(session, n);
+            let explicit_conv = input.lines().find_map(|line| {
+                line.strip_prefix("Reply command: instrukt company reply --conversation ")
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .map(str::to_owned)
+            });
+            self.reply(session, explicit_conv.as_deref(), reply);
+            self.runtime.set_status(session, "idle");
+        } else {
+            self.runtime.set_status(session, "idle");
+        }
     }
 
     /// What the session's `n`th accepted input carries, as the registered

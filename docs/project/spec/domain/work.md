@@ -102,10 +102,16 @@ runner owns dispatch, and the configured runtime owns conversations.
   the candidate's review status it stands only while that finding is found
   again.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Revision**
 : A later version of a commit's head verdict, recorded by the session that
   recorded the current one in a turn that no review request for that commit
   opened.
+<!-- change:thin-live-runtime-boundary -->
+**Revision**
+: A later version of a commit's head verdict, recorded by the session that
+  recorded the current one.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **Handed-over approval**
 : A head verdict its reviewing session returned and did not record, entered by
@@ -143,6 +149,7 @@ runner owns dispatch, and the configured runtime owns conversations.
   with `--by human|peer [--session <runtime:id>]`; evidence read capabilities for workflow, and
   `instrukt eval report`. Workflow-driving subcommands belong to the workflow
   contract even though they share the todo namespace.
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
   published eval provenance, and the projects a home publishes with their
   checkout paths, which the evaluation report reads; workflow and runner record evidence through
@@ -154,6 +161,19 @@ runner owns dispatch, and the configured runtime owns conversations.
   status, hold and attempt changes call, and the fleet query and fleet
   membership record the evaluation report covers other computers through.
   Standing-agent event delivery is optional and is not the work record.
+<!-- change:thin-live-runtime-boundary -->
+- **Allowed dependencies:** configuration supplies project settings; publication supplies
+  published eval provenance, and the projects a home publishes with their
+  checkout paths, which the evaluation report reads; workflow and runner record evidence through
+  work’s mutation contract; runtime supplies session references (`project/instrukt/spec/domain/runtime`);
+  GitHub is the required surface reflection writes to and people's controls
+  are read from, and holds no copy of the record; the project's git remote
+  receives the published work branch; the runner supplies the event-log
+  append the finalize-ready stamp uses, the fleet-attention contract its
+  status, hold and attempt changes call, and the fleet query and fleet
+  membership record the evaluation report covers other computers through.
+  Standing-agent event delivery is optional and is not the work record.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Implementation roots:** the `instrukt-todos` crate.
 
 The GitHub boundary also answers for adding a company
@@ -404,11 +424,17 @@ owning design snippet or decision record is declared.
   coverage finding the runner read from workflow, withdraws one that a later
   finding no longer covers, and publishes what is outstanding to the pull
   requests the runner observed.
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Runner → work (automatic review)** — customer-supplier. The runner supplies
   a commit's review requests with their standing and pinned base, which input
   opened the turn a session has in progress when it offers a revision, and a
   named session's conversation; work consults them when it admits a head
   verdict.
+<!-- change:thin-live-runtime-boundary -->
+- **Runner → work (automatic review)** — customer-supplier. The runner supplies
+  a commit's review requests with their standing and pinned base; work consults
+  them when it admits a head verdict.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 
 - **Work → runner (requested review)** — customer-supplier. Work answers
@@ -436,8 +462,15 @@ owning design snippet or decision record is declared.
   that answer alone, and reads a candidate's result from it together with the
   review status.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
   references; work stores these without translating native runtime mechanics.
+<!-- change:thin-live-runtime-boundary -->
+- **Runtime → work** — customer-supplier. The runtime bounded context supplies
+  session references through its neutral adapter boundary
+  (`project/instrukt/spec/domain/runtime`); work stores these without
+  translating native runtime mechanics or reading a runtime database.
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **GitHub** — anti-corruption-layer. Reflection translates work records one
   way into issues, labels, board items, native artifacts, the published work
   branch, its pull request and reviews; the boundary translates people's

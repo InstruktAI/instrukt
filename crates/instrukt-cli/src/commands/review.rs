@@ -233,10 +233,14 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         slug: project.slug,
         root: project.root,
     };
+    let env = crate::wiring::environment(ctx)?;
+    let runtimes = crate::runtimes::registry();
     let reply = requested_review::ask(
         &requested_review::AskContext {
             home: &ctx.home,
             config: &config,
+            env: &env,
+            runtimes: &runtimes,
             project: &project,
             verdicts: verdicts.as_ref(),
             asker,

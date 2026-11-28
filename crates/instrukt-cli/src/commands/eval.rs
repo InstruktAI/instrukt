@@ -79,6 +79,7 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         ctx.home.clone(),
         crate::wiring::environment(ctx)?,
         ctx.clock.shared(),
+        crate::runtimes::registry(),
     );
     let project = work.project_at(&root)?;
     let report = eval::covering(&eval::Asked {

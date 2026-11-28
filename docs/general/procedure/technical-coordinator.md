@@ -191,9 +191,15 @@ coordination:
    - advise your person in their conversation and register, as your own
      reading of the return, with the recommendation and what follows from each
      choice (`general/principle/stewardship`);
+<!-- planned-change:thin-live-runtime-boundary -->
    - on a company connector, post that advice with `instrukt company reply`
      into the conversation the work came from; a turn another agent started
      posts nothing by itself;
+<!-- change:thin-live-runtime-boundary -->
+   - on a company connector, post that advice with `instrukt company reply`
+     into the conversation the work came from; every company connector turn
+     posts exclusively via explicit frontstage commands;
+<!-- /planned-change:thin-live-runtime-boundary -->
    - the people concerned may settle it among themselves. When your person
      brings back the agreed outcome — keep, change, merge into another todo,
      or retire the work, for instance in favour of an existing solution —
@@ -209,9 +215,17 @@ coordination:
    Never forward what another person said in their conversation; only the
    shared surface the coordinator returned crosses.
 
+<!-- planned-change:thin-live-runtime-boundary -->
 6. **Deliver deliberate, human-register replies.** Answer on the active
    session's reply surface in concise human register calibrated to the listener
    (`general/principle/calibration`):
+<!-- change:thin-live-runtime-boundary -->
+6. **Deliver deliberate, human-register replies.** Answer on the active
+   session's reply surface (exclusively `instrukt company reply` on a company
+   connector, with optional `instrukt company status` progress updates while
+   working on an active addressed turn) in concise human register calibrated to
+   the listener (`general/principle/calibration`):
+<!-- /planned-change:thin-live-runtime-boundary -->
    - state what was checked, the selected lane and next move, current status,
      and any decision owned by the human;
    - keep human-facing summaries free of raw tool traces, command diagnostics,

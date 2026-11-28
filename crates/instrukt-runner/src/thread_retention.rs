@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use instrukt_core::config::{Admitted, Runtime};
+use instrukt_core::config::{Admitted, Env};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use jiff::{SignedDuration, Timestamp};
@@ -70,7 +70,7 @@ impl Reported {
 /// thread.
 pub struct Pass {
     home: Home,
-    runtime: Runtime,
+    adapter: Arc<dyn RuntimeAdapter>,
     window: SignedDuration,
     projects: Vec<ProjectRef>,
     work: Option<Arc<dyn OpenWorkSessions>>,
@@ -80,7 +80,12 @@ impl Pass {
     /// The pass `admitted` asks for: `None` while its retention window is off
     /// or withheld. It covers every published project whose checkout is on
     /// this computer, whatever modules that project switches on.
-    pub fn prepare(home: &Home, admitted: &Admitted, wiring: &RunnerWiring) -> Option<Self> {
+    pub fn prepare(
+        home: &Home,
+        env: &Env,
+        admitted: &Admitted,
+        wiring: &RunnerWiring,
+    ) -> Option<Self> {
         let window = admitted.thread_retention()?;
         let runtime = match admitted.global().runner_runtime() {
             Ok(runtime) => runtime,
@@ -89,9 +94,16 @@ impl Pass {
                 return None;
             }
         };
+        let adapter = match wiring.runtimes.adapter(runtime.name(), env) {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                tracing::warn!(event = "thread_retention_withheld", cause = %error);
+                return None;
+            }
+        };
         Some(Self {
             home: home.clone(),
-            runtime,
+            adapter,
             window,
             projects: admitted
                 .projects()
@@ -112,13 +124,12 @@ impl Pass {
     /// threads up to the per-pass bound, logging recurring causes in
     /// `reported` when they appear or change.
     pub fn run(self, now: Timestamp, reported: &mut Reported) {
-        let adapter = crate::runtime::adapter(self.runtime);
-        self.run_with(adapter.as_ref(), now, reported);
+        self.run_with(self.adapter.as_ref(), now, reported);
     }
 
     fn run_with(&self, adapter: &dyn RuntimeAdapter, now: Timestamp, reported: &mut Reported) {
         let state = RunnerState::new(&self.home);
-        let standing = crate::standing::held_sessions(&state, self.runtime.name())
+        let standing = crate::standing::held_sessions(&state, adapter.runtime_name())
             .map_err(|error| error.to_string());
         let work = self
             .work

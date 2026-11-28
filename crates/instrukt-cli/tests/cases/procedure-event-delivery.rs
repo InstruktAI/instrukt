@@ -1316,7 +1316,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
     // tier; the project agent on the machine's order for its role.
     let home = instrukt_core::home::Home::at_user_home(r.computer.env.home().into());
     let agents = instrukt_core::config::Agents::load(&home).unwrap();
-    let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
+    let adapter = instrukt_runtime_t3::T3::default();
     for (event, role, order) in [
         ("company", "company-responder", Some(vec![profile.clone()])),
         ("project", "responder", None),
@@ -1326,12 +1326,9 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
             .unwrap()
             .remove(0);
         let session = r.delivered_to(event);
-        let started = instrukt_runner::keyed::request(
-            &home,
-            adapter.as_ref(),
-            &r.runtime.key(session.id.as_str()),
-        )
-        .unwrap();
+        let started =
+            instrukt_runner::keyed::request(&home, &adapter, &r.runtime.key(session.id.as_str()))
+                .unwrap();
         assert_eq!(
             started.preferences.first(),
             Some(&instrukt_runner::agents::AgentChoice {

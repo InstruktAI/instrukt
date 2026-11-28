@@ -66,10 +66,17 @@ serving people and instrukt's other work while it does.
 
 ### Runtime capability
 
+<!-- planned-change:thin-live-runtime-boundary -->
 Archiving a thread is a capability a runtime adapter states in instrukt's own
 terms, and a feature needing it is available only on a runtime that states it
 (`project/instrukt/spec/feature/runner/session-continuity`). Archiving a thread that is already archived
 counts as done.
+<!-- change:thin-live-runtime-boundary -->
+Archiving a thread is an optional capability a runtime adapter declares in
+instrukt's own terms, and a feature needing it is available only on a runtime
+that declares it (`project/instrukt/spec/feature/runtime/adapter`). Archiving a
+thread that is already archived counts as done.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 How configuration treats a window set on a runtime whose adapter cannot
 archive is `project/instrukt/spec/feature/configuration/layered-configuration`'s.
@@ -115,4 +122,8 @@ And a thread that was active more recently than the window stays in the thread l
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
+<!-- planned:thin-live-runtime-boundary -->
+- [project/instrukt/spec/domain/runtime](../../domain/runtime.md)
+- [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+<!-- /planned:thin-live-runtime-boundary -->
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)

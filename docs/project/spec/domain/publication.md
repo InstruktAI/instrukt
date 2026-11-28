@@ -170,10 +170,18 @@ text, calls a model or judges whether a unit means what its source means.
    `visibility` of a snippet, which is docs'
    (`project/instrukt/spec/domain/docs`).
 
+<!-- planned-change:thin-live-runtime-boundary -->
 **Configured agent runtime**
 :  An agent runtime the runtime `runner.runtime` selects reports as configured
    and enabled — for T3, an enabled provider instance — with the home that
    instance runs with.
+<!-- change:thin-live-runtime-boundary -->
+**Configured agent runtime**
+:  An agent runtime the selected runtime adapter reports as configured and
+   enabled through its optional configured-agent-runtimes capability
+   (`project/instrukt/spec/feature/runtime/adapter`), with the instruction home
+   directory that instance runs with.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 **Global agent file**
 :  The user-scope instruction file of a configured agent runtime, in the home
@@ -330,6 +338,7 @@ text, calls a model or judges whether a unit means what its source means.
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
   (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- planned-change:thin-live-runtime-boundary -->
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
@@ -339,6 +348,17 @@ text, calls a model or judges whether a unit means what its source means.
   selected runtime's adapter, and runner's local-only, lock-free home backup
   standing query, each behind an interface core declares and the CLI wires, as
   customer).
+<!-- change:thin-live-runtime-boundary -->
+- **Allowed dependencies** — docs (snippet model, `index.yaml` and
+  `schema.yaml` model, validation, as customer); configuration (project slug,
+  runtime choice, its migration operation, and the configuration schema type
+  the editor schema of `instrukt.yaml` is generated from, as customer);
+  for `instrukt status` only, repository (hook-section state, as customer);
+  runtime (the configured agent runtimes and their homes read through the
+  selected runtime's adapter, behind an interface core declares and the CLI
+  wires, as customer); runner (the local-only, lock-free home backup standing
+  query, behind an interface core declares and the CLI wires, as customer).
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
 
@@ -656,6 +676,7 @@ This context emits no events.
 - **work (evaluation report)** — Customer / Supplier. Publication supplies the
   projects a home publishes and their checkout paths from its existing state,
   read by the evaluation report (`project/instrukt/spec/feature/work/eval-report`).
+<!-- planned-change:thin-live-runtime-boundary -->
 - **runner** — Customer / Supplier, both ways. Publication supplies project
   checkout paths beside published commits in its existing state
   (`project/instrukt/spec/domain/runner`); the selected runtime's adapter
@@ -664,6 +685,18 @@ This context emits no events.
   backup standing query rendered verbatim by `instrukt status`, each through
   an interface core declares and the CLI wires
   (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- change:thin-live-runtime-boundary -->
+- **runtime** — Customer / Supplier. The selected runtime's adapter supplies
+  the configured agent runtimes and their homes the global agent files are
+  written for, through an interface core declares and the CLI wires
+  (`project/instrukt/spec/domain/runtime`).
+- **runner** — Customer / Supplier, both ways. Publication supplies project
+  checkout paths beside published commits in its existing state
+  (`project/instrukt/spec/domain/runner`); runner supplies the local-only,
+  lock-free home backup standing query rendered verbatim by `instrukt status`,
+  through an interface core declares and the CLI wires
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- /planned-change:thin-live-runtime-boundary -->
 - **Workflow** — Customer / Supplier. Publication supplies definitions, roles,
   actions and templates from `docs/domain/<x>/workflow/` to
   `~/.instrukt/docs/<x>/workflow/`. The engine selects the domain with

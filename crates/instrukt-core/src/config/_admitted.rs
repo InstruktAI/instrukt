@@ -936,6 +936,7 @@ mod tests {
     #[test]
     fn the_machine_layer_admitted_is_the_one_validated_though_its_file_changes_meanwhile() {
         use std::io::Write as _;
+        crate::config::_runtime::install_fixture();
         let dir = scratch("read-once");
         let home = Home::at_user_home(dir.clone()).for_inspection();
         let machine = home.global_config();
@@ -978,8 +979,13 @@ mod tests {
         assert!(candidate.complete);
         assert!(candidate.findings.is_empty());
         assert_eq!(
-            candidate.generation.global().runner_runtime().unwrap(),
-            super::super::Runtime::COMPILED
+            candidate
+                .generation
+                .global()
+                .runner_runtime()
+                .unwrap()
+                .name(),
+            "t3"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

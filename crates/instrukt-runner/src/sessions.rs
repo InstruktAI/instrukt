@@ -1,93 +1,26 @@
 //! Unattended runtime operations with durable, keyed start recovery.
-use std::fmt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
-use instrukt_core::config::{Configuration, Env, Runtime};
+use instrukt_core::config::{AgentPreference, Configuration, Env, RuntimeDeclaration};
 use instrukt_core::home::Home;
 use instrukt_core::ids::SessionRef;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-use crate::agents::AgentChoice;
+pub use instrukt_runtime::{ExecutionRootCause, RUNTIME_COMMAND_TIMEOUT, SessionState};
+
 use crate::keyed;
 use crate::process::ProcessError;
-use crate::runtime::{Capability, Conversation, RuntimeAdapter, RuntimeStart, WorktreeRequest};
+use crate::runtime::{
+    Capability, Conversation, Presence, RuntimeAdapter, RuntimeError, RuntimeRegistry,
+    RuntimeStart, WorktreeRequest,
+};
 
-pub const RUNTIME_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SessionState {
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "needs-input")]
-    NeedsInput,
-    #[serde(rename = "input-ready")]
-    InputReady,
-    #[serde(rename = "ended failed")]
-    EndedFailed,
-    #[serde(rename = "gone")]
-    Gone,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-impl SessionState {
-    pub const ALL: [Self; 6] = [
-        Self::Running,
-        Self::NeedsInput,
-        Self::InputReady,
-        Self::EndedFailed,
-        Self::Gone,
-        Self::Unknown,
-    ];
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::NeedsInput => "needs-input",
-            Self::InputReady => "input-ready",
-            Self::EndedFailed => "ended failed",
-            Self::Gone => "gone",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-impl fmt::Display for SessionState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-impl FromStr for SessionState {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::ALL.into_iter().find(|x| x.as_str() == s).ok_or(())
-    }
-}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Observation {
     State(SessionState),
     Unobservable(String),
-}
-
-/// Why an execution root's own runtime project cannot be had, in fixed
-/// words: never native text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionRootCause {
-    Unreachable,
-    AdditionRefused,
-    MalformedMetadata,
-    DuplicateRoots,
-    Missing,
-}
-impl fmt::Display for ExecutionRootCause {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Unreachable => "the runtime is unreachable",
-            Self::AdditionRefused => "the runtime refused to add it",
-            Self::MalformedMetadata => "the runtime's project metadata is malformed",
-            Self::DuplicateRoots => "two live runtime projects share that root",
-            Self::Missing => "no runtime project is rooted there",
-        })
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -121,7 +54,10 @@ pub enum SessionsError {
     },
     #[error("runtime key conflict for `{0}`; no thread was selected or started")]
     KeyConflict(String),
-    #[error("runtime key conflict for `{key}` among {}; archive or delete the extra thread", threads.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))]
+    #[error(
+        "runtime key conflict for `{key}` among {}; archive or delete the extra thread",
+        threads.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    )]
     ConflictingThreads {
         key: String,
         threads: Vec<SessionRef>,
@@ -143,8 +79,6 @@ pub enum SessionsError {
     ProjectUnverified { key: String, session: SessionRef },
     #[error("thread {0} is still being placed: the runtime is preparing its requested worktree")]
     PlacementPreparing(SessionRef),
-    /// The checkout's own runtime project cannot be had: instrukt's own
-    /// outcome, naming the checkout and a cause in fixed words.
     #[error(
         "no runtime project at {} can be used ({cause}); retried on later passes, or run `instrukt install`",
         checkout.display()
@@ -153,8 +87,6 @@ pub enum SessionsError {
         checkout: PathBuf,
         cause: ExecutionRootCause,
     },
-    /// A bound thread runs in a runtime project other than its checkout's
-    /// own; `idle` says whether its owner may roll it over now.
     #[error(
         "thread {session} runs in a runtime project not rooted at {}{}",
         checkout.display(),
@@ -171,13 +103,81 @@ pub enum SessionsError {
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]
     OrderExhausted { tried: Vec<String> },
     #[error(transparent)]
+    Runtime(RuntimeError),
+    #[error(transparent)]
     Config(#[from] instrukt_core::config::ConfigError),
     #[error(transparent)]
     State(#[from] crate::state::StateError),
     #[error(transparent)]
     Process(#[from] ProcessError),
 }
+
+impl From<RuntimeError> for SessionsError {
+    fn from(error: RuntimeError) -> Self {
+        match error {
+            RuntimeError::UnknownRuntime(name) => Self::UnknownRuntime(name),
+            RuntimeError::MissingCapability {
+                runtime,
+                capability,
+            } => Self::MissingCapability {
+                runtime,
+                capability,
+            },
+            RuntimeError::Failed {
+                runtime,
+                operation,
+                detail,
+            } => Self::Failed {
+                runtime,
+                operation,
+                detail,
+            },
+            RuntimeError::InvalidResponse {
+                runtime,
+                operation,
+                category,
+                line,
+                column,
+            } => Self::InvalidResponse {
+                runtime,
+                operation,
+                category,
+                line,
+                column,
+            },
+            RuntimeError::PlacementPreparing(session) => Self::PlacementPreparing(session),
+            RuntimeError::ProjectUnverified { key, session } => {
+                Self::ProjectUnverified { key, session }
+            }
+            RuntimeError::ExecutionRootUnavailable { checkout, cause } => {
+                Self::ExecutionRootUnavailable { checkout, cause }
+            }
+            RuntimeError::ThreadMisplaced {
+                key,
+                session,
+                checkout,
+                idle,
+            } => Self::ThreadMisplaced {
+                key,
+                session,
+                checkout,
+                idle,
+            },
+            RuntimeError::Refused(msg) => Self::Refused(msg),
+            RuntimeError::Process(err) => Self::Process(err),
+            other => Self::Runtime(other),
+        }
+    }
+}
+
 impl SessionsError {
+    pub fn is_gone(&self) -> bool {
+        matches!(
+            self,
+            Self::Gone(_) | Self::Runtime(RuntimeError::ThreadNotFound { .. })
+        )
+    }
+
     pub fn start_certainly_failed(&self) -> bool {
         matches!(
             self,
@@ -203,11 +203,12 @@ pub struct StartRequest<'a> {
     pub base: Option<&'a str>,
     pub from: Option<&'a str>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Started {
     pub session: SessionRef,
     pub worktree: Option<PathBuf>,
-    pub agent: Option<AgentChoice>,
+    pub agent: Option<AgentPreference>,
     pub key: String,
 }
 
@@ -228,20 +229,36 @@ pub struct Sessions<'c> {
     home: &'c Home,
     config: &'c Configuration,
     env: &'c Env,
+    runtimes: &'c RuntimeRegistry,
 }
+
 impl<'c> Sessions<'c> {
-    pub fn new(home: &'c Home, config: &'c Configuration, env: &'c Env) -> Self {
-        Self { home, config, env }
+    pub fn new(
+        home: &'c Home,
+        config: &'c Configuration,
+        env: &'c Env,
+        runtimes: &'c RuntimeRegistry,
+    ) -> Self {
+        Self {
+            home,
+            config,
+            env,
+            runtimes,
+        }
     }
-    pub fn runner_runtime(&self) -> Result<Runtime, SessionsError> {
+
+    pub fn runner_runtime(&self) -> Result<&'static RuntimeDeclaration, SessionsError> {
         Ok(self.config.runner_runtime()?)
     }
-    pub fn adapter(&self) -> Result<Box<dyn RuntimeAdapter>, SessionsError> {
-        Ok(crate::runtime::adapter(self.runner_runtime()?))
+
+    pub fn adapter(&self) -> Result<Arc<dyn RuntimeAdapter>, SessionsError> {
+        let runtime = self.runner_runtime()?;
+        Ok(self.runtimes.adapter(runtime.name(), self.env)?)
     }
+
     pub fn start(
         &self,
-        order: &[AgentChoice],
+        order: &[AgentPreference],
         bindings: &dyn crate::interfaces::SessionBindings,
         request: &StartRequest<'_>,
     ) -> Result<Started, SessionsError> {
@@ -263,14 +280,17 @@ impl<'c> Sessions<'c> {
                 adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
             );
         }
-        let thread = adapter.start(&crate::runtime::RuntimeAssignment {
-            bindings: Some(bindings),
-            invocation: request.invocation,
-            project: Some(project.as_str()),
-            request: &input,
-            existing_worktree: None,
-            now: request.now,
-        })?;
+        let thread = keyed::start(
+            adapter.as_ref(),
+            &crate::runtime::RuntimeAssignment {
+                bindings: Some(bindings),
+                invocation: request.invocation,
+                project: Some(project.as_str()),
+                request: &input,
+                existing_worktree: None,
+                now: request.now,
+            },
+        )?;
         Ok(Started {
             session: thread.session,
             worktree: thread.worktree,
@@ -278,6 +298,7 @@ impl<'c> Sessions<'c> {
             key: input.key,
         })
     }
+
     fn input(
         &self,
         request: &StartRequest<'_>,
@@ -288,7 +309,6 @@ impl<'c> Sessions<'c> {
         let checkout = self.config.project_root().or(request.cwd).ok_or_else(|| {
             SessionsError::Refused("session starts need a project checkout".into())
         })?;
-        // The published checkout selects the runtime project even when invoked in a linked worktree.
         let checkout = instrukt_core::publication::PublishedRecord::load(self.home, &project)
             .map_err(|e| SessionsError::Refused(e.to_string()))?
             .map(|p| p.checkout)
@@ -377,9 +397,10 @@ impl<'c> Sessions<'c> {
         };
         Ok((input, project))
     }
+
     pub fn followup(
         &self,
-        order: &[AgentChoice],
+        order: &[AgentPreference],
         work: &dyn crate::interfaces::SessionBindings,
         session: &SessionRef,
         path: Option<&Path>,
@@ -395,9 +416,7 @@ impl<'c> Sessions<'c> {
         input.preferences = order.to_vec();
         let adapter = self.adapter()?;
         let observed = adapter.read_state(session)?;
-        // A thread no longer present, or idle in another runtime project than
-        // the checkout's own, is succeeded; any other is followed up.
-        if observed.presence != crate::runtime::Presence::Present
+        if observed.presence != Presence::Present
             || keyed::idle_misplaced(
                 adapter.as_ref(),
                 &input.checkout,
@@ -415,6 +434,7 @@ impl<'c> Sessions<'c> {
                     session,
                     worktree_path: path,
                     project: Some(project.as_str()),
+                    replace_brief: false,
                     now: request.now,
                 },
             )?;
@@ -429,7 +449,7 @@ impl<'c> Sessions<'c> {
             input.title = title.to_owned();
         }
         let thread = keyed::followup(
-            self.adapter()?.as_ref(),
+            adapter.as_ref(),
             &crate::runtime::FollowupAssignment {
                 bindings: Some(work),
                 original_request: None,
@@ -438,6 +458,7 @@ impl<'c> Sessions<'c> {
                 session,
                 worktree_path: path,
                 project: Some(project.as_str()),
+                replace_brief: false,
                 now: request.now,
             },
         )?;
@@ -448,6 +469,7 @@ impl<'c> Sessions<'c> {
             key: input.key,
         })
     }
+
     pub fn send(
         &self,
         invocation: &keyed::RuntimeInvocation,
@@ -457,7 +479,7 @@ impl<'c> Sessions<'c> {
     ) -> Result<crate::inputs::InputOutcome, SessionsError> {
         crate::inputs::enqueue(invocation, self.adapter()?.as_ref(), work, session, entry)
     }
-    /// Operational listing keeps unknown activity visible and filters only supported native activity.
+
     pub fn list(
         &self,
         cwd: &Path,
@@ -539,15 +561,24 @@ impl<'c> Sessions<'c> {
         });
         Ok(listed)
     }
+
     pub fn alive(&self, session: &SessionRef) -> Result<Observation, SessionsError> {
         Ok(match self.adapter()?.read_state(session) {
             Ok(thread) => Observation::State(thread.state),
-            Err(SessionsError::Gone(_)) => Observation::State(SessionState::Gone),
+            Err(RuntimeError::ThreadNotFound { .. }) => Observation::State(SessionState::Gone),
             Err(e) => Observation::Unobservable(e.to_string()),
         })
     }
+
     pub fn model(&self, session: &SessionRef) -> Option<(String, String)> {
-        match self.adapter().and_then(|a| a.read_state(session)) {
+        let adapter = match self.adapter() {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                tracing::warn!(event = "session_model_unknown", session = %session, error = %error);
+                return None;
+            }
+        };
+        match adapter.read_state(session) {
             Ok(thread) => thread.provider.zip(thread.model),
             Err(error) => {
                 tracing::warn!(event = "session_model_unknown", session = %session, error = %error);
@@ -555,12 +586,15 @@ impl<'c> Sessions<'c> {
             }
         }
     }
+
     pub fn conversation(&self, session: &SessionRef) -> Result<Conversation, SessionsError> {
-        self.adapter()?.read_conversation(session)
+        Ok(self.adapter()?.read_conversation(session)?)
     }
+
     pub fn link(&self, a: &SessionRef, b: &SessionRef, remove: bool) -> Result<(), SessionsError> {
-        self.adapter()?.link(a, b, remove)
+        Ok(self.adapter()?.link(a, b, remove)?)
     }
+
     pub fn caller(&self) -> Result<SessionRef, SessionsError> {
         self.adapter()?
             .caller_identity(self.env)

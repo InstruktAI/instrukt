@@ -37,6 +37,7 @@ form_urlencoded.workspace = true
 tiny_http.workspace = true
 instrukt-core.workspace = true
 instrukt-blueprint.workspace = true
+instrukt-runtime.workspace = true
 jiff.workspace = true
 jsonwebtoken.workspace = true
 pem.workspace = true

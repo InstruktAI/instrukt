@@ -192,6 +192,23 @@ identifier!(
 );
 
 identifier!(
+    /// A runtime-native run identifier for one turn execution.
+    RunId,
+    "run id",
+    is_session_id,
+    "non-empty text without whitespace or control characters"
+);
+
+identifier!(
+    /// A runtime-native input or command identifier correlating a delivered
+    /// message with its runtime turn.
+    InputId,
+    "input id",
+    is_session_id,
+    "non-empty text without whitespace or control characters"
+);
+
+identifier!(
     /// A user-owned agent profile name, distinct from a native provider instance.
     ProfileName,
     "agent profile",
@@ -565,6 +582,22 @@ mod tests {
         let ok: ProjectSlug = serde_yaml_ng::from_str("instrukt").unwrap();
         assert_eq!(ok, ProjectSlug::parse("instrukt").unwrap());
         assert!(serde_yaml_ng::from_str::<ProjectSlug>("Not A Slug").is_err());
+    }
+
+    #[test]
+    fn run_and_input_ids_accept_native_tokens_and_refuse_whitespace_or_controls() {
+        for good in [
+            "run:thread:abc%201:ordinal:1",
+            "cmd-0192b1e2-3c4d-7000-8000-000000000001",
+            "deadbeef01",
+        ] {
+            assert!(RunId::parse(good).is_ok(), "RunId {good:?}");
+            assert!(InputId::parse(good).is_ok(), "InputId {good:?}");
+        }
+        for bad in ["", " ", " id", "a b", "a\nb", "a\0b", "a\rb", "a\x1bb"] {
+            assert!(RunId::parse(bad).is_err(), "RunId {bad:?}");
+            assert!(InputId::parse(bad).is_err(), "InputId {bad:?}");
+        }
     }
 }
 

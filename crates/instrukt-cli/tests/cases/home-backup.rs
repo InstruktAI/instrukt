@@ -155,6 +155,22 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
             "row 2 must live only in the WAL sidecar before online backup"
         );
     }
+    let replies_db = home.join("state/company-replies.db");
+    {
+        let conn = Connection::open(&replies_db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE explicit_replies(reply_id TEXT, piece INTEGER, text TEXT);
+             INSERT INTO explicit_replies VALUES ('r1', 0, 'Queued explicit reply');",
+        )
+        .unwrap();
+    }
+    std::fs::write(home.join("state/company-replies.lock"), "").unwrap();
+    std::fs::create_dir_all(home.join("state/company-turn-status")).unwrap();
+    std::fs::write(
+        home.join("state/company-turn-status/deadbeef.json"),
+        "{\"text\":\"working\"}\n",
+    )
+    .unwrap();
     let extra_db = home.join("state/custom.sqlite");
     {
         let conn = Connection::open(&extra_db).unwrap();
@@ -261,6 +277,7 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
         "secrets.env",
         "state/machine-id",
         "state/instrukt.db",
+        "state/company-replies.db",
         "state/custom.sqlite",
         "state/eval-fingerprint/p.json",
         "state/agents-deployment.json",
@@ -312,6 +329,8 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
         "state/blueprint/p/g.json",
         "state/instrukt.db.corrupt.1",
         "state/known-issues/demo.lock",
+        "state/company-replies.lock",
+        "state/company-turn-status/deadbeef.json",
         "locks/docs.lock",
         "git/raw-checkout/code.rs",
         "companies/acme/tracked.md",

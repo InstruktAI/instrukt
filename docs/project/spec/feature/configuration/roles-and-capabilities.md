@@ -74,6 +74,7 @@ write forms can map to different actions. New command paths declare their
 mapping; a missing mapping is a defect, never an unclassified bypass.
 
 
+<!-- planned-change:thin-live-runtime-boundary -->
 | Family | Actions | Objects and current instrukt surface |
 | --- | --- | --- |
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
@@ -90,6 +91,24 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
 | Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
+<!-- change:thin-live-runtime-boundary -->
+| Family | Actions | Objects and current instrukt surface |
+| --- | --- | --- |
+| Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
+| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
+| Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
+| Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
+| Session observation and binding | `session-observe`, `history-read`, `standing-bind` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. These do not add a general session messaging API. |
+| Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
+| Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
+| Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |
+| Publication | `publication` | `sync` and hook-triggered publication for the selected project and positions; position ownership remains mandatory. |
+| Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
+| Events | `events-read`, `attention-raise` | `events list|schema|status`; `attention-raise` is `events raise`, addressing the project the raise belongs to, at `own` the assignment's project (`project/instrukt/spec/feature/runner/fleet-attention`). Subscription declarations retain their documentation/configuration write boundary. |
+| Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
+| Company conversations | `company-reply` | `company reply` and `company status`: queue an explicit reply or set the curated working status for an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)` for `company reply`, and strictly the currently active addressed turn's admitted conversation for `company status`); object checks always require an active company conversation binding (and an active addressed turn for `company status`) and never cross companies or connectors. |
+| Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 
 Review evidence belongs to the Evidence family: `instrukt review record` and
@@ -172,11 +191,20 @@ and nothing runs (`project/instrukt/spec/feature/runner/home-backup`,
 
 ### Caller and object resolution
 
+<!-- planned-change:thin-live-runtime-boundary -->
 The selected runtime adapter recognizes the native caller. For T3,
 `T3CODE_THREAD_ID` yields the native id and the session reference `t3:<id>`.
 The environment identifies the session, not its role. Role, todo and scope come
 from that session's recorded binding, never an environment role variable, a
 `--role` target argument, the current directory, a display title or git author.
+<!-- change:thin-live-runtime-boundary -->
+The selected runtime adapter recognizes the native caller and maps its
+environment to a native session reference `<runtime>:<native-id>`
+(`project/instrukt/spec/feature/runtime/adapter`). The environment identifies
+the session, not its role. Role, todo and scope come from that session's
+recorded binding, never an environment role variable, a `--role` target
+argument, the current directory, a display title or git author.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 For work sessions, work's `session_bindings` and attempt evidence supply the
 project, durable todo identity, role, lane, attempt, worktree and branch. Native
