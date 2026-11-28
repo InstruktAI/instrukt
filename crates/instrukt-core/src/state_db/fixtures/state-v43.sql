@@ -1,5 +1,5 @@
 -- Golden v43 state database seed covering every Lead 2 migration row shape
--- for `state_db v43 -> v44` (used by `UC-SD4` migration tests):
+-- for the colocated state database migration check:
 --   1. Live `turn_output` binding (pre-v34 `opening_conversation IS NULL`) + multi-runtime PK disambiguation
 --   2. Crash-window `turn_output` binding (`session IS NULL`, matching `runtime_bindings` row exists)
 --   3. Unstarted cached `turn_output` row (`session IS NULL`, no `runtime_bindings` row, `request IS NOT NULL`)
