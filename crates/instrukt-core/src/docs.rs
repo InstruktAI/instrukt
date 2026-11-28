@@ -98,7 +98,7 @@ mod _validate;
 use std::path::PathBuf;
 
 pub(crate) use _company::{
-    CompanyDocument, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText,
+    CompanyDocument, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_body,
     company_document, company_paths, company_references,
 };
 pub use _corpus::{
