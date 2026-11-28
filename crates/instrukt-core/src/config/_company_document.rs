@@ -410,27 +410,25 @@ mod tests {
 
         let home = Home::at_user_home(linked_user_home).for_writing();
         let dir = home.company_dir(&acme());
+        let company_path = dir.join(COMPANY_DOCUMENT);
+        let legacy_path = dir.join(CONFIG_FILE_NAME);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(COMPANY_DOCUMENT), COMPANY_YAML).unwrap();
-        std::fs::write(dir.join(CONFIG_FILE_NAME), LEGACY).unwrap();
+        std::fs::write(&company_path, COMPANY_YAML).unwrap();
+        std::fs::write(&legacy_path, LEGACY).unwrap();
+        let company_before = std::fs::read(&company_path).unwrap();
+        let legacy_before = std::fs::read(&legacy_path).unwrap();
 
         let error = convert(&home, &acme()).unwrap_err();
         assert!(
             matches!(
                 &error,
                 ConfigError::BothCompanyDocuments { company, legacy }
-                    if company == &dir.join(COMPANY_DOCUMENT) && legacy == &dir.join(CONFIG_FILE_NAME)
+                    if company == &company_path && legacy == &legacy_path
             ),
             "{error}"
         );
-        assert_eq!(
-            std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),
-            COMPANY_YAML
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.join(CONFIG_FILE_NAME)).unwrap(),
-            LEGACY
-        );
+        assert_eq!(std::fs::read(&company_path).unwrap(), company_before);
+        assert_eq!(std::fs::read(&legacy_path).unwrap(), legacy_before);
         assert!(!dir.join(".gitignore").exists());
     }
 
