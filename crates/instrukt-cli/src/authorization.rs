@@ -99,6 +99,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",
         ]
         | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
+        ["is-safe"] => SafetyCheck,
         ["ticks", "status"] | ["backup", "list"] => InstallationRead,
         ["install"] | ["backup", "run" | "restore"] => InstallationWrite,
         ["run"] | ["tick"] | ["hooks", "worker"] | ["blueprint", "worker"] | ["webhooks", ..] => {
@@ -232,6 +233,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["hooks", "status"]
             | ["ticks", "status"]
             | ["backup", "list"]
+            | ["is-safe"]
             | ["sessions", "list"]
             | ["history", "search" | "show"]
             | ["todo", "list" | "show"]
@@ -304,7 +306,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     if grants.class != RoleClass::Focused {
         return Ok(());
     }
-    if action == Action::ConfigRead {
+    if matches!(action, Action::ConfigRead | Action::SafetyCheck) {
         if !grants.admits(action, false) {
             return Err(PermissionRefused(grants.refusal(action, &path.join(" "))).into());
         }

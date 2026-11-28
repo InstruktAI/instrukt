@@ -164,8 +164,59 @@ timer without withdrawing an existing owned unit
 (`project/instrukt/spec/feature/runner/module-installation`), and every other
 capability the global layer admits runs unchanged.
 
+<!-- planned:capability-free-model-call -->
+### LLM endpoint configuration
+
+`llm` is a global-only mapping keyed by internal purpose, starting with
+`llm.screening` (`project/instrukt/spec/domain/screening`), so future internal
+LLM callers can add their own `llm.<purpose>` entries beside it while sharing
+provider secrets in `~/.instrukt/secrets.env`. A project layer or company home
+never configures `llm`. When absent, `llm.screening` is unconfigured.
+
+When present, `llm.screening` declares:
+
+- **Required:**
+  - `url` — base address of an OpenAI-compatible chat-completions service: an
+    `https` URL, or a loopback `http` URL (`localhost`, `127.0.0.0/8`, `::1`),
+    with no embedded credentials, query or fragment — rejecting malformed
+    addresses, embedded credentials and non-loopback plaintext `http` endpoints
+    whether or not `api_key` is set (`sdlc/policy/security-awareness`, reusing
+    `admitted_address` as in `project/instrukt/spec/feature/runner/mcp-access`);
+  - `model` — non-empty model identifier served by the endpoint. Bring a plain
+    model with no built-in search or browsing; instrukt performs no runtime
+    check on which model is configured, and a model that searches on its own is
+    outside the capability-free guarantee.
+- **Optional:**
+  - `api_key` — exact `${NAME}` secret reference resolved exclusively from
+    `~/.instrukt/secrets.env`
+    (`project/instrukt/spec/feature/configuration/owned-files`), shareable
+    across `llm.*` entries; omitted for local endpoints needing no key; literal
+    credentials are findings and expanded values are never disclosed in reads
+    or diagnostics;
+  - `timeout` — positive whole seconds within the `llm.screening.timeout`
+    bounds and default declared by the global configuration schema
+    (`instrukt config schema --global llm.screening`), bounding one HTTP
+    request try against the endpoint.
+
+An `llm` declaration in a project layer or company home, an unknown purpose key
+under `llm`, an unknown subkey under `llm.screening`, a missing `url` or
+`model`, an invalid `url`, a literal `api_key` instead of a `${NAME}`
+reference, or an out-of-range `timeout` is a validation finding at `llm` naming
+the offending key (never disclosing embedded credentials or secret values).
+`config patch` refuses a write introducing such a finding; `config validate
+--global`, `config validate` and `config validate --company <name>` report it
+without changing anything.
+
+An invalid `llm.screening` declaration in a loaded global layer withholds only
+screening admission on that computer: capability-free calls and
+`instrukt is-safe` refuse at entry naming the cause and configuration/secrets
+door without disclosing secret or embedded credential material, while every
+other capability the global layer admits runs unchanged.
+<!-- /planned:capability-free-model-call -->
+
 ### Layer rules
 
+<!-- planned-change:capability-free-model-call -->
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
@@ -200,6 +251,43 @@ capability the global layer admits runs unchanged.
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- change:capability-free-model-call -->
+| Key | Layer | Meaning owned by |
+| --- | --- | --- |
+| `schema_version` | each document | configuration |
+| `agents.<name>.git_author` | global only | commit composition |
+| `backup` (required `endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`, `age_recipient`; optional `prefix`, `keep`, `time`) | global only | runner home backup |
+| `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
+| `events.watch: [{remote, ref}]` | project only | runner |
+| `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `company` | company home only; equals the home folder's name | configuration |
+| `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
+| `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
+| `connectors.<name>` (optional `kind` defaulting to `<name>`, optional `role` defaulting to `company-agent`, optional `admit` (`members` \| `admins_only`), optional `session_scope` (`conversation` \| `company`), optional `reply_mode` (`turn_output` \| `explicit`), plus the provider fields that `kind` declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
+| `mcp_clients.<name>` (required `issuer` authorization server URL, required `id` and optional `secret` references into `~/.instrukt/secrets.env`, optional `description`) | global only; reusable host-level OAuth clients pinned to one authorization server issuer that companies reference via `sign_in.client_ref` | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` mode, scopes, host `client_ref` or local `client` references, and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
+| `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
+| `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
+| `llm.screening` (under top-level `llm` map; required `url` — `https` or loopback `http`, never with embedded credentials, query or fragment — and `model`; optional `${NAME}` `api_key` into `~/.instrukt/secrets.env`; optional `timeout` bounded and defaulted by the global configuration schema; bring a plain model with no built-in search or browsing) | global only | screening (`project/instrukt/spec/domain/screening`) |
+| `ticks` | global only | the runner |
+| `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
+| `runner.notify` | global only | the runner |
+| `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
+| `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
+| `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
+| `project` | project only | docs and publication |
+| `requires` (modules the flavor needs) | project only | publication |
+| `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
+| `github.apps` (App/bot public identities and protected private-key references), `github.project_app` (fallback App reference) | global only | work GitHub boundary; configuration stores and validates declarations |
+| `github.approvers` (GitHub logins) | project only | work |
+| `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
+| `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
+| `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
+| `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- /planned-change:capability-free-model-call -->
 
 `github.org` (the login of a GitHub organisation) is global only. It names the
 organisation that owns the company home repositories this computer adds, and

@@ -249,6 +249,12 @@ impl Gate {
         (self.inner.clock)()
     }
 
+    /// The gate's monotonic source now: what multi-step callers capture a
+    /// shared deadline against before calling [`Gate::call_async_until`].
+    pub fn monotonic(&self) -> Instant {
+        (self.inner.monotonic)()
+    }
+
     /// One try at most, never a pause: a key or scope inside a wait is
     /// answered with the wait and not tried.
     pub fn attempt<T, E>(
@@ -346,27 +352,49 @@ impl Gate {
         settings: &Settings<'_>,
         caller_wait: CallerWait,
         stop: &(dyn Fn() -> bool + Sync),
+        try_once: impl FnMut() -> Fut,
+    ) -> Attempted<T, E>
+    where
+        Fut: Future<Output = Tried<T, E>>,
+    {
+        match caller_wait {
+            CallerWait::UntilReturns => {
+                self.call_async_until(key, settings, None, stop, try_once)
+                    .await
+            }
+            CallerWait::Within(within) if within.is_zero() => {
+                // A zero caller-wait budget performs a single try without
+                // pausing afterward.
+                self.attempt_async(key, settings, try_once).await
+            }
+            CallerWait::Within(within) => {
+                let deadline = self.monotonic().checked_add(within);
+                self.call_async_until(key, settings, deadline, stop, try_once)
+                    .await
+            }
+        }
+    }
+
+    /// Runs async tries through the gate until a shared monotonic `deadline`
+    /// (`Some`) or indefinitely (`None`), returning [`Attempted::Wait`] without
+    /// invoking `try_once` when `self.monotonic() >= deadline`.
+    pub async fn call_async_until<T, E, Fut>(
+        &self,
+        key: &Key,
+        settings: &Settings<'_>,
+        deadline: Option<Instant>,
+        stop: &(dyn Fn() -> bool + Sync),
         mut try_once: impl FnMut() -> Fut,
     ) -> Attempted<T, E>
     where
         Fut: Future<Output = Tried<T, E>>,
     {
         let monotonic = &self.inner.monotonic;
-        let bound = match caller_wait {
-            CallerWait::UntilReturns => None,
-            CallerWait::Within(within) => Some((within, monotonic().checked_add(within))),
-        };
         loop {
-            let outcome = match bound {
+            let outcome = match deadline {
                 None => self.attempt_async(key, settings, &mut try_once).await,
-                Some((within, _)) if within.is_zero() => {
-                    // A zero caller-wait budget performs a single try without
-                    // pausing afterward.
-                    return self.attempt_async(key, settings, &mut try_once).await;
-                }
-                Some((_, deadline)) => {
-                    let remaining = deadline
-                        .map_or(Duration::ZERO, |b| b.saturating_duration_since(monotonic()));
+                Some(bound) => {
+                    let remaining = bound.saturating_duration_since(monotonic());
                     if remaining.is_zero() {
                         if let Some(wait) = self.waiting(key) {
                             return Attempted::Wait { wait, error: None };
@@ -406,8 +434,7 @@ impl Gate {
             };
             match outcome {
                 Attempted::Wait { wait, error } => {
-                    let beyond = bound
-                        .is_some_and(|(_, deadline)| deadline.is_none_or(|b| wait.until() > b));
+                    let beyond = deadline.is_some_and(|bound| wait.until() > bound);
                     if beyond || stop() {
                         return Attempted::Wait { wait, error };
                     }
@@ -1021,5 +1048,64 @@ mod tests {
             }
         ));
         assert_eq!(wait_tries.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn call_async_until_with_elapsed_deadline_returns_timed_out_without_trying() {
+        let f = Fixture::new();
+        let key = scope().item("shared-deadline");
+        let deadline = f.gate.monotonic() + Duration::from_secs(5);
+        // Simulate step 1 exhausting the shared deadline on the controlled monotonic source.
+        f.advance_mono(Duration::from_secs(5));
+        let tries = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let tries_clone = tries.clone();
+        let answer = crate::runtime::block_on(f.gate.call_async_until(
+            &key,
+            &Settings::default(),
+            Some(deadline),
+            &|| false,
+            || {
+                tries_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Tried::<(), ()>::Done(()) }
+            },
+        ))
+        .unwrap();
+        assert_eq!(tries.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(matches!(
+            answer,
+            Attempted::Wait {
+                ref wait,
+                error: None
+            } if wait.reason() == Reason::TimedOut
+        ));
+    }
+
+    #[test]
+    fn call_async_until_with_elapsed_deadline_surfaces_existing_wait_without_trying() {
+        let f = Fixture::new();
+        let held_key = scope().item("held-deadline");
+        f.attempt(&held_key, Outcome::Down(Extent::Key, None));
+        let past_deadline = f.gate.monotonic();
+        let held_tries = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let held_tries_clone = held_tries.clone();
+        let held_answer = crate::runtime::block_on(f.gate.call_async_until(
+            &held_key,
+            &Settings::default(),
+            Some(past_deadline),
+            &|| false,
+            || {
+                held_tries_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Tried::<(), ()>::Done(()) }
+            },
+        ))
+        .unwrap();
+        assert_eq!(held_tries.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(matches!(
+            held_answer,
+            Attempted::Wait {
+                ref wait,
+                error: None
+            } if wait.reason() == Reason::Unavailable { status: None }
+        ));
     }
 }

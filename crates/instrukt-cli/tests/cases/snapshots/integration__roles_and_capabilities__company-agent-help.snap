@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
-assertion_line: 660
 expression: "help(&[\"--help\"])"
 ---
 Context engineering for coding agents
@@ -36,6 +35,7 @@ Commands:
   install    Converge/check machine backup timer and module infrastructure across adopted projects;
              repair with the same command
   backup     Encrypted offsite backup, generation listing and guarded restore of this instrukt home
+  is-safe    Check whether untrusted text is safe (free of prompt injection) before reading it
   help       Print this message or the help of the given subcommand(s)
 
 Options:
@@ -47,4 +47,4 @@ and writer constraints apply.
 Usual capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any,
 bug-report:any, artifact-read:any, agents-read:any, config-read:any, repository-read:any,
 code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own,
-company-reply:own
+company-reply:own, safety-check:any

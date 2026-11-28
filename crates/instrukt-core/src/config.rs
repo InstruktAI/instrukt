@@ -25,6 +25,7 @@ mod _github_org;
 mod _identity;
 mod _interpolate;
 mod _layer;
+mod _llm;
 mod _mcp;
 mod _merge;
 mod _migrate;
@@ -56,7 +57,7 @@ pub use _admitted::{
 };
 pub use _backup::{
     BACKUP_KEY, BackupAdmission, BackupConfig, BackupTime, DEFAULT_BACKUP_KEEP,
-    DEFAULT_BACKUP_TIME, SecretValue, inspect_global_backup, withholds_backup,
+    DEFAULT_BACKUP_TIME, inspect_global_backup, withholds_backup,
 };
 pub use _company::{Member, Members};
 pub use _company_document::{COMPANY_DOCUMENT, convert_company_document, write_company_settings};
@@ -80,6 +81,10 @@ pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, document_lock_path, init, inspect_layer, migrate,
     parse_patch, patch, review_switch, review_target, revision, unloadable_machine_layer,
+};
+pub use _llm::{
+    DEFAULT_LLM_TIMEOUT_SECS, LLM_KEY, LLM_SCREENING_KEY, LlmAdmission, LlmEndpointConfig,
+    MAX_LLM_TIMEOUT_SECS, MIN_LLM_TIMEOUT_SECS, inspect_global_screening, withholds_llm,
 };
 pub use _mcp::{
     CompanyIssuerConfig, DEFAULT_ISSUER_SIGNING_KEY_NAME, McpClient, McpServer, McpSignIn,
@@ -111,8 +116,8 @@ use crate::home::Home;
 use crate::ids::ProjectSlug;
 
 pub use _secrets::{
-    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
-    set_secret, set_secret_in,
+    SecretSource, SecretValue, generate_secret, generate_secret_in, resolve_secret,
+    resolve_secret_from, set_secret, set_secret_in,
 };
 
 /// The project slug the repository rooted at `repo_root` declares in its

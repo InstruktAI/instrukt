@@ -79,10 +79,10 @@ and project paths from local project metadata; never invent an ID.
   arriving; it does not satisfy that alone.
 - Align `ingress.port` with the ingress edge. Keep local Redis endpoints,
   runtime, credentials, ticks and project overrides specific to each computer.
-  Record signing and Redis material through `instrukt secrets set` or
-  `instrukt secrets generate` on the computer that uses it. References resolve
-  only from that machine's owner-only `~/.instrukt/secrets.env`, including on
-  ticks; keep secret values out of patches, briefs and reports.
+  Record signing, Redis, and `llm.*` API key material through `instrukt secrets
+  set` or `instrukt secrets generate` on the computer that uses it. References
+  resolve only from that machine's owner-only `~/.instrukt/secrets.env`,
+  including on ticks; keep secret values out of patches, briefs and reports.
 
 Configuration management outside instrukt distributes these agreements. Each
 machine's global layer remains its own; project placement uses existing homes
@@ -149,9 +149,20 @@ choices, then read back the effective mapping with
 `instrukt config get --agents --json`.
 
 For a supported harness that is not ready, guide the developer through its login
-or key setup in T3 and wait for observed readiness. T3 owns provider instances
-and model-provider credentials. Report an unavailable discovery or readiness
-surface, or unfinished setup, as an unmet prerequisite for that computer.
+or key setup in T3 and wait for observed readiness. T3 owns agent runtimes'
+provider instances and model-provider credentials. Report an unavailable
+discovery or readiness surface, or unfinished setup, as an unmet prerequisite
+for that computer.
+
+For untrusted-text screening (`llm.screening` in the global layer of
+`~/.instrukt/instrukt.yaml`), record `url` (`https://...` or loopback
+`http://...` with no embedded credentials, query, or fragment), `model`,
+optional `${NAME}` `api_key` stored in `~/.instrukt/secrets.env` via `instrukt
+secrets set <NAME>` (omitted for local servers such as LM Studio that need no
+key), and optional `timeout` (see `instrukt config schema --global
+llm.screening` for its bounds and default). Tell the operator to bring a plain
+model with no built-in search or browsing; instrukt performs no runtime check
+on which model is configured.
 
 ## Converge and verify locally
 

@@ -305,7 +305,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     let validated = env.run(repo.path(), ["config", "validate"]).success();
     insta::assert_snapshot!(stdout(&env, &validated), @"");
     insta::assert_snapshot!(stderr(&env, &validated), @r"
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 8; file migrates on the next writing command
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 9; file migrates on the next writing command
     instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
     ");
     assert_eq!(
@@ -465,11 +465,11 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     docs render:
     stdout:
     stderr:
-    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 9 is newer than this instrukt supports (8); run `instrukt config validate --global` to see what to fix
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 10 is newer than this instrukt supports (9); run `instrukt config validate --global` to see what to fix
     config validate --global:
     stdout:
     stderr:
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 9, newer than this instrukt supports (8); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 10, newer than this instrukt supports (9); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
     "
     );
     assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);

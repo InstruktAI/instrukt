@@ -36,6 +36,55 @@ pub fn ensure_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+const INVALID_URL_PLACEHOLDER: &str = "<invalid-url>";
+
+/// Returns a credential-safe `scheme://host[:port]/path` display form of `url`
+/// so userinfo, query parameters, and fragments never leak into diagnostics.
+pub fn redact_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let mut safe = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or(""));
+            if let Some(port) = parsed.port() {
+                safe.push_str(&format!(":{port}"));
+            }
+            safe.push_str(parsed.path());
+            safe
+        }
+        Err(_) => INVALID_URL_PLACEHOLDER.to_owned(),
+    }
+}
+
+/// Failure while streaming a bounded HTTP response body.
+#[derive(Debug, thiserror::Error)]
+pub enum BodyReadError {
+    /// Transport error while streaming chunks (URL already scrubbed).
+    #[error("unreadable HTTP body: {0}")]
+    Transport(reqwest::Error),
+    /// Response body exceeded `max_bytes` before completing.
+    #[error("HTTP response body exceeds {max_bytes} bytes")]
+    TooLarge { max_bytes: usize },
+}
+
+/// Reads a `reqwest::Response` body up to `max_bytes`, failing before
+/// buffering unbounded payloads.
+pub async fn read_bounded_body(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, BodyReadError> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| BodyReadError::Transport(error.without_url()))?
+    {
+        if chunk.len() > max_bytes.saturating_sub(body.len()) {
+            return Err(BodyReadError::TooLarge { max_bytes });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 /// Builds a `reqwest::Client` with the workspace's shared timeouts, User-Agent,
 /// TLS (`rustls`), and redirect policy.
 pub fn build_client(config: &ClientConfig) -> Result<reqwest::Client, reqwest::Error> {
@@ -422,6 +471,28 @@ mod tests {
                     received_at: now(),
                 }),
             })
+        );
+    }
+
+    #[test]
+    fn redact_url_strips_userinfo_query_and_fragment() {
+        assert_eq!(
+            super::redact_url(
+                "https://user:secret@auth.example.com:8443/oauth/token?api_key=leak#frag"
+            ),
+            "https://auth.example.com:8443/oauth/token"
+        );
+        assert_eq!(
+            super::redact_url("http://127.0.0.1:9000/v1/chat/completions?token=secret"),
+            "http://127.0.0.1:9000/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn redact_url_replaces_invalid_url_with_placeholder() {
+        assert_eq!(
+            super::redact_url("not a url with secret"),
+            super::INVALID_URL_PLACEHOLDER
         );
     }
 }

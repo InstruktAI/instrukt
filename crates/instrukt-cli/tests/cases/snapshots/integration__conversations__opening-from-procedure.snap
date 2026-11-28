@@ -6,7 +6,7 @@ expression: c.opening(&session)
 instrukt conversation assignment
 Procedure: assistance/procedure/company-assistance
 Role: company-agent
-Resolved role capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any, bug-report:any, artifact-read:any, agents-read:any, config-read:any, repository-read:any, code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own, company-reply:own
+Resolved role capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any, bug-report:any, artifact-read:any, agents-read:any, config-read:any, repository-read:any, code-check:any, eval-read:any, events-read:any, installation-read:any, mcp-access:own, company-reply:own, safety-check:any
 Company: acme
 Connector: slack
 Conversation: C1/1700000001.000100

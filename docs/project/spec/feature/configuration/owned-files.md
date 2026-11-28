@@ -14,6 +14,7 @@ migration rules. A valid older configuration remains usable after an upgrade.
 
 ### Machine-local secrets
 
+<!-- planned-change:capability-free-model-call -->
 `<selected INSTRUKT_HOME>/secrets.env` (normally `~/.instrukt/secrets.env`) is the one machine-local file for every secret
 instrukt uses, including webhook signing material, Redis credentials and GitHub
 App private keys. App profiles carry protected references; installation tokens
@@ -24,6 +25,20 @@ never secret values. Every instrukt path resolves such secrets from this file,
 including noninteractive ticks; a process environment or project `.env` cannot
 supply or override them. Names are shared within the selected home, so projects requiring distinct
 values there use distinct reference names.
+<!-- change:capability-free-model-call -->
+`<selected INSTRUKT_HOME>/secrets.env` (normally `~/.instrukt/secrets.env`) is the one machine-local file for every secret
+instrukt uses, including webhook signing material, Redis credentials, GitHub
+App private keys and the API keys of configured capability-free model endpoints
+(`project/instrukt/spec/feature/screening/capability-free-calls`). App
+profiles carry protected references; installation tokens are issued in memory
+under `project/instrukt/spec/feature/work/github-apps`, not saved as
+long-lived secrets.
+The model-provider keys of agent runtimes remain with T3. Configuration holds `${NAME}` references,
+never secret values. Every instrukt path resolves such secrets from this file,
+including noninteractive ticks; a process environment or project `.env` cannot
+supply or override them. Names are shared within the selected home, so projects requiring distinct
+values there use distinct reference names.
+<!-- /planned-change:capability-free-model-call -->
 
 A company home has its own secrets file, `~/.instrukt/companies/<name>/secrets.env`,
 under the same protection, write and disclosure rules. References in that
@@ -99,12 +114,11 @@ next recorded hook run persists the versioned shape
 (derived hook-run records rebuild on the next run, `sdlc/policy/state-storage`). Inspection never rewrites these records. A record belongs to
 the repository, keyed by a digest of its git common directory and naming the
 repository's path, so it is found without reading the repository's
-configuration (`sdlc/principle/design-fundamentals`: an outcome is never lost
-to a file that cannot be read). Records kept under the project-keyed folder
+configuration. Records kept under the project-keyed folder
 `state/hooks/` are not converted: the first hook run that finds that folder
 removes it, and the next run of each hook writes its outcome under the
-repository's key (`sdlc/policy/state-storage`: an entry retires with its
-scope).
+repository's key (`sdlc/policy/state-storage`: a growing store defines its
+retirement).
 
 Publication keeps no record of the files a sync wrote outside the home. The
 record an earlier release kept under `state/publication/outputs/` is not

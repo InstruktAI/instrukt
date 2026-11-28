@@ -5,11 +5,19 @@ description: Instrukt's bounded contexts, their module placement and directed re
 
 ## What it is
 
+<!-- planned-change:capability-free-model-call -->
 The semantic map of instrukt: eleven bounded contexts with separate ownership,
 ten assembled into modules with downward dependencies and one, distribution,
 outside the binary. Contexts own behavior;
 modules determine which capabilities are enabled. The map indexes their domain
 contracts and the designs governing their relationships.
+<!-- change:capability-free-model-call -->
+The semantic map of instrukt: twelve bounded contexts with separate ownership,
+eleven assembled into modules with downward dependencies and one, distribution,
+outside the binary. Contexts own behavior;
+modules determine which capabilities are enabled. The map indexes their domain
+contracts and the designs governing their relationships.
+<!-- /planned-change:capability-free-model-call -->
 
 ## Ownership boundary
 
@@ -21,6 +29,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 ### Bounded contexts
 
 
+<!-- planned-change:capability-free-model-call -->
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
@@ -34,10 +43,27 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history, the container each company runs in on a host, and encrypted home backup with guarded restore | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+<!-- change:capability-free-model-call -->
+| Context | Owns | Domain spec |
+| --- | --- | --- |
+| docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
+| configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
+| publication | Committed-state publication, index patching, rendering of the global agent files, of committed `AGENTS.md` files and of a company's plugin with its catalog entry, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
+| repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
+| specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
+| blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
+| work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history, the container each company runs in on a host, and encrypted home backup with guarded restore | `project/instrukt/spec/domain/runner` |
+| company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
+| screening | Internal capability-free calls to the configured OpenAI-compatible model endpoint (`llm.screening`) and stateless untrusted-text safety screening (`instrukt is-safe`) | `project/instrukt/spec/domain/screening` |
+| distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+<!-- /planned-change:capability-free-model-call -->
 
 
 ### Modules
 
+<!-- planned-change:capability-free-model-call -->
 | Module | Contexts | Availability and dependencies |
 | --- | --- | --- |
 | core | docs, configuration, publication, repository, specs | Always on; independent of optional modules |
@@ -46,6 +72,17 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
 | conversations | company | Given by a company home's declared connector; runtime adapter required; served by the long-lived `instrukt run` |
+<!-- change:capability-free-model-call -->
+| Module | Contexts | Availability and dependencies |
+| --- | --- | --- |
+| core | docs, configuration, publication, repository, specs | Always on; independent of optional modules |
+| blueprint | blueprint | Switchable; uses core repository information and a graph engine |
+| todos | work, workflow, runner | Switchable work record and workflow; GitHub and runtime adapter required; runner autostart or manual concerns todos only |
+| history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
+| events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
+| conversations | company | Given by a company home's declared connector; runtime adapter required; served by the long-lived `instrukt run` |
+| screening | screening | Given by global `llm.screening` settings; an OpenAI-compatible model endpoint required |
+<!-- /planned-change:capability-free-model-call -->
 
 Distribution is in no module: it is release tooling and the skill beside
 the binary, reaching it only through its command surface.
@@ -212,6 +249,17 @@ Home backup adds these crossings; its contract is
 | configuration → runner | Customer / Supplier | Admitted global `backup` settings (withheld alone when invalid so other capabilities run unchanged) and company-home settings forward conversion (`project/instrukt/spec/feature/configuration/layered-configuration`, `project/instrukt/spec/feature/configuration/company-homes`) |
 | runner → publication | Customer / Supplier | Local-only, lock-free home backup standing query (standing, last backup timestamp, last published generation, or unreadable-state `path` and `reason`), declared by core and wired by the CLI (`project/instrukt/spec/feature/publication/instrukt-status`) |
 
+<!-- planned:capability-free-model-call -->
+Screening adds one crossing; its contract is
+`project/instrukt/spec/domain/screening`. Its anti-corruption layer translates
+the configured OpenAI-compatible chat-completions endpoint (`llm.screening`)
+and brings every try through the host-supplied outside gate
+(`project/instrukt/design/architecture/outside-gate`).
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → screening | Customer / Supplier | Admitted global `llm.screening` settings (withheld alone when invalid so other capabilities run unchanged) and optional `api_key` resolution from `~/.instrukt/secrets.env` (`project/instrukt/spec/feature/configuration/layered-configuration`, `project/instrukt/spec/feature/configuration/owned-files`) |
+<!-- /planned:capability-free-model-call -->
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

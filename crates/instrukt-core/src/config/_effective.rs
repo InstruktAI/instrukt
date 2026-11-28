@@ -256,6 +256,7 @@ impl Configuration {
         super::_redis::redact(&mut value, "");
         super::_webhooks::redact(&mut value);
         super::_backup::redact(&mut value);
+        super::_llm::redact(&mut value);
         if let Some(apps) = value
             .get_mut("github")
             .and_then(|g| g.get_mut("apps"))
@@ -281,6 +282,12 @@ impl Configuration {
     /// from `<selected INSTRUKT_HOME>/secrets.env` solely for I/O.
     pub fn backup(&self) -> Result<Option<super::BackupConfig>, ConfigError> {
         super::_backup::from_effective(&self.home, &self.value)
+    }
+
+    /// Read machine-owned capability-free screening LLM endpoint settings,
+    /// resolving any optional `${NAME}` API key from `<selected INSTRUKT_HOME>/secrets.env`.
+    pub fn llm_screening(&self) -> Result<Option<super::LlmEndpointConfig>, ConfigError> {
+        super::_llm::from_effective(&self.home, &self.value)
     }
 
     /// Read only the cluster endpoint for modules with no local Redis demand.

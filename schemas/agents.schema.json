@@ -885,7 +885,8 @@
             "conversation-link",
             "mcp-access",
             "company-reply",
-            "attention-raise"
+            "attention-raise",
+            "safety-check"
           ]
         },
         "scope": {

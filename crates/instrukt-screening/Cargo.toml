@@ -1,0 +1,28 @@
+[package]
+name = "instrukt-screening"
+description = "Stateless capability-free OpenAI-compatible model client and untrusted-text safety screening."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+http.workspace = true
+instrukt-core.workspace = true
+instrukt-outside.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+jiff.workspace = true
+tiny_http.workspace = true
+
+[lints]
+workspace = true

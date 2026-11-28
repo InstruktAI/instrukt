@@ -48,11 +48,13 @@ Guide the human's request from the observed state:
   and validate. For model profiles, role orders/classes/capabilities and GitHub
   Apps, read the configuration skill of this release at
   `https://raw.githubusercontent.com/InstruktAI/instrukt/v<version>/skills/instrukt-configure/SKILL.md`.
-  It discovers existing ACP instances and guides provider login. Keep provider
-  creation with T3 and provider keys with their harness. Reuse configured GitHub
-  Apps or guide creation/installation of the distinct project, author and
-  reviewer identities. Store instrukt secrets through `instrukt secrets
-  set/generate` in the protected machine-local secrets file.
+  It discovers existing ACP instances and guides provider login. Keep agent
+  runtimes' provider creation with T3 and their model-provider keys with their
+  harness. Reuse configured GitHub Apps or guide creation/installation of the
+  distinct project, author and reviewer identities. Store instrukt-owned secrets
+  (including webhook signing, Redis, GitHub App keys, and `llm.*` endpoint API
+  keys) through `instrukt secrets set/generate` in the protected machine-local
+  secrets file.
 - **Other requests:** use `instrukt -h` and `instrukt docs` to find the owning
   command or contract. This cockpit covers platform setup on the computer
   (binary, adopted repositories, runtime, models, GitHub Apps, modules); to

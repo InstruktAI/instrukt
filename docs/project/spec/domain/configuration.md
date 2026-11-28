@@ -345,6 +345,16 @@ This context emits no events.
   (`project/instrukt/spec/feature/configuration/company-homes`), enforcing
   symlink confinement across company settings documents before conversion.
 
+<!-- planned:capability-free-model-call -->
+- **Screening** — customer / supplier: configuration supplies the computer's
+  admitted global `llm.screening` declaration under top-level `llm`
+  (withholding only screening admission when invalid so other capabilities run
+  unchanged), enforces its transport and credential URL boundaries at entry
+  (`project/instrukt/spec/feature/configuration/layered-configuration`), and
+  resolves its optional `${NAME}` `api_key` from `~/.instrukt/secrets.env`
+  (`project/instrukt/spec/feature/configuration/owned-files`,
+  `project/instrukt/spec/domain/screening`).
+<!-- /planned:capability-free-model-call -->
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except
 the connector declarations, which it consumes.

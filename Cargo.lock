@@ -2040,6 +2040,7 @@ dependencies = [
  "instrukt-core",
  "instrukt-outside",
  "instrukt-runner",
+ "instrukt-screening",
  "instrukt-todos",
  "jiff 0.2.39",
  "jsonwebtoken 9.3.1",
@@ -2054,6 +2055,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2 0.10.9",
+ "signal-hook 0.3.18",
  "tar",
  "tempfile",
  "tiny_http",
@@ -2164,6 +2166,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2213,6 +2216,25 @@ dependencies = [
  "url",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "instrukt-screening"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "instrukt-core",
+ "instrukt-outside",
+ "jiff 0.2.39",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

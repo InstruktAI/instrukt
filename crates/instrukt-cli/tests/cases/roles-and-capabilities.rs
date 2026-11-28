@@ -715,7 +715,8 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     and writer constraints apply.
     Usual capabilities: role: company-agent; class: standing; grants: docs-read:any, todo-read:any,
     artifact-read:any, agents-read:any, config-read:any, repository-read:any, code-check:any,
-    eval-read:any, events-read:any, installation-read:any, mcp-access:own, company-reply:own
+    eval-read:any, events-read:any, installation-read:any, mcp-access:own, company-reply:own,
+    safety-check:any
     "
     );
 }

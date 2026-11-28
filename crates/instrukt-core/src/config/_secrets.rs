@@ -1,10 +1,13 @@
 //! Protected, literal secret storage: the machine's file and each company
 //! home's own. No environment fallback.
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::time::Duration;
+
+use zeroize::Zeroizing;
 
 use super::ConfigError;
 use crate::{
@@ -12,6 +15,27 @@ use crate::{
     home::Home,
     ids::ProjectSlug,
 };
+
+/// A resolved secret value held in memory for I/O only: redacted in `Debug`,
+/// zeroized on drop, and never serializable.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretValue(Zeroizing<String>);
+
+impl SecretValue {
+    pub fn new(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+
+    pub fn expose(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
 
 pub(super) fn reference(text: &str) -> Option<&str> {
     let name = text.strip_prefix("${")?.strip_suffix('}')?;
