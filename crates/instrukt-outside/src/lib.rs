@@ -29,8 +29,9 @@ pub use _report::{Episode, Record, Report};
 /// The HTTP adapter of the outside gate.
 pub mod http {
     pub use crate::_http::{
-        ClientConfig, HttpAnswer, Judgment, Rule, TransportFailure, build_client,
-        ensure_crypto_provider, judge, judge_reqwest_error, judge_response, retry_after,
+        BodyReadError, ClientConfig, HttpAnswer, Judgment, Rule, TransportFailure, build_client,
+        ensure_crypto_provider, judge, judge_reqwest_error, judge_response, read_bounded_body,
+        redact_url, retry_after,
     };
 }
 

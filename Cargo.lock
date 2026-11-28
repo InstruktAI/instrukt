@@ -2161,8 +2161,10 @@ dependencies = [
  "reqwest",
  "rustls",
  "thiserror 2.0.21",
+ "tiny_http",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

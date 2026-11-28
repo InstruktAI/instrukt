@@ -17,6 +17,10 @@ rustls.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tiny_http.workspace = true
 
 [lints]
 workspace = true

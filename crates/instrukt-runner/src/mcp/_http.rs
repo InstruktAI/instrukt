@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use http::header::ACCEPT;
+pub(crate) use instrukt_outside::http::redact_url;
 use instrukt_outside::http::{ClientConfig, build_client};
 use instrukt_outside::runtime::block_on;
 use rmcp::transport::auth::{
@@ -102,22 +103,6 @@ pub(crate) fn sanitize_auth_error(error: &AuthError) -> String {
     }
 }
 
-/// Returns a credential-safe `scheme://host[:port]/path` display form of `url`
-/// so userinfo, query parameters, and fragments never leak into diagnostics.
-pub(crate) fn redact_url(url: &str) -> String {
-    match url::Url::parse(url) {
-        Ok(parsed) => {
-            let mut safe = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or(""));
-            if let Some(port) = parsed.port() {
-                safe.push_str(&format!(":{port}"));
-            }
-            safe.push_str(parsed.path());
-            safe
-        }
-        Err(_) => "<invalid-url>".to_owned(),
-    }
-}
-
 /// Maximum response body size read for OAuth metadata, token, JWKS, and
 /// identity endpoints.
 pub(crate) const MAX_OAUTH_BODY_BYTES: usize = 1024 * 1024;
@@ -156,21 +141,12 @@ where
 /// Reads a `reqwest::Response` body up to `max_bytes`, failing before
 /// buffering unbounded payloads.
 pub(crate) async fn read_bounded_body(
-    mut response: reqwest::Response,
+    response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<Vec<u8>, String> {
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    instrukt_outside::http::read_bounded_body(response, max_bytes)
         .await
-        .map_err(|error| format!("unreadable HTTP body: {}", error.without_url()))?
-    {
-        if chunk.len() > max_bytes.saturating_sub(body.len()) {
-            return Err(format!("HTTP response body exceeds {max_bytes} bytes"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+        .map_err(|error| error.to_string())
 }
 
 async fn send_bounded_text(

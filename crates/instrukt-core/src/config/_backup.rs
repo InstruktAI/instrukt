@@ -8,13 +8,12 @@ use std::str::FromStr;
 
 use serde_json::json;
 use serde_yaml_ng::Value;
-use zeroize::Zeroizing;
 
 use super::_error::{ConfigError, Finding, FindingKind};
 use super::_interpolate::{join, key_text};
 use super::_layer::{Layer, inspected, read};
 use super::_schema::{KeyFinding, LayerKind, non_blank_pattern, secret_reference};
-use super::_secrets::{SecretSnapshot, SecretSource, reference};
+use super::_secrets::{SecretSnapshot, SecretSource, SecretValue, reference};
 use crate::home::Home;
 
 /// The top-level global-layer key holding home backup configuration.
@@ -83,27 +82,6 @@ impl Default for BackupTime {
 impl fmt::Display for BackupTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:02}:{:02}", self.hour, self.minute)
-    }
-}
-
-/// A resolved secret value held in memory for I/O only: redacted in `Debug`,
-/// zeroized on drop, and never serializable.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SecretValue(Zeroizing<String>);
-
-impl SecretValue {
-    pub fn new(value: String) -> Self {
-        Self(Zeroizing::new(value))
-    }
-
-    pub fn expose(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl fmt::Debug for SecretValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<redacted>")
     }
 }
 

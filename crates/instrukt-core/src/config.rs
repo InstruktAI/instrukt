@@ -56,7 +56,7 @@ pub use _admitted::{
 };
 pub use _backup::{
     BACKUP_KEY, BackupAdmission, BackupConfig, BackupTime, DEFAULT_BACKUP_KEEP,
-    DEFAULT_BACKUP_TIME, SecretValue, inspect_global_backup, withholds_backup,
+    DEFAULT_BACKUP_TIME, inspect_global_backup, withholds_backup,
 };
 pub use _company::{Member, Members};
 pub use _company_document::{COMPANY_DOCUMENT, convert_company_document, write_company_settings};
@@ -111,8 +111,8 @@ use crate::home::Home;
 use crate::ids::ProjectSlug;
 
 pub use _secrets::{
-    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
-    set_secret, set_secret_in,
+    SecretSource, SecretValue, generate_secret, generate_secret_in, resolve_secret,
+    resolve_secret_from, set_secret, set_secret_in,
 };
 
 /// The project slug the repository rooted at `repo_root` declares in its
