@@ -202,6 +202,30 @@ judges its own findings again, as when the author disputes them with evidence
 and no new commit. The latest version is current and earlier ones are kept as
 history.
 
+A head verdict's versions are numbered from one in the order they are
+recorded, and `instrukt review show` names each by its number.
+
+The session that recorded the current version of a commit's verdict that
+stands here is that commit's reviewer of record. Work answers it with the
+commit's verdict, and `instrukt review show` names it. Work also answers, for a
+project, which commit's verdict standing here has a version whose report has a
+given digest (Verdict publication names a version by that digest). A verdict this computer
+handed off or set aside has no reviewer of record here. The runner wakes a
+reviewer of record to review later work
+(`project/instrukt/spec/feature/runner/requested-review`). A wake records
+nothing of the commit's evidence and changes nothing of who may record a
+version (Admission of review evidence, Settlement): a verdict the woken session
+records for another commit is that commit's own and admitted as that commit's.
+Once `instrukt review record` has recorded a version, it hands the version to
+the runner, which queues the verdict notices of that head's requested reviews
+and delivers them on its own wake-ups
+(`project/instrukt/spec/feature/runner/requested-review`). The recording waits
+only for that queuing, never for a delivery, and is not undone when it fails. A
+revision whose verdict equals the current one is admitted on the same terms as
+one that changes it (Admission of review evidence, Settlement). A reviewer
+records each dispute it judges as a revision
+(`sdlc/procedure/lifecycle/work/review-commits`).
+
 A verdict and an exemption are separate facts of a commit. Recording, importing
 or publishing one never replaces, hides or retires the other, and work's answer
 on a commit reports both.

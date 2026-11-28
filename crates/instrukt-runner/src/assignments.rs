@@ -146,7 +146,7 @@ fn requested_review_assignment(
     let mut found = None;
     for start in starts
         .iter()
-        .filter(|start| start.semantic_key.starts_with("instrukt:review:"))
+        .filter(|start| crate::keyed::is_review_key(&start.semantic_key))
     {
         let assignment = crate::requested_review::assignment(home, &start.semantic_key)
             .map_err(|e| StateDbError::invalid(&home.requested_review_db_file(), e.to_string()))?;

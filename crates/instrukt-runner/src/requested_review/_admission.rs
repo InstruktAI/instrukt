@@ -595,24 +595,21 @@ pub(super) fn review_state(
     }
 }
 
-/// Review state of a dispute under the key: the verdict's current version
-/// was recorded by the head's requested reviewer, the session `bound` to
-/// its start key.
+/// Review state of a dispute: the verdict's current version was recorded by a
+/// requested reviewer of the asking project
+/// (`instrukt:review:<encoded-project>:*`).
 pub(super) fn dispute_recorder(
     head: &CommitSha,
     standing: &VerdictStanding,
-    bound: Option<&SessionRef>,
+    is_project_reviewer: bool,
 ) -> Result<(), AskError> {
     match standing {
-        VerdictStanding::Stands { recorder, .. } if Some(recorder) == bound => Ok(()),
+        VerdictStanding::Stands { .. } if is_project_reviewer => Ok(()),
         VerdictStanding::Stands { verdict, recorder } => Err(refused(
             Check::ReviewState,
             format!(
-                "{}, which is not this head's requested reviewer{}; a dispute reaches only the requested reviewer that recorded the verdict, so a revised head is the way forward",
+                "{}, which is not a requested reviewer of this project; a dispute reaches only the requested reviewer that recorded the verdict, so a revised head is the way forward",
                 standing_verdict(head, *verdict, recorder),
-                bound
-                    .map(|session| format!(" (session {session})"))
-                    .unwrap_or_default()
             ),
         )),
         _ => review_state(Kind::Dispute, head, standing),

@@ -6,7 +6,15 @@
 //! fake GitHub.
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
+use instrukt_core::ids::CommitSha;
+use instrukt_runner::requested_review::{EarlierHead, ReReviewOutcome, ReuseImpossible, TracedBy};
+
 use crate::fixtures::reviewed::Reviewed;
+
+#[derive(serde::Deserialize)]
+struct ReReviewReply {
+    re_review: ReReviewOutcome,
+}
 
 fn stderr(assert: &assert_cmd::assert::Assert) -> String {
     String::from_utf8(assert.get_output().stderr.clone()).unwrap()
@@ -134,42 +142,75 @@ fn findings_on_an_unchanged_head_are_disputed_with_the_reviewer_that_recorded_th
     assert_eq!(
         (project.rt.started_count(), project.rt.sent_count("s1")),
         (1, 1),
-        "the dispute reaches the reviewer that recorded the verdict"
+        "the dispute wakes the reviewer that recorded the verdict"
     );
     let commits = [(head.as_str(), "HEAD"), (base.as_str(), "BASE")];
     insta::assert_snapshot!(
         "requested-review-dispute-input",
         project.redact(&project.rt.sent("s1", 1), &commits, &[])
     );
-
-    project.record(&reviewer, &head, "approve").success();
-    let shown = project
-        .as_session(&reviewer)
-        .args(["review", "show", &head])
-        .assert()
-        .success();
-    // The run's clock decides the timestamps `review show` prints.
-    insta::with_settings!({filters => vec![(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", "[TIME]")]}, {
-        insta::assert_snapshot!(
-            "requested-review-revised-verdict",
-            project.redact(&stdout(&shown), &commits, &["s1"])
-        );
-    });
+    project.rt.consume("s1");
+    project.rt.set_status("s1", "ended ok");
 
     let fixed = project.commit_in(&worktree, "fix.txt");
-    project
+    let rereview = project
         .ask(
             &worktree,
             "feature",
             &fixed,
             &project.report("fix.md", None),
-            &["--prior-report", prior.to_str().unwrap()],
+            &["--prior-report", prior.to_str().unwrap(), "--json"],
+        )
+        .success();
+    assert_eq!(
+        (project.rt.started_count(), project.rt.sent_count("s1")),
+        (1, 2),
+        "the fixing commit wakes the reviewer that recorded the earlier verdict"
+    );
+    let expected_earlier = EarlierHead {
+        head: CommitSha::parse(&head).unwrap(),
+        traced_by: TracedBy::Digest,
+    };
+    let rereview_reply: ReReviewReply = serde_json::from_str(&stdout(&rereview)).unwrap();
+    assert_eq!(
+        rereview_reply.re_review,
+        ReReviewOutcome::ReachedReviewer {
+            earlier: expected_earlier.clone(),
+        }
+    );
+    insta::assert_snapshot!(
+        "requested-review-rereview-input",
+        project.redact(
+            &project.rt.sent("s1", 2),
+            &[(fixed.as_str(), "FIXED"), (base.as_str(), "BASE")],
+            &[]
+        )
+    );
+    project.rt.consume("s1");
+    project.rt.set_status("s1", "ended ok");
+
+    project.rt.archive("s1");
+    let fixed2 = project.commit_in(&worktree, "fix2.txt");
+    let fresh = project
+        .ask(
+            &worktree,
+            "feature",
+            &fixed2,
+            &project.report("fix2.md", None),
+            &["--prior-report", prior.to_str().unwrap(), "--json"],
         )
         .success();
     assert_eq!(
         project.rt.started_count(),
         2,
-        "the fixing commit is reviewed in its own right"
+        "an archived earlier reviewer starts a fresh reviewer for the fixing head"
+    );
+    let fresh_reply: ReReviewReply = serde_json::from_str(&stdout(&fresh)).unwrap();
+    assert_eq!(
+        fresh_reply.re_review,
+        ReReviewOutcome::FreshReviewer(ReuseImpossible::ReviewerGone {
+            earlier: expected_earlier,
+        })
     );
 }
 
@@ -207,5 +248,51 @@ fn a_pull_request_head_under_automatic_review_is_not_reviewed_twice() {
         project.rt.started_count(),
         1,
         "no second reviewer is started"
+    );
+}
+
+// spec: project/instrukt/spec/feature/runner/requested-review UC-RQ4
+#[test]
+fn a_developers_agent_learns_its_reviews_outcome_without_asking() {
+    let mut project = Reviewed::new();
+    project.rt.open_session("developer-agent");
+    let (worktree, head) = project.worktree("demo-feature", "feature", "one.txt");
+    let base = project.repo.git(["merge-base", &head, "main"]);
+    let report = project.report("one.md", None);
+    let commits = [(head.as_str(), "HEAD"), (base.as_str(), "BASE")];
+
+    project
+        .ask(&worktree, "feature", &head, &report, &[])
+        .success();
+    assert_eq!(project.rt.started_count(), 2, "developer + one reviewer");
+    let reviewer = project.rt.native_id("s2");
+
+    project
+        .record_at(&reviewer, &head, "needs_work", Some("2026-11-27T10:00:00Z"))
+        .success();
+    project.tick_at("2026-11-27T10:01:00Z".parse().unwrap());
+    assert_eq!(
+        project.rt.message_count("developer-agent"),
+        1,
+        "first recorded verdict is delivered to the asking session"
+    );
+    insta::assert_snapshot!(
+        "requested-review-verdict-notice",
+        project.redact(&project.rt.input_log("developer-agent"), &commits, &["s2"])
+    );
+
+    project.rt.consume("developer-agent");
+    project
+        .record_at(&reviewer, &head, "approve", Some("2026-11-27T10:02:00Z"))
+        .success();
+    project.tick_at("2026-11-27T10:03:00Z".parse().unwrap());
+    assert_eq!(
+        project.rt.message_count("developer-agent"),
+        2,
+        "revised verdict version is delivered to the asking session"
+    );
+    insta::assert_snapshot!(
+        "requested-review-verdict-notice-revised",
+        project.redact(&project.rt.input_log("developer-agent"), &commits, &["s2"])
     );
 }

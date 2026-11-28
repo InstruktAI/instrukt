@@ -59,6 +59,9 @@ impl FakeRuntime {
     pub fn consume(&self, id: &str) {
         self.fake.consume(id);
     }
+    pub fn archive(&self, id: &str) {
+        self.fake.archive(id);
+    }
     pub fn notifications(&self) -> Vec<String> {
         std::fs::read_to_string(self.state_dir().join("notifications"))
             .unwrap_or_default()

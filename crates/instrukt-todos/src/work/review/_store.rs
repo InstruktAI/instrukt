@@ -67,7 +67,13 @@ CREATE TABLE imported_approvals (
 );
 "#;
 
-const MIGRATIONS: &[Migration] = &[Migration::Sql(V1)];
+/// Version 2. Index version report digests (`name`, `ContentDigest::of(report)`)
+/// so project-scoped prior-report trace lookups avoid scanning every version.
+const V2: &str = r#"
+CREATE INDEX versions_name ON versions (name);
+"#;
+
+const MIGRATIONS: &[Migration] = &[Migration::Sql(V1), Migration::Sql(V2)];
 
 fn store(home: &Home) -> Store {
     Store {
@@ -605,6 +611,33 @@ pub(super) fn retire(
     Ok(())
 }
 
+/// The commit of `project` whose standing verdict has a version whose report
+/// digest equals `digest`, breaking ties to the most recently recorded version.
+/// Read-only and unlocked once the store is at its current schema.
+pub(super) fn commit_with_report(
+    home: &Home,
+    project: &ProjectSlug,
+    digest: &ContentDigest,
+) -> Result<Option<CommitSha>, ReviewError> {
+    let Some(conn) = reader(home)? else {
+        return Ok(None);
+    };
+    let head: Option<String> = conn
+        .query_row(
+            "SELECT s.head
+             FROM versions v
+             JOIN settlements s ON s.id = v.settlement
+             WHERE s.project = ?1 AND s.standing = 'stands' AND v.name = ?2
+             ORDER BY julianday(v.recorded_at) DESC, v.settlement DESC, v.number DESC
+             LIMIT 1",
+            params![project.as_str(), digest.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    head.map(|sha| CommitSha::parse(&sha).map_err(|_| ReviewError::Record("head".into())))
+        .transpose()
+}
+
 /// The commits of `project` whose evidence was last changed before
 /// `cutoff`: those a recording command asks git whether the canonical
 /// branch contains.
@@ -627,4 +660,161 @@ pub(super) fn aged_commits(
     rows.iter()
         .map(|sha| CommitSha::parse(sha).map_err(|_| ReviewError::Record("commit".into())))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sha(ch: char) -> CommitSha {
+        CommitSha::parse(&ch.to_string().repeat(40)).unwrap()
+    }
+
+    fn insert_v1_settlement(
+        conn: &Connection,
+        project: &str,
+        head: &CommitSha,
+        standing: &str,
+        report: &str,
+        recorded_at: &str,
+    ) {
+        let digest = ContentDigest::of(report);
+        conn.execute(
+            "INSERT INTO settlements (project, head, standing, changed_at) VALUES (?1, ?2, ?3, ?4)",
+            params![project, head.as_str(), standing, recorded_at],
+        )
+        .unwrap();
+        let settlement = conn.last_insert_rowid();
+        let moment = Moment::at(recorded_at.parse().unwrap()).text();
+        conn.execute(
+            "INSERT INTO versions (settlement, number, verdict, name, report, reviewer, entered_by, base, base_on_canonical, request, unattributed, moment, recorded_at, recorded_on)
+             VALUES (?1, 1, 'needs_work', ?2, ?3, 't3:rev-1', NULL, ?4, 1, NULL, '[]', ?5, ?6, 'host-a')",
+            params![
+                settlement,
+                digest.as_str(),
+                report,
+                sha('0').as_str(),
+                moment,
+                recorded_at,
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn v1_to_v2_migration_creates_versions_name_index_and_scopes_lookup_by_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging-v1.db");
+        let report = "# Review\n\nVerdict: needs_work\n";
+        let digest = ContentDigest::of(report);
+        let head_a_older = sha('a');
+        let head_a_newer = sha('b');
+        let head_a_handed = sha('c');
+        let head_b = sha('d');
+
+        {
+            let conn = Connection::open(&staging).unwrap();
+            conn.execute_batch(V1).unwrap();
+            conn.pragma_update(None, "user_version", 1u32).unwrap();
+            insert_v1_settlement(
+                &conn,
+                "alpha",
+                &head_a_older,
+                "stands",
+                report,
+                "2026-11-26T10:00:00Z",
+            );
+            insert_v1_settlement(
+                &conn,
+                "alpha",
+                &head_a_newer,
+                "stands",
+                report,
+                "2026-11-26T11:00:00Z",
+            );
+            insert_v1_settlement(
+                &conn,
+                "alpha",
+                &head_a_handed,
+                "handed_off",
+                report,
+                "2026-11-26T12:00:00Z",
+            );
+            insert_v1_settlement(
+                &conn,
+                "beta",
+                &head_b,
+                "stands",
+                report,
+                "2026-11-26T13:00:00Z",
+            );
+        }
+
+        let home = Home::at_user_home(dir.path().join("home"));
+        std::fs::create_dir_all(home.review_db_file().parent().unwrap()).unwrap();
+        let bytes = std::fs::read(&staging).unwrap();
+        instrukt_core::fsx::write(home.review_db_file(), &bytes).unwrap();
+
+        let alpha = ProjectSlug::parse("alpha").unwrap();
+        let beta = ProjectSlug::parse("beta").unwrap();
+        let gamma = ProjectSlug::parse("gamma").unwrap();
+
+        // Inspection read upgrades in memory without mutating the V1 file on disk.
+        let inspection = home.for_inspection();
+        assert_eq!(
+            commit_with_report(&inspection, &alpha, &digest).unwrap(),
+            Some(head_a_newer.clone())
+        );
+        assert_eq!(
+            commit_with_report(&inspection, &beta, &digest).unwrap(),
+            Some(head_b.clone())
+        );
+        assert_eq!(
+            commit_with_report(&inspection, &gamma, &digest).unwrap(),
+            None
+        );
+        {
+            let raw = Connection::open(home.review_db_file()).unwrap();
+            let version: u32 = raw
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, 1);
+        }
+
+        // First read on a writable home upgrades on disk to V2 and builds `versions_name`.
+        assert_eq!(
+            commit_with_report(&home, &alpha, &digest).unwrap(),
+            Some(head_a_newer.clone())
+        );
+        assert_eq!(
+            commit_with_report(&home, &beta, &digest).unwrap(),
+            Some(head_b.clone())
+        );
+        assert_eq!(
+            commit_with_report(&home, &alpha, &ContentDigest::of("unrecorded")).unwrap(),
+            None
+        );
+
+        let conn = reader(&home).unwrap().unwrap();
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let has_index: bool = conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'versions_name' AND tbl_name = 'versions')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_index);
+        assert!(matches!(
+            held(&conn, &alpha, &head_a_older).unwrap(),
+            Held::Stands { .. }
+        ));
+        assert!(matches!(
+            held(&conn, &beta, &head_b).unwrap(),
+            Held::Stands { .. }
+        ));
+    }
 }

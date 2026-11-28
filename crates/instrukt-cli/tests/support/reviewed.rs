@@ -17,7 +17,7 @@ use serde_json::json;
 use crate::common::github::{FakeGitHub, PullSeed};
 use crate::common::{Repo, TestEnv};
 use crate::fixtures::documented::{snippet, sync};
-use crate::fixtures::runtime::{FakeRuntime, global_layer};
+use crate::fixtures::runtime::{FakeRuntime, global_layer_with};
 
 /// The GitHub repository of the project.
 pub const REPOSITORY: &str = "acme/demo";
@@ -44,7 +44,7 @@ impl Reviewed {
         let github = FakeGitHub::start();
         github.add_repo(REPOSITORY);
         let rt = FakeRuntime::new(&env, "rt", false);
-        global_layer(&env, "events: true", &[&rt]);
+        global_layer_with(&env, "events: true", &[&rt], "ticks: off\n");
         github.configure(&env);
         env.set_env("GITHUB_TOKEN", "test-token");
         let repo = env.git_repo("demo");

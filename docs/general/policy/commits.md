@@ -106,10 +106,13 @@ All Committizen types are allowed.
   commits carry each finding's disposition, independently established basis,
   and closure evidence in their commit bodies; an evidence-only rejection on
   the same head records its dispositions and sources in a disposition file
-  beside the prior report. The follow-up message that opens the continuing
-  reviewer's revision turn carries only the coordinates (`head`, prior report
-  path, and any disposition file path) and no free-text narrative or
-  constraints (`sdlc/procedure/lifecycle/work/review-commits`). The author
+  beside the prior report. A re-review of the fixing head, and a dispute
+  on the same head, are asked for by their coordinates only (`head`, prior
+  report path, and any disposition file path) and reach the continuing
+  reviewer, the session that recorded the earlier verdict; no free-text
+  narrative or constraints travel with them, and the reviewer records its
+  judgment of a dispute as a new verdict version whether or not the verdict
+  changes (`sdlc/procedure/lifecycle/work/review-commits`). The author
   retains commit and review-routing responsibilities; the reviewer alone
   determines the verdict. What cannot proceed — a genuine human-owned decision,
   a safety gate, or a disagreement author and reviewer cannot resolve — is
