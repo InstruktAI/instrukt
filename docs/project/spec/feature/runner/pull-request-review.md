@@ -355,6 +355,7 @@ GitHub or the runtime cannot answer is warned and tried again on the next tick
 (Availability). An opening GitHub refuses while the credential is met is a
 defect of the part: a warning
 carries GitHub's answer. Neither writes any state.
+
 ### Enablement
 
 The capability is enabled per project with the project-layer setting

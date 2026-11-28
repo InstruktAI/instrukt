@@ -752,9 +752,15 @@ activation waits on an unresolved manual reservation; it never adopts its unknow
 session or initiates a competing generation. These record-only reservations
 are distinct from instrukt-owned `runtime_starts`.
 
+<!-- planned-change:author-recorded-review-routing -->
 **`runtime_inputs`** — durable inputs to a native target session, shared across
 procedure events, approvals, requested-review verdict notices and runner-owned
 recovery inputs. Key:
+<!-- change:author-recorded-review-routing -->
+**`runtime_inputs`** — durable inputs to a native target session, shared across
+procedure events, approvals, requested-review verdict notices, author asks and
+runner-owned recovery inputs. Key:
+<!-- /planned-change:author-recorded-review-routing -->
 `(runtime, session, input_id)`. Retains intent (`asap` or `entry`), entry kind, source and arrival timestamps, ordered item
 references and immutable selected content, pending/selected/accepted/entered/
 failed outcome, native message identity when available, acceptance and entry

@@ -688,6 +688,7 @@ commit stays in data.
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
 | `runner.proposal_approved` | In a company home admitted for automatic review, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the remote-tracking canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
+
 Fleet attention's conditions are occurrences with a todo subject in their
 project origin; which facts count, and from what point, is
 `project/instrukt/spec/feature/runner/fleet-attention`'s.

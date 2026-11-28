@@ -10,6 +10,7 @@ subscriptions:
   - runner.candidate_held
   - runner.main_failing
   - runner.dependency_failing
+  - runner.proposal_approved
 subscription_home: project
 interruptible: false
 ---
@@ -24,8 +25,10 @@ interruptible: false
 
 ## Goal
 
-Merge finalized work and ready one-off worktree heads into a verified candidate,
-advance canonical main to exactly that commit, recover a red baseline
+Merge finalized work, ready one-off worktree heads and a company home's
+approved knowledge proposals into a verified candidate, carrying a company
+home's rendered agent material in it, advance canonical main to exactly that
+commit, recover a red baseline
 before repairing its cause, and assess failed dependency updates for bug work.
 The standing integrator owns composition,
 failure interpretation, promotion and recovery.
@@ -38,11 +41,14 @@ failure interpretation, promotion and recovery.
   `runner.candidate_held` identifies a candidate held for its authors'
   review decisions, with each undecided commit and its authoring sessions, or
   `runner.main_failing` identifies remote main's head commit whose CI completed red,
-  or `runner.dependency_failing` identifies a dependency branch, commit and failed check run for assessment.
+  or `runner.dependency_failing` identifies a dependency branch, commit and failed check run for assessment,
+  or `runner.proposal_approved` identifies a company home's open pull request,
+  its branch and the exact head commit whose approving verdict was admitted.
 - One standing integrator session is recorded per subscribing procedure and
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
-  `trees/_integration/`, separately from the project checkout and todo worktrees.
+  `.instrukt/trees/_integration/`, separately from the project checkout and todo
+  worktrees.
 - Every todo candidate — and every ad hoc candidate that owes independent review
   under `general/policy/commits` — MUST carry an independent reviewer's `APPROVE`
   stamp (or digest-bound review report for ad hoc branches) bound to that
@@ -98,6 +104,14 @@ Apply these configured action values to the identified assignment and session.
   commit is covered, with nothing further asked of you for it.
 - **`runner.main_failing`:** take the recovery path under Step 5: revert the
   offending delivery first, then repair it in its own todo.
+- **`runner.proposal_approved`:** a company's knowledge proposal is ready to
+  integrate. Fetch the pull request's branch and confirm that its head is
+  still exactly the event's commit and that `instrukt review show <head>`
+  shows an approving verdict standing for that commit; a head that moved, or a
+  verdict that no longer approves, waits for the newer event. Compose that
+  exact head under Step 2 as a ready one-off head. A replay of the same
+  project and head commit is the same logical handoff. The event authorizes
+  nothing by itself: the approving verdict on that exact head does.
 
 Event delivery retains idempotency keys and per-consumer cursors. A wake-up
 carries a reason to inspect current evidence, not authority to repeat a merge
@@ -107,6 +121,9 @@ or promote whatever commit now occupies the integration branch.
 
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
+   If `git worktree list` already lists a worktree on the `integrate` branch at
+   another path, relocate it to `.instrukt/trees/_integration/` with
+   `git worktree move` rather than creating a second worktree.
 2. Compose from accepted upstream main in the integration worktree. Merge the
    finalized `<slug>/work` branch or ready one-off branch.
    Where `general/policy/commits` requires independent review, match independent
@@ -132,10 +149,27 @@ or promote whatever commit now occupies the integration branch.
    `instrukt docs render --check`. Include the folded snippets, updated
    `docs/project/index.yaml`, and regenerated entrypoints in the exact commit
    verified.
-5. The integrator may batch finalized candidates according to its judgment.
+5. In a company home — a repository whose project layer declares it a
+   company's repository — run `instrukt docs render --plugin` in the
+   integration worktree once everything is composed and folded. It renders
+   the repository's agent material, its `AGENTS.md` and the company's skill
+   with its catalog entry, from the knowledge the candidate holds and under
+   the company identity the repository declares. Commit any change it makes
+   through `instrukt repo commit` with its review-routing choice as the
+   candidate's last commit before the push. That rendering commit is mechanical
+   and covered by reproduction, so it owes no review of its own and records its
+   exemption on that basis (`general/policy/commits`). A rendering that
+   refuses names its finding and admits no candidate. Where the finding lies in
+   one member's content, take that member out and compose the rest again: a
+   todo's delivery returns as findings under Step 3, and a knowledge proposal's
+   pull request stays open and unmerged with the finding kept in this session
+   for the operator. Where it is the repository's own, such as a missing
+   company identity, promote nothing until it is repaired and keep it in this
+   session.
+6. The integrator may batch finalized candidates according to its judgment.
    Retain the work and commits represented by the batch so a failure can be
-   attributed to its responsible todo.
-6. Push the resulting exact commit to `origin/integrate`. Keep main unchanged
+   attributed to its responsible todo or proposal.
+7. Push the resulting exact commit to `origin/integrate`. Keep main unchanged
    while verification is pending. A rejected candidate push is a failed
    publication, never verification evidence.
 
@@ -149,7 +183,9 @@ watch. Missing, incomplete or mismatched results leave main unchanged.
 Without CI, the runner wakes this session through `runner.ci_completed` with
 the result `no_ci` for the exact candidate. Read the project's documented test
 command and run it in the integration worktree against that exact candidate.
-A missing documented check or failing command supplies no admission. This is the local gate;
+A missing documented check or failing command supplies no admission. In a
+company home, `instrukt docs render --plugin --check` passing on the exact
+candidate is that local admission evidence. This is the local gate;
 builders, reviewers and the evaluator add no suite execution of their own.
 
 - **Green:** fast-forward main to exactly the verified candidate and push it.
@@ -160,7 +196,7 @@ builders, reviewers and the evaluator add no suite execution of their own.
   (which resets the finalized handoff so the runner wakes `todo-orchestrator`
   even when no new commit was pushed yet; note that `--kickback` also marks any
   existing `plan_review` invalidated in the ledger, so `todo-orchestrator`
-  inspects the recorded reason and routes directly to `builder`/`fixer` for
+  inspects the recorded reason and routes directly to a `builder` round for
   code-only or CI failures rather than re-planning unless the contract or plan
   itself is defective), make a trivial fix within integration scope, or isolate
   the culprit among a batch. A change to intent or the prepared contract returns
@@ -246,18 +282,25 @@ through `runtime.finish_thread` under `sdlc/policy/todo-creation-discipline`
 still owed shows in that ledger and does not gate finishing. Preserve the
 runtime thread record and retained attempt evidence.
 
+A knowledge proposal has no todo and no delivery record. After its promotion,
+confirm that remote main contains its exact head; GitHub then marks its pull
+request merged, and its branch and authoring worktree are its author's to
+remove.
+
 When all current work is settled — no open candidate in verification, no
 pending delivery or conflict, and no open human question — park as the standing
 integrator and finish this thread under `general/procedure/event-handling/overview`.
 The next `workflow.finalized`, `runner.ci_completed`, `runner.candidate_held`,
-`runner.main_failing` or `runner.dependency_failing` resumes this session in
-place; its mandate continues
+`runner.main_failing`, `runner.dependency_failing` or `runner.proposal_approved`
+resumes this session in place; its mandate continues
 across idle turns under the recorded standing-session binding.
 
 ## Outputs
 
 - Exact verified candidates promoted and confirmed on remote main (with pending
-  docs folded at delivery); ready one-off work integrated through the same gate.
+  docs folded at delivery); ready one-off work and approved knowledge
+  proposals integrated through the same gate, a company home's candidates
+  carrying its rendered agent material.
 - Durable delivery evidence, or findings and `--kickback` returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 
