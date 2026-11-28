@@ -203,7 +203,6 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     let out = fx.env.run(fx.env.home(), ["backup", "run"]).success();
     drop(live_wal_conn);
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(stdout.contains("published hosts/"), "{stdout}");
     assert!(
         fx.s3.wire_protocol_violations().is_empty(),
         "wire protocol violations: {:?}",
@@ -227,6 +226,14 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     );
 
     let ciphertext = fx.s3.get_bytes(&expected_key).unwrap();
+    let normalized_run_stdout = stdout
+        .trim()
+        .replace(&mid, "<machine-id>")
+        .replace(&format!("({} bytes;", ciphertext.len()), "(<bytes> bytes;");
+    insta::assert_snapshot!(
+        normalized_run_stdout,
+        @"published hosts/<machine-id>/instrukt-home.20300106T030000Z.tar.zst.age (<bytes> bytes; pruned: 0, orphans deleted: 0, uploads aborted: 0)"
+    );
     let wrong_id = age::x25519::Identity::generate();
     assert!(
         age::Decryptor::new(&ciphertext[..])
@@ -441,11 +448,14 @@ fn home_backup_list_shows_only_this_machines_generations_newest_first() {
 
     let out = fx.env.run(fx.env.home(), ["backup", "list"]).success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 3, "{stdout}");
-    assert!(lines[0].contains(&own_new) && lines[0].contains("| validated |"));
-    assert!(lines[1].contains(&own_mid_unval) && lines[1].contains("| unvalidated |"));
-    assert!(lines[2].contains(&own_old) && lines[2].contains("| validated |"));
+    insta::assert_snapshot!(
+        stdout.trim(),
+        @"
+    hosts/11112222333344445555666677778888/instrukt-home.20300106T030000Z.tar.zst.age | validated | 6 bytes | 2030-01-06T03:00:00Z
+    hosts/11112222333344445555666677778888/instrukt-home.20300105T030000Z.tar.zst.age | unvalidated | 11 bytes | 2030-01-05T03:00:00Z
+    hosts/11112222333344445555666677778888/instrukt-home.20300104T030000Z.tar.zst.age | validated | 3 bytes | 2030-01-04T03:00:00Z
+    "
+    );
     assert!(
         !stdout.contains(other_mid),
         "other machine leaked: {stdout}"
@@ -626,10 +636,17 @@ fn home_backup_restore_enforces_integrity_confirmation_and_live_home_guards() {
             )
             .failure();
         let busy_stderr = String::from_utf8_lossy(&busy.get_output().stderr);
-        assert!(busy_stderr.contains("--into"), "{busy_stderr}");
-        assert!(
-            busy_stderr.contains("stop instrukt services"),
-            "{busy_stderr}"
+        let canonical_home = home.canonicalize().unwrap();
+        let normalized_busy = busy_stderr
+            .trim()
+            .replace(&canonical_home.display().to_string(), "<home>")
+            .replace(&home.display().to_string(), "<home>");
+        insta::assert_snapshot!(
+            normalized_busy,
+            @"
+        instrukt: clock overridden to 2030-01-06T03:00:00Z
+        instrukt: cannot restore into live instrukt home while <home>/state/writer.lock is held; stop instrukt services first, or pass `--into <dir>` to extract beside the live home for inspection or selective recovery
+        "
         );
     }
 

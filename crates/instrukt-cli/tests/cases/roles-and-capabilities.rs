@@ -674,6 +674,7 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
         })
         .unwrap();
     }
+    let mut backup_refusals = Vec::new();
     for args in [
         &["backup", "list"][..],
         &["backup", "run"][..],
@@ -686,11 +687,16 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
             .assert()
             .failure();
         let err = String::from_utf8_lossy(&refused.get_output().stderr);
-        assert!(
-            err.contains("home backup is the operator's"),
-            "expected company-session refusal for `{args:?}`, got: {err}"
-        );
+        backup_refusals.push(err.trim().to_owned());
     }
+    insta::assert_snapshot!(
+        backup_refusals.join("\n"),
+        @"
+    instrukt: home backup is the operator's: this session's recorded assignment is company `acme`'s, so `instrukt backup list` is refused whatever its role, and nothing was changed; ask the operator to run home backup
+    instrukt: home backup is the operator's: this session's recorded assignment is company `acme`'s, so `instrukt backup run` is refused whatever its role, and nothing was changed; ask the operator to run home backup
+    instrukt: home backup is the operator's: this session's recorded assignment is company `acme`'s, so `instrukt backup restore` is refused whatever its role, and nothing was changed; ask the operator to run home backup
+    "
+    );
 
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
