@@ -10,6 +10,7 @@ members = [
     "crates/instrukt-company",
     "crates/instrukt-connector-slack",
     "crates/instrukt-outside",
+    "crates/instrukt-screening",
 ]
 
 [workspace.package]
@@ -33,6 +34,7 @@ instrukt-connector = { path = "crates/instrukt-connector", version = "0.1.0" }
 instrukt-company = { path = "crates/instrukt-company", version = "0.1.0" }
 instrukt-connector-slack = { path = "crates/instrukt-connector-slack", version = "0.1.0" }
 instrukt-outside = { path = "crates/instrukt-outside", version = "0.1.0" }
+instrukt-screening = { path = "crates/instrukt-screening", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.3"
 
 anyhow = "1"

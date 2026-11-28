@@ -2217,6 +2217,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrukt-screening"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "instrukt-core",
+ "instrukt-outside",
+ "jiff 0.2.39",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "instrukt-todos"
 version = "0.1.0"
 dependencies = [
