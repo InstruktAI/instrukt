@@ -1,5 +1,5 @@
 ---
-description: 'Agent-artifact sources and ownership: what global agent files and a repo''s root AGENTS.md carry; `index.yaml` is a rendering''s only authored source; generated entrypoints and runtime homes are never hand-edited; knowledge lives in snippets.'
+description: 'Sources/ownership: global files & root AGENTS.md; `index.yaml` is sole authored source; never hand-edit generated entrypoints/runtime homes; knowledge in snippets.'
 visibility: 'public'
 ---
 

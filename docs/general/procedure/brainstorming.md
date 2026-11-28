@@ -1,6 +1,6 @@
 ---
-activation_trigger: 'Human is exploring an unconverged idea with implementation on the horizon.'
-description: 'Converge an exploratory idea into a grounded design before implementation and route forming material.'
+activation_trigger: 'Human explores an unconverged idea with implementation ahead.'
+description: 'Converge an exploratory idea into a grounded design and route forming material.'
 visibility: public
 ---
 

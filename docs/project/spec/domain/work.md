@@ -34,8 +34,9 @@ runner owns dispatch, and the configured runtime owns conversations.
   owns what its approval gate requires.
 
 **Intent check**
-: The first non-author recipient's recorded check that an intent version
-  faithfully reflects its originating conversation.
+: An optional attributed stamp binding an `input` version digest to its
+  checking actor and a supplied conversation reference when present
+  (`project/instrukt/spec/feature/work/approvals`).
 
 **Verification disposition**
 : A stamp recording what is established about a candidate commit's live
@@ -334,7 +335,7 @@ record changes lead to are the runner's (`project/instrukt/spec/domain/runner`).
 - **Stamps** — `project/instrukt/spec/feature/work/stamps` — retain
   attributed evidence for approval, workflow and evaluation goals.
 - **Approvals** — `project/instrukt/spec/feature/work/approvals` —
-  authorize reviewed outcomes and hand off checked intent.
+  authorize reviewed outcomes and record optional attributed intent-check stamps.
 - **State database** — `project/instrukt/spec/feature/work/state-database`
   — read the local work record while instrukt writes and keep the last
   completed state through an interrupted write.

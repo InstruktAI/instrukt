@@ -138,12 +138,14 @@ owns it.
 
 ### 3. Return a person's matter to the work's origin
 
-1. **Find each origin.** The todo's creation record names the session that
-   created it (`instrukt todo show <slug>`). That session is the origin when it
-   is reachable and holds a conversation with the person behind the work.
-   When the record names no session, the session is gone, or it holds no
-   person's conversation, the platform operator is the origin, asked in this
-   thread.
+1. **Find each origin.** Follow the human's actual originating conversation —
+   tracing past any splitting or relaying session via the origin pointer
+   carried in `input` (`general/policy/human-contract`), or the session the
+   todo's creation record names (`instrukt todo show <slug>`) when no distinct
+   origin pointer exists. That session is the origin when it is reachable and
+   holds a conversation with the person behind the work. When no such session
+   is recorded, the session is gone, or it holds no person's conversation, the
+   platform operator is the origin, asked in this thread.
 2. **Pause only the affected work.** When the work must not advance until the
    origin answers, place a hold naming what releases it and tell the live
    claimant, within the coordinator's bounds in
@@ -153,31 +155,41 @@ owns it.
    message instruction, the todos concerned, what they share, the case you
    read, and the resolution you recommend: merge, split, sequence, drop, or
    adopt the existing solution. Ask the origin to record the outcome its
-   person agrees in the `log` of the todo it originated, and name that any
-   other origin concerned is being told the same shared surface.
+   person agrees in the `log` of the todo it originated (or, if that
+   originating session cannot mutate the todo directly, confirm it in that
+   originating conversation and notify this thread), and name that any other
+   origin concerned is being told the same shared surface.
 4. **Wait without watching.** The origin's message points you at its record;
    the condition needs nothing more from you until then.
 
 When the operator is the origin, ask the question with its recommendation and
-source references in this thread, and hold the todo it concerns with a reason
-that names the question and this thread, so the work record shows that todo
-waiting on a person. The operator's answer here is the settlement.
+source references in this thread, and hold the todo it concerns (unless already
+held for this return) with a reason that names the question and this thread, so
+the work record shows that todo waiting on a person. The operator's answer here
+is the settlement.
 
 ### 4. Apply a settlement
 
 1. **Recognise it.** A settlement is the agreed outcome an origin of any todo
-   the return concerns writes into that todo's `log`. Read the version with
-   `instrukt todo artifacts list <slug>` and compare its recorded writer with
-   the session the todo's creation record names. Where the operator is the
-   origin, their answer in this thread is the settlement. A message, or an
-   outcome another session wrote, is no settlement: answer it by pointing at
-   where the origin records one.
+   the return concerns — the actual originating session found under step 3 —
+   writes into that todo's `log` (verified with `instrukt todo artifacts list
+   <slug>`), or, when that originating session cannot mutate the todo directly,
+   confirms in that originating conversation as verified through
+   `runtime.read_thread`. Where the operator is the origin, their answer in
+   this thread is the settlement. A peer message alone, or an outcome another
+   session wrote, is no settlement: answer it by pointing at where the origin
+   records or confirms one.
 2. **Apply it at once.** Waiting for other origins to confirm is not part of
    it. Apply it within the coordinator's bounds in
    `sdlc/policy/todo-creation-discipline`, to as many todos as it names:
-   - a todo that resumes unchanged has its pause released;
-   - a todo whose intent changes resumes once its origin has recorded the
-     adopted outcome in that todo's `input`;
+   - a todo that resumes unchanged has its pause released, first recording the
+     publishable settlement confirmation in `log` when the operator settled it
+     under `sdlc/policy/todo-creation-discipline`;
+   - a todo whose intent changes resumes once the adopted outcome is recorded
+     in clean, publishable form in that todo's `input` (preserving any original
+     origin pointer, applied directly or through the retained claimant, with
+     the required publishable `log` note for an operator settlement under
+     `sdlc/policy/todo-creation-discipline`);
    - a todo superseded by another has what was particular to it folded into the
      survivor's `log` and is withdrawn, and its orchestrator thread finished;
    - a todo retired outright, such as one whose requester adopts an existing
@@ -186,7 +198,9 @@ waiting on a person. The operator's answer here is the settlement.
    - an outcome that keeps converging todos apart records the boundary or
      dependency it set.
 
-   Release every hold you placed for the settlement.
+   Release every hold waiting on the settlement once its prerequisite record
+   update is in place (or let the retained claimant release it after recording
+   a verified update).
 3. **Close the loop.** Send every other affected origin one notice of the
    direction adopted, which todos it changed and that its person can still
    steer from their conversation. The notice asks for nothing.

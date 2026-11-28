@@ -1,6 +1,6 @@
 ---
-description: 'Hold one shared technical picture across repos, triage via adopt/self-host/build, and route work into SDLC.'
-activation_trigger: 'Direct operator session (platform or company home), or a repo/MCP/todo-capable session not started from `general/procedure/company-assistance`, triaging technical requests or adopt/self-host/build decisions; company-assistance sessions (any role) and `sdlc-coordinator` (`sdlc/procedure/lifecycle/coordinate`) stay put.'
+description: 'Hold one cross-repo technical picture, triage adopt/self-host/build, and route work into SDLC.'
+activation_trigger: 'Direct operator session (platform/company home) or repo/MCP/todo-capable session not started from `general/procedure/company-assistance` triaging technical requests or adopt/self-host/build decisions; company-assistance sessions (any role) and `sdlc-coordinator` (`sdlc/procedure/lifecycle/coordinate`) stay put.'
 role: technical-coordinator
 visibility: public
 ---

@@ -1,5 +1,5 @@
 ---
-description: 'How company applications record preparation requirements and placement (platform, shared/dedicated, project).'
+description: 'Company app preparation requirements and placement (platform, shared/dedicated, project).'
 ---
 
 # Application Placement — Concept

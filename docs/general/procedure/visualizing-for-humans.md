@@ -1,6 +1,6 @@
 ---
-description: 'Pick the cheapest visual (table, Mermaid; canvas only exceptionally); inline for one-offs, a served scratchpad page for changing material.'
-activation_trigger: 'Human asks to see/draw/sketch/map/diagram/visualize (architecture, flow, sequence, state, ownership, timeline), a picture beats prose, or before starting any canvas/whiteboard/drawing server.'
+description: 'Pick cheapest rendered visual (table/Mermaid; canvas rarely), inline for one-offs or served scratchpad for changing material.'
+activation_trigger: 'Human asks to see/draw/sketch/map/diagram/visualize, a picture beats prose, or before starting any canvas/whiteboard/drawing server.'
 ---
 
 # Visualizing for Humans — Procedure

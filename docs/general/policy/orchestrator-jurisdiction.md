@@ -1,5 +1,5 @@
 ---
-description: 'What an orchestrator writes directly (slug process state, writes its entry procedure assigns, human-directed process changes) vs. delegates.'
+description: 'What an orchestrator writes directly (slug state, entry-procedure writes, human-directed process changes) vs delegates.'
 visibility: 'public'
 ---
 

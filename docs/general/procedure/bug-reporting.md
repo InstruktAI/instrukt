@@ -1,6 +1,6 @@
 ---
-description: 'File instrukt/runtime/platform defects via `instrukt bugs report`, answering its questions first and keeping reports out of served conversations.'
-activation_trigger: 'When instrukt, its runtime, or the platform violates its contract with an occurrence in hand.'
+description: 'File instrukt/runtime/platform defects via `instrukt bugs report` (answer questions first; keep out of served chats).'
+activation_trigger: 'When instrukt, runtime, or platform violates its contract with an occurrence in hand.'
 visibility: public
 ---
 

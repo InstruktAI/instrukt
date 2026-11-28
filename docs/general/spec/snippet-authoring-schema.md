@@ -1,5 +1,5 @@
 ---
-description: 'Snippet positions, ids, domains, `index.yaml`/`schema.yaml`, frontmatter (events, identity, attendance), references, and `_compressed/`; section shape comes from `instrukt docs schema`.'
+description: 'Snippet positions, ids, domains, `index.yaml`/`schema.yaml`, frontmatter (events, identity, attendance), refs, `_compressed/`; shapes via `instrukt docs schema`.'
 visibility: 'public'
 ---
 

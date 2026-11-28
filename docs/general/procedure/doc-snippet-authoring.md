@@ -1,6 +1,6 @@
 ---
-activation_trigger: 'On first considering creating, changing, or retiring a snippet under `docs/general/`, `docs/domain/<name>/`, `docs/project/` (companions included), or company home knowledge (`docs/` + index); not README or website prose.'
-description: 'Check readiness and authority, then author or retire taxonomy snippets and company docs.'
+activation_trigger: 'First considering creating/changing/retiring a snippet under `docs/general/`, `docs/domain/<name>/`, `docs/project/` (incl. companions), or company home (`docs/` + index); not README/website prose.'
+description: 'Check readiness/authority, then author or retire snippets and company docs.'
 visibility: public
 ---
 

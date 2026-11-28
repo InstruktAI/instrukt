@@ -33,31 +33,28 @@ verdict applies.
 - Tasks have no git worktree: when dispatched as `task-preparer`, the session
   runs as a worktree-less child attempt (`instrukt todo attempt` / `bind`
   without worktree/branch/base flags) and authors no repository files or commits.
-- The `input` is the versioned intent record. Its current position-based
-  intent check is required; a new version invalidates the earlier check.
+- The `input` is the versioned intent record. For human-lineage work, the entry
+  audit compares it read-only against its authorizing human conversation
+  (`sdlc/policy/todo-creation-discipline`).
 
-### Native conversation evidence
+### Configured runtime operations
 
 <!-- @config: runtime.read_thread -->
+
+<!-- @config: runtime.message_peer -->
 
 ## Steps
 
 Use `instrukt <command> -h` for individual commands.
 
 0. **Audit the handoff.** Read `instrukt todo show {slug}`, the `input`, and
-   `log` when present. Apply the entry audit in
-   `sdlc/policy/todo-creation-discipline`. Take a current intent check as given
-   only when it verifies the current `input` version against the human's actual
-   originating conversation (an `--intent-checked` stamp bound to a relaying or
-   splitting session does not satisfy the check). If no valid current check
-   exists and you are the first non-author recipient, read the human's actual
-   originating conversation through the configured runtime read — tracing past
-   any relaying or splitting session — and record the check with
-   `instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`
-   per `sdlc/policy/todo-creation-discipline`.
-   If the originating conversation is permanently unavailable, return the intent to the
-   human in the responsible thread; a new `input` version from that conversation becomes
-   the checkable basis.
+   `log` when present. If prerequisites are undelivered or a hold is active,
+   preserve state and stop without drafting. When `todo-orchestrator` has not
+   already cleared the preparation-entry audit on the current `input` version
+   (including initial entry, an unchanged `input` returning after an earlier
+   unresolved entry stop, or a materially revised `input`), apply
+   `sdlc/policy/todo-creation-discipline` using `runtime.read_thread` and
+   `runtime.message_peer` before drafting.
    Establish the requested action boundary, result, recipient, and timing from
    what the `input` carries, including its logically necessary implications and
    existing authoritative constraints. If another reasonable execution could
@@ -143,7 +140,8 @@ Use `instrukt <command> -h` for individual commands.
   rather than guessing whether it is truly redundant.
 - **Refinement.** When the human revises the intent, rewrite the `task-plan` and
   request configured authorization again. A changed plan invalidates its prior
-  approval binding; a new input version also invalidates the intent check.
+  approval binding; a materially revised human-lineage `input` receives one
+  fresh entry comparison (`sdlc/policy/todo-creation-discipline`).
 
 ## Discipline
 

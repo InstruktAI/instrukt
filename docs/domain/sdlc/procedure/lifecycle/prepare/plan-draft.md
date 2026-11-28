@@ -48,8 +48,9 @@ one todo is the scope-and-size gate's decision
    `input`, including a change with a seeded `implementation-plan`; the seed
    is a technical hypothesis rather than an alternate intent authority.
    A feature PRD has current independent review and the configured human or
-   peer approval before this phase. The position-based intent check binds the
-   current `input`, not a derived requirements or plan artifact.
+   peer approval before this phase. Preparation-entry comparison against a
+   human originating conversation applies to `input`, not to a derived
+   requirements or plan artifact (`sdlc/policy/todo-creation-discipline`).
 
 2. `architecture` is either reviewer-approved or explicitly skipped.
 3. Slug is active (not icebox, not delivered).
@@ -136,8 +137,9 @@ dispatch-reason header or token selects behavior.
 - **Kickback** — read `todo-orchestrator`'s recorded reason in `input`
   first. It names why the build could not execute the plan and how far back
   re-derivation reaches: a localized replan or the feature-spec scenarios it
-  binds. Re-ground against that reason as well as code. A new input version
-  requires a current position-based intent check.
+  binds. Re-ground against that reason as well as code. A materially revised
+  human-lineage `input` version receives one fresh read-only comparison at
+  preparation entry (`sdlc/policy/todo-creation-discipline`).
 - **Revision answering findings** — read `plan-review-findings` alongside
   the existing plan. Apply the validation, disposition and evidence rules of
   `sdlc/procedure/lifecycle/fix-review-findings`, preserving unaffected tasks

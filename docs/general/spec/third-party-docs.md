@@ -1,5 +1,5 @@
 ---
-description: 'Where third-party docs live (`~/.instrukt/docs/third-party/`, `docs/third-party/`), one upstream per root, and how they are referenced.'
+description: 'Third-party doc homes (`~/.instrukt/docs/third-party/`, `docs/third-party/`), one upstream per root, how referenced.'
 visibility: 'public'
 ---
 

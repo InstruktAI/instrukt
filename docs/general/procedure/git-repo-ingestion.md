@@ -1,6 +1,6 @@
 ---
-activation_trigger: 'When an external Git repo must come local (clone or pull) before analysis.'
-description: 'Clone or pull external Git repos into a checkout root with reusable index and history artifacts.'
+activation_trigger: 'External Git repo must be cloned or pulled locally before analysis.'
+description: 'Clone/pull external Git repos into a checkout root with reusable index and history.'
 visibility: public
 ---
 

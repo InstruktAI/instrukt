@@ -1,5 +1,5 @@
 ---
-description: 'Guidelines for resolving conflicts between documentation, instructions, and code.'
+description: 'Resolving conflicts between docs, instructions, and code.'
 visibility: 'public'
 ---
 
