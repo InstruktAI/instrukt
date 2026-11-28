@@ -199,25 +199,18 @@ fn execute_staged_backup(
     let stg_key = _storage::staging_key(&live_key);
     let size_bytes = staged.size_bytes;
 
-    if let Err(err) = storage.upload_to_staging(&staged.path, size_bytes, &stg_key) {
-        return StagedBackupOutcome {
-            published: None,
-            result: Err(err),
-        };
-    }
-    if let Err(err) = storage.verify_staging(&stg_key, size_bytes) {
-        return StagedBackupOutcome {
-            published: None,
-            result: Err(err),
-        };
-    }
-    if let Err(err) = storage.promote_staging(&stg_key, &live_key, size_bytes) {
-        return StagedBackupOutcome {
-            published: None,
-            result: Err(err),
-        };
-    }
-    if let Err(err) = storage.write_validation_marker(&live_key) {
+    let pre_validation = (|| -> Result<(), BackupError> {
+        storage.upload_to_staging(&staged.path, size_bytes, &stg_key)?;
+        storage.verify_staging(&stg_key, size_bytes)?;
+        storage.promote_staging(&stg_key, &live_key, size_bytes)?;
+        storage.write_validation_marker(&live_key)?;
+        Ok(())
+    })();
+    if let Err(err) = pre_validation {
+        // Best-effort remote staging cleanup on every pre-validation failure
+        // (including upload errors and validation-marker failure) while
+        // preserving the primary error and leaving validated generations intact.
+        let _ = storage.delete_object(&stg_key);
         return StagedBackupOutcome {
             published: None,
             result: Err(err),
@@ -396,8 +389,10 @@ mod tests {
         #[derive(Default)]
         struct FaultS3 {
             objects: BTreeMap<String, Vec<u8>>,
+            delete_requests: Vec<String>,
             fail_delete_staging: bool,
             fail_put_staging: bool,
+            fail_put_validated: bool,
         }
 
         let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -452,6 +447,11 @@ mod tests {
                                 tiny_http::Response::from_string("AKIA_SECRET_LEAK")
                                     .with_status_code(403),
                             );
+                        } else if guard.fail_put_validated && key.starts_with("_validated/") {
+                            let _ = req.respond(
+                                tiny_http::Response::from_string("validation marker refused")
+                                    .with_status_code(403),
+                            );
                         } else {
                             guard.objects.insert(key, body);
                             let etag = tiny_http::Header::from_bytes("ETag", "\"ok\"").unwrap();
@@ -471,6 +471,7 @@ mod tests {
                         }
                     }
                     "DELETE" => {
+                        guard.delete_requests.push(key.clone());
                         if guard.fail_delete_staging && key.starts_with("_staging/") {
                             let _ = req.respond(tiny_http::Response::empty(500));
                         } else {
@@ -519,11 +520,36 @@ mod tests {
         };
         let storage = S3Storage::new(&cfg);
 
-        // 1. Pre-validation failure: preserves no prior success, sets first_attempt_at, scrubs secrets, notifies.
+        // Seed an existing validated generation so we confirm pre-validation
+        // failures leave validated generations untouched.
+        let existing_gen = "existing-validated.tar.zst.age".to_owned();
+        let existing_val = format!("_validated/{existing_gen}");
+        {
+            let mut guard = st.lock().unwrap();
+            guard
+                .objects
+                .insert(existing_gen.clone(), b"validated-bytes".to_vec());
+            guard.objects.insert(existing_val.clone(), Vec::new());
+        }
+
+        // 1a. Pre-validation upload failure: attempts best-effort staging cleanup,
+        // preserves no prior success, sets first_attempt_at, scrubs secrets, notifies.
         st.lock().unwrap().fail_put_staging = true;
         let t1: Timestamp = "2030-01-06T03:00:00Z".parse().unwrap();
         let err1 = run_with_storage(&home, &Env::default(), &cfg, &storage, t1).unwrap_err();
         assert!(!err1.to_string().contains("AKIA_SECRET_LEAK"));
+        {
+            let guard = st.lock().unwrap();
+            assert!(
+                guard
+                    .delete_requests
+                    .iter()
+                    .any(|k| k.starts_with("_staging/")),
+                "upload failure must attempt best-effort staging cleanup"
+            );
+            assert!(guard.objects.contains_key(&existing_gen));
+            assert!(guard.objects.contains_key(&existing_val));
+        }
         let state1 = _state::read_state(&home.backup_state_file())
             .unwrap()
             .unwrap();
@@ -538,11 +564,46 @@ mod tests {
                 .contains("AKIA_SECRET_LEAK")
         );
 
+        // 1b. Pre-validation validation-marker failure: deletes the remote
+        // staging object, preserves the primary error, leaves validated
+        // generations untouched, and does not advance last_success_at.
+        {
+            let mut guard = st.lock().unwrap();
+            guard.fail_put_staging = false;
+            guard.fail_put_validated = true;
+            guard.delete_requests.clear();
+        }
+        let t1b: Timestamp = "2030-01-06T12:00:00Z".parse().unwrap();
+        assert!(run_with_storage(&home, &Env::default(), &cfg, &storage, t1b).is_err());
+        {
+            let guard = st.lock().unwrap();
+            assert!(
+                guard
+                    .delete_requests
+                    .iter()
+                    .any(|k| k.starts_with("_staging/")),
+                "validation-marker failure must delete remote staging object"
+            );
+            assert!(
+                !guard.objects.keys().any(|k| k.starts_with("_staging/")),
+                "staging object must be gone after validation-marker failure"
+            );
+            assert!(guard.objects.contains_key(&existing_gen));
+            assert!(guard.objects.contains_key(&existing_val));
+        }
+        let state1b = _state::read_state(&home.backup_state_file())
+            .unwrap()
+            .unwrap();
+        assert_eq!(state1b.first_attempt_at, t1);
+        assert_eq!(state1b.last_outcome, BackupOutcome::Failed);
+        assert!(state1b.last_success_at.is_none());
+
         // 2. Post-validation failure (DELETE _staging fails AFTER _validated/ written):
         // advances last_success_at + last_generation while keeping last_outcome=failed and notifying.
         {
             let mut guard = st.lock().unwrap();
             guard.fail_put_staging = false;
+            guard.fail_put_validated = false;
             guard.fail_delete_staging = true;
         }
         let t2: Timestamp = "2030-01-07T03:00:00Z".parse().unwrap();
@@ -558,9 +619,8 @@ mod tests {
 
         let notified = std::fs::read_to_string(&notify_log).unwrap();
         let lines: Vec<&str> = notified.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].starts_with("backup:failed:"));
-        assert!(lines[1].starts_with("backup:failed:"));
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().all(|line| line.starts_with("backup:failed:")));
 
         server.unblock();
         let _ = handle.join();
